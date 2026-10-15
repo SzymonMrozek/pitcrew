@@ -1,0 +1,286 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+
+test('comment keyboard submission validates through the form and ignores plain Enter and duplicate saves', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("$('#comment-form').onkeydown"), source.indexOf("$('#comment-form').onsubmit"));
+  let submitted = 0, prevented = 0;
+  const submit = {disabled: false}, form = {querySelector: () => submit, requestSubmit: () => submitted++};
+  vm.runInNewContext(handler, {$: () => form});
+  const event = {key: 'Enter', currentTarget: form, preventDefault: () => prevented++};
+  form.onkeydown(event); assert.equal(submitted, 0);
+  form.onkeydown({...event, metaKey: true});
+  form.onkeydown({...event, ctrlKey: true}); assert.equal(submitted, 2);
+  submit.disabled = true;
+  form.onkeydown({...event, metaKey: true}); assert.equal(submitted, 2);
+  assert.equal(prevented, 3);
+  submit.disabled = false;
+  form.onkeydown({...event, metaKey: true, isComposing: true}); assert.equal(submitted, 2);
+});
+
+test('updating comments keeps the visible line anchored without rebuilding the feed', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const update = source.slice(source.indexOf('async function updateFileComments('), source.indexOf('function commentNode('));
+  const content = {scrollTop: 700, getBoundingClientRect: () => ({top: 100})};
+  let rerendered = false, selected;
+  const line = {dataset: {side: 'new', line: '55'}, getBoundingClientRect: () => ({top: 200, bottom: 220})};
+  const body = {ready: true, isConnected: true, querySelectorAll: () => [line], rerender: async () => {rerendered = true;}, querySelector: selector => {selected = selector; return {getBoundingClientRect: () => ({top: 350})};}};
+  const card = {dataset: {file: 'file'}, querySelector: () => body};
+  const context = vm.createContext({updateChrome() {}, tab: 'all', document: {querySelectorAll: () => [card]}, $: () => content, scrollTarget: 'file'});
+  vm.runInContext(update, context); await context.updateFileComments('file');
+  assert.equal(rerendered, true);
+  assert.equal(selected, '.line-number[data-side="new"][data-line="55"]');
+  assert.equal(content.scrollTop, 850);
+  assert.equal(context.scrollTarget, null);
+});
+
+test('saving a comment submits once and keeps failures editable', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("$('#comment-form').onsubmit"), source.indexOf('function feedbackDate('));
+  const submit = {disabled: false}, form = {querySelector: () => submit, elements: {text: {value: 'Feedback'}}};
+  let pending, resolve, reject, closed = false, updated, calls = 0;
+  const context = vm.createContext({$: selector => selector === '#comment-form' ? form : {close() {closed = true;}}, commentTarget: {file: 'file', side: 'file'},
+    api: () => {calls++; return new Promise((yes, no) => {resolve = yes; reject = no;});}, run: action => {pending = action();}, updateFileComments: async file => {updated = file;},
+  });
+  vm.runInContext(handler, context);
+  const event = {preventDefault() {}, target: form};
+  form.onsubmit(event); form.onsubmit(event);
+  assert.equal(calls, 1); assert.equal(submit.disabled, true);
+  resolve({}); await pending;
+  assert.equal(closed, true); assert.equal(updated, 'file'); assert.equal(submit.disabled, false);
+  closed = false; form.onsubmit(event); reject(new Error('Network error'));
+  await assert.rejects(pending, /Network error/);
+  assert.equal(closed, false); assert.equal(submit.disabled, false);
+});
+
+test('a late response cannot overwrite a more recently selected iteration', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
+  const pending = [], displayed = [];
+  const context = vm.createContext({
+    loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
+    $: () => ({}),
+    api: () => new Promise(resolve => pending.push(resolve)),
+    updateChrome: () => displayed.push(context.state.scope), renderComments: () => {},
+  });
+  vm.runInContext(load, context);
+  const first = context.load(), second = context.load();
+  pending[1]({scope: 'iteration-2', settings: {diffMode: 'unified'}, job: {status: 'idle'}});
+  await second;
+  pending[0]({scope: 'iteration-1', settings: {diffMode: 'split'}, job: {status: 'idle'}});
+  await first;
+  assert.deepEqual(displayed, ['iteration-2']);
+  assert.equal(context.state.scope, 'iteration-2');
+});
+
+test('range comments normalize reverse selection and keep file comments accessible', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const open = source.slice(source.indexOf('function openComment('), source.indexOf("document.addEventListener('pointerup'"));
+  const elements = {startLine: {}, endLine: {}, text: {focus() {}}};
+  const nodes = {'#comment-form': {elements, reset() {}}, '#comment-range': {}, '#comment-location': {}, '#comment-dialog': {showModal() {}}};
+  const context = vm.createContext({$: selector => nodes[selector]});
+  vm.runInContext(open, context);
+  context.openComment({id: 'code', path: 'code.swift', fingerprint: 'current'}, 'old', 8, 3);
+  assert.equal(context.commentTarget.line, 3);
+  assert.equal(context.commentTarget.endLine, 8);
+  assert.equal(elements.startLine.value, 3);
+  assert.equal(elements.endLine.value, 8);
+  assert.equal(nodes['#comment-range'].hidden, false);
+  assert.equal(elements.startLine.disabled, false);
+  context.openComment({id: 'image', path: 'image.png'}, 'file', 0);
+  assert.equal(nodes['#comment-range'].hidden, true);
+  assert.equal(elements.startLine.disabled, true);
+  assert.equal(elements.endLine.disabled, true);
+});
+
+
+test('live merge output follows the tail without pulling readers away from older output', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const update = source.slice(source.indexOf('async function updateMergeProgress('), source.indexOf("$('#merge-log').onscroll"));
+  const output = {scrollHeight: 1000, clientHeight: 200, scrollTop: 800};
+  const nodes = {'#merge-progress': {}, '#merge-log': output, '#merge-log-note': {}, '#merge-worker-chat': {}, '#merge-claude-chat': {}, '#merge-claude-resume': {dataset: {}}};
+  let progress = {id: 'request', log: '<script>literal text</script>', running: true, workerThreadId: 'worker-id'};
+  const context = vm.createContext({state: {mergeRequest: {id: 'request'}}, claudeConversationOpening: false, mergeLogLoading: false, mergeLogId: 'request', $: selector => nodes[selector], api: async () => progress});
+  vm.runInContext(update, context);
+  await context.updateMergeProgress();
+  assert.equal(output.textContent, progress.log);
+  assert.equal(output.scrollTop, 1000);
+  assert.equal(nodes['#merge-worker-chat'].href, 'codex://threads/worker-id');
+  output.scrollTop = 100;
+  progress = {...progress, log: 'Next command completed', workerThreadId: null};
+  await context.updateMergeProgress();
+  assert.equal(output.scrollTop, 100);
+  assert.equal(nodes['#merge-worker-chat'].hidden, true);
+  progress = {...progress, provider: 'claude', workerSessionId: 'claude-session', resumeCommand: 'claude --resume claude-session', running: true};
+  await context.updateMergeProgress();
+  assert.equal(nodes['#merge-claude-chat'].hidden, false);
+  assert.equal(nodes['#merge-claude-chat'].disabled, true);
+  assert.equal(nodes['#merge-claude-resume'].disabled, true);
+  progress = {...progress, running: false};
+  await context.updateMergeProgress();
+  assert.equal(nodes['#merge-claude-chat'].disabled, false);
+  assert.equal(nodes['#merge-claude-resume'].dataset.command, 'claude --resume claude-session');
+  progress = {...progress, truncated: true, log: 'Rolling tail'};
+  await context.updateMergeProgress();
+  assert.equal(output.textContent, 'Next command completed', 'A rolling tail must not replace text being read');
+  progress = {...progress, id: 'stale-request', log: 'Wrong request'};
+  await context.updateMergeProgress();
+  assert.equal(output.textContent, 'Next command completed');
+});
+
+
+test('scroll selection follows the first card still under the sticky header', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const sync = source.slice(source.indexOf('function syncSelection('), source.indexOf("for (const event of ['wheel'"));
+  let selected, scrolled = false;
+  const cards = [{dataset: {file: 'above'}, getBoundingClientRect: () => ({bottom: 120})}, {dataset: {file: 'current'}, getBoundingClientRect: () => ({bottom: 700})}, {dataset: {file: 'last'}, getBoundingClientRect: () => ({bottom: 900})}];
+  const main = {getBoundingClientRect: () => ({top: 150}), scrollHeight: 1000, scrollTop: 0, clientHeight: 500};
+  const context = vm.createContext({tab: 'all', active: 'above', document: {querySelectorAll: () => cards},
+    $: selector => selector === '#content' ? main : {scrollIntoView: () => {scrolled = true;}},
+    updateSelection: id => {selected = id;},
+  });
+  vm.runInContext(sync, context); context.syncSelection();
+  assert.equal(selected, 'current'); assert.equal(scrolled, true);
+  main.scrollTop = 500; context.syncSelection(); assert.equal(selected, 'last', 'The bottom of the feed selects its final card');
+  selected = null; context.tab = 'comments'; context.syncSelection(); assert.equal(selected, null);
+});
+
+test('line range highlighting stays inside the selected file in a continuous feed', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const highlight = source.slice(source.indexOf('function highlightCommentRange('), source.indexOf('function openComment('));
+  const highlighted = [];
+  const line = (file, side, number) => ({dataset: {side, line: String(number)}, closest: selector => selector === '.review-file' ? {dataset: {file}} : {classList: {toggle: (name, value) => highlighted.push(value)}}});
+  const context = vm.createContext({lineSelection: {file: {id: 'chosen'}, side: 'new', start: 4, end: 2}, document: {querySelectorAll: () => [line('chosen', 'new', 3), line('other', 'new', 3), line('chosen', 'old', 3)]}});
+  vm.runInContext(highlight, context); context.highlightCommentRange();
+  assert.deepEqual(highlighted, [true, false, false]);
+});
+
+test('filtered files explain matching defaults and custom exclusions', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const filter = source.slice(source.indexOf('function filterReason('), source.indexOf('function viewed('));
+  const context = vm.createContext({state: {settings: {hideTests: true, hideLocalization: true, exclude: ['generated']}}, globMatch: (pattern, path) => path.startsWith(pattern)});
+  vm.runInContext(filter, context);
+  assert.equal(context.filterReason({kind: 'test', path: 'Test.swift'}), 'Unit tests');
+  assert.equal(context.filterReason({kind: 'snapshot', path: 'Tests/image.png'}), '');
+  assert.equal(context.filterReason({path: 'generated/Code.swift'}), 'Excluded by generated');
+});
+
+
+test('offscreen comparisons preserve height and invalidate late responses across remounts', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const feed = source.slice(source.indexOf('function renderFeed('), source.indexOf('async function selectFile('));
+  let observe; const checks = [];
+  const main = {replaceChildren() {}, classList: {toggle() {}}};
+  const body = {style: {}, isConnected: true, replaceChildren() {}, closest: () => ({dataset: {file: 'snapshot'}}), getBoundingClientRect: () => ({height: 620})};
+  const context = vm.createContext({feedObserver: undefined, renderVersion: 0, tab: 'snapshot', state: {files: [{id: 'snapshot'}]},
+    $: selector => selector === '#content' ? main : {checked: true}, el: () => ({}), visibleFiles: () => [],
+    run: action => action(), renderFile: (file, node, current) => {checks.push(current);},
+    IntersectionObserver: class {constructor(callback) {observe = callback;} disconnect() {}},
+  });
+  vm.runInContext(feed, context); context.renderFeed();
+  observe([{target: body, isIntersecting: true}]); assert.equal(checks[0](), true);
+  observe([{target: body, isIntersecting: false}]); assert.equal(body.style.height, '620px'); assert.equal(checks[0](), false);
+  observe([{target: body, isIntersecting: true}]); assert.equal(checks[0](), false); assert.equal(checks[1](), true);
+  context.renderVersion++; assert.equal(checks[1](), false);
+});
+
+
+test('background ranking reorders the feed without replacing cards or moving the selected file', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const reorder = source.slice(source.indexOf('function reorderFeed('), source.indexOf('function updateSelection('));
+  const main = {cards: [], scrollTop: 0, append(...cards) {this.cards = cards;}};
+  const cards = ['a', 'b', 'c'].map(id => {const card = {dataset: {file: id}, getBoundingClientRect: () => ({top: main.cards.indexOf(card) * 300 - main.scrollTop})}; return card;});
+  main.cards = cards;
+  const context = vm.createContext({active: 'b', $: () => main, document: {querySelectorAll: () => main.cards}});
+  vm.runInContext(reorder, context); context.reorderFeed([{id: 'c'}, {id: 'a'}, {id: 'b'}]);
+  assert.deepEqual(main.cards, [cards[2], cards[0], cards[1]]);
+  assert.equal(cards[1].getBoundingClientRect().top, 300);
+});
+
+
+test('merge confirmation keeps the reviewed diff identity across background state updates', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const merge = source.slice(source.indexOf('let mergeRevision;'), source.indexOf("document.addEventListener('keydown', event =>"));
+  const form = {elements: {title: {}, description: {}}, querySelector: () => ({disabled: false})};
+  const nodes = {'#approve': {}, '#merge-description': {}, '#merge-summary': {}, '#merge-agent-note': {}, '#merge-form': form, '#merge-dialog': {showModal() {}, close() {}}};
+  let submitted, pending;
+  const state = {branch: 'feature', target: 'main', agent: {provider: 'codex'}, merge: {revision: 'reviewed-diff', fileCount: 3, draft: {title: '', description: ''}}};
+  const context = vm.createContext({state, $: selector => nodes[selector], updateChrome() {}, notice() {},
+    run: action => {pending = action();}, api: async (path, body) => {submitted = body; return state;},
+  });
+  vm.runInContext(merge, context); nodes['#approve'].onclick();
+  state.merge.revision = 'unreviewed-diff';
+  nodes['#merge-form'].onsubmit({preventDefault() {}, target: form}); await pending;
+  assert.equal(submitted.revision, 'reviewed-diff');
+  assert.match(nodes['#merge-summary'].textContent, /first update from the latest main/);
+});
+
+
+test('scoped requests retain their review identity for diff and timing APIs', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function scopedPath('), source.indexOf('async function api('));
+  const context = vm.createContext({reviewId: 'thread-review', watchedMerge: 'saved-merge', iteration: 'thread'});
+  vm.runInContext(fn, context);
+  assert.equal(context.scopedPath('file?id=abc'), 'file?id=abc&review=thread-review&merge=saved-merge&iteration=thread');
+  assert.equal(context.scopedPath('review-time', null), 'review-time?review=thread-review&merge=saved-merge');
+});
+
+test('tool feedback saves without requiring a current diff file or loaded state', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf("$('#feedback-form').onsubmit"), source.indexOf("$('#feedback-export').onclick"));
+  const submit = {disabled: false};
+  const form = {elements: {text: {value: 'Feedback about the review tool'}}, reset() {}, querySelector: () => submit};
+  const nodes = {'#feedback-form': form, '#feedback-submit': submit};
+  let pending, submitted;
+  const context = vm.createContext({$: selector => nodes[selector], feedbackTab: 'open',
+    run: action => {pending = action();}, api: async (path, body) => {submitted = {path, body};}, loadFeedback: async () => {}, notice() {}});
+  vm.runInContext(fn, context);
+  form.onsubmit({preventDefault() {}, target: form}); await pending;
+  assert.equal(submitted.path, 'feedback');
+  assert.equal(submitted.body.text, form.elements.text.value);
+  assert.equal('file' in submitted.body, false);
+});
+
+test('review time pauses for requested, running, merged and saved merge views', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function reviewTimePaused('), source.indexOf('function sampleReviewTime('));
+  const context = vm.createContext({watchedMerge: null, state: undefined});
+  vm.runInContext(fn, context);
+  assert.equal(context.reviewTimePaused(), false, 'Timing works before state loads');
+  for (const [mergeRequest, job, paused] of [[null, 'idle', false], [{status: 'blocked'}, 'idle', false], [{status: 'cancelled'}, 'idle', false],
+    [{status: 'pending'}, 'idle', true], [{status: 'working'}, 'idle', true], [{status: 'merged'}, 'idle', true], [null, 'running', true], [null, 'merged', true], [null, 'failed', false]]) {
+    context.state = {mergeRequest, job: {status: job}};
+    assert.equal(context.reviewTimePaused(), paused, `${mergeRequest?.status} / ${job}`);
+  }
+  context.state = {mergeRequest: null, job: {status: 'idle'}};
+  context.watchedMerge = 'saved-merge';
+  assert.equal(context.reviewTimePaused(), true);
+});
+
+test('code search results mark every match without interpreting the line as HTML', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const marked = source.slice(source.indexOf('function markedText('), source.indexOf('async function runCodeSearch('));
+  const node = (tag, text = '') => ({tag, text, children: [], append(...items) {this.children.push(...items);}});
+  const context = vm.createContext({el: (tag, _className, text) => node(tag, text), document: {createTextNode: text => node('#text', text)}});
+  vm.runInContext(marked, context);
+  const parts = code => code.children.map(child => [child.tag, child.text]).filter(([, text]) => text);
+  assert.deepEqual(parts(context.markedText('<b>Load</b> load', 'load', false)), [['#text', '<b>'], ['mark', 'Load'], ['#text', '</b> '], ['mark', 'load']]);
+  assert.deepEqual(parts(context.markedText('Load load', 'load', true)), [['#text', 'Load '], ['mark', 'load']]);
+});
+
+test('only Swift method declarations become caller links', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const mark = source.slice(source.indexOf('// Method declarations offer'), source.indexOf('function closeDefinitionMenu()'));
+  const text = value => ({nodeType: 3, textContent: value});
+  const token = (type, value, previousSibling) => {const classes = new Set(['tok-' + type]); return {nodeType: 1, textContent: value, previousSibling, classList: {contains: name => classes.has(name), add: name => classes.add(name)}};};
+  const declaration = token('function', 'load', text(' ')); declaration.previousSibling.previousSibling = token('keyword', 'func', null);
+  const call = token('function', 'load', text(' = ')); call.previousSibling.previousSibling = token('keyword', 'let', null);
+  const first = token('function', 'start', null);
+  const context = vm.createContext({Node: {TEXT_NODE: 3}});
+  vm.runInContext(mark, context);
+  context.markCallerLinks({querySelectorAll: () => [declaration, call, first]});
+  assert.deepEqual([declaration, call, first].map(node => node.classList.contains('caller-link')), [true, false, false]);
+  assert.equal(declaration.title, 'Click to show callers');
+});

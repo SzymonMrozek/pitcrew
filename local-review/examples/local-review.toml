@@ -1,0 +1,52 @@
+# .config/local-review.toml: every key is optional. Path patterns are Python regular
+# expressions, searched case-insensitively, except [[modules]], which the browser evaluates.
+
+# State directory in the Git common dir, private ref namespace (refs/<name>/...), and the
+# <NAME>_HANDOFF / <NAME>_QUEUE_PID variables passed to merge workers. Changing it later
+# starts with empty history.
+name = "local-review"
+
+# Brand word before "review" in the page header and browser tab.
+title = "MyApp"
+
+# The command people and agents run. Merge agents receive commands built from it.
+launcher = "mise run review --"
+
+# Replaces the default for that kind only. Checked in this order; anything else is code.
+[files]
+snapshot = ['/__snapshots__/', '\.(png|jpe?g|webp)$']
+localization = ['\.lproj/', '\.(strings|stringsdict|xcstrings)$']
+manifest = ['(^|/)Project\.swift$']
+test = ['tests\.swift$', '(^|/)tests/']
+view = ['(^|/)(views|navigation)/', '(view|coordinator|router)\.swift$']
+# Without an evaluator, code paths matching this rank above other code.
+important = 'interactor|service|repository|provider|cache|auth'
+
+# Code and view changes on these paths never score below 95.
+[[priority]]
+pattern = '^Modules/[^/]+/[^/]+/Interface/'
+label = "Interface target"
+
+# Module tags: JavaScript regular expressions with named groups name, and optionally group and target.
+[[modules]]
+pattern = '^Modules/(?<group>[^/]+)/(?<name>[^/]+)/(?:(?<target>Interface|Implementation|Testing)/)?.'
+
+[[modules]]
+pattern = '^Packages/(?<name>[^/]+)/.'
+
+# Where Open Simulator finds this worktree's device (see worktree-simulator).
+[simulator]
+metadata = ".worktree-simulator/simulator.env"
+udid-key = "WORKTREE_SIMULATOR_UDID"
+name-key = "WORKTREE_SIMULATOR_NAME"
+
+[merge]
+# {target} is the merge target branch. The default runs Worktrunk's merge hooks.
+command = ["wt", "merge", "{target}", "--no-commit", "--no-rebase"]
+# Appended to the merge agent's instructions.
+instructions = "The Worktrunk pre-merge hook runs the affected tests; don't run them beforehand just to repeat them."
+
+# Runs before committing when any changed path matches one of `paths`.
+[[merge.checks]]
+paths = ['^(App|Modules)/', '^Project\.swift$']
+command = ["mise", "run", "app:run:worktree"]

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Merge queue · Local review</title><link rel="stylesheet" href="style.css"></head>
+<body class="queue-page">
+<header><a class="brand" id="queue-review"><b id="brand-title">Local</b><span>review</span></a><div><strong>Merge queue</strong><p class="muted">Repository status · updates automatically</p></div><button id="queue-refresh" type="button">Refresh</button></header>
+<main class="queue-main">
+<p class="muted">Waiting merges start preparation after the current merge finishes. Blocked items need attention and let the queue continue.</p>
+<p id="queue-error" role="status" hidden></p>
+<div id="queue-content" data-standalone aria-live="polite"></div>
+<details class="queue-guide"><summary>Agent workflow</summary>
+<p>Start with <code data-launcher="--queue">--queue</code>. Compare pending changed paths with your task, including shared interfaces and callers. Unrelated work can start from the current target.</p>
+<p>For overlapping work, inspect the saved snapshot ref and incorporate the relevant pending changes in your own worktree. The snapshot includes uncommitted approved files; it can change during conflict resolution. Wait for dependencies to land before approving your own full diff.</p>
+<p>Use the review’s <strong>Approve &amp; merge</strong> action. Its worker waits for a turn, then updates the target, rebases, handles comments and executes the same approval. Merge checks and Worktrunk hooks validate and clean up; do not duplicate them beforehand.</p>
+<p>Inspect an approval with <code data-launcher="--merge-request &lt;id&gt;">--merge-request &lt;id&gt;</code>. Resume a stopped worker from its existing worktree with <code data-launcher="--resume-merge-request &lt;id&gt;">--resume-merge-request &lt;id&gt;</code>.</p>
+</details>
+</main>
+<script type="module" src="queue.mjs"></script>
+</body></html>

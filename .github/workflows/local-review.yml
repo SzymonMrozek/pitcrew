@@ -1,0 +1,30 @@
+name: local-review
+
+on:
+  push:
+    branches: [main]
+    paths: ["local-review/**", ".github/workflows/local-review.yml"]
+  pull_request:
+    paths: ["local-review/**", ".github/workflows/local-review.yml"]
+
+defaults:
+  run:
+    working-directory: local-review
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Git identity for throwaway test repositories
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name CI
+      - run: python3 tests/test_server.py
+      - run: node --test tests/*.test.mjs
