@@ -1,6 +1,6 @@
 # repository-lint
 
-A macOS Swift package for 22 SwiftSyntax checks, a changed-line Git runner,
+A macOS Swift package for 23 SwiftSyntax checks, a changed-line Git runner,
 standard SwiftLint integration, and a nested-call formatter. It parses each
 file once, scans up to four files concurrently, sorts diagnostics, and records
 SQLite timings. It is independent of the app's Swift package graph.
@@ -55,7 +55,7 @@ color factory name, and generated paths excluded from nested-call formatting.
 [examples/mise.toml](examples/mise.toml) show consumer integration.
 
 ```bash
-# Stable IDs and exact diagnostic lines for 333 examples across 22 rules:
+# Stable IDs and exact diagnostic lines for 351 examples across 23 rules:
 ./repository-lint/run.sh --self-test
 # Build production first; tests run the CLI in temporary consumer Git repos:
 REPOSITORY_LINT_BINARY="$PWD/.build-tools/repository-lint/release/repository-lint" \

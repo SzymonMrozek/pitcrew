@@ -31,6 +31,21 @@ extension Inspector {
         }
     }
 
+    func checkObservationTracking(_ node: DeclReferenceExprSyntax) {
+        guard
+            path.hasSuffix(".swift"), !path.hasSuffix(".tests.swift"), !path.contains("Generated/"),
+            path.hasPrefix("Modules/") || path.hasPrefix("App/") || path.hasPrefix("InternalPackages/"),
+            node.baseName.text == "withObservationTracking" else { return }
+        var expression = Syntax(node)
+        if let member = node.parent?.as(MemberAccessExprSyntax.self), member.declName.id == node.id {
+            guard member.base?.trimmedDescription == "Observation" else { return }
+            expression = Syntax(member)
+        }
+        guard !nearby("lint:allow-unscoped-observation:", line: line(node), above: 2, reason: true) else { return }
+        let call = expression.parent?.as(FunctionCallExprSyntax.self)
+        emit(.unscopedObservationTracking, node, through: call?.endPositionBeforeTrailingTrivia)
+    }
+
     func checkNestedCall(_ node: Syntax) {
         if let opening = nestedCallOpening(node, locations: locations), let (_, closing, _) = parentheses(node) {
             breaks.append(opening.endPositionBeforeTrailingTrivia.utf8Offset)

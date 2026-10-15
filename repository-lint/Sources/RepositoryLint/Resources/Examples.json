@@ -3907,5 +3907,168 @@
     "source": "ZStack {\n    DesignColor.Background.base\n    DesignAnimatedWatermarkPattern()\n        .opacity(isVisible ? 1 : 0.5)\n}\n",
     "lines": [],
     "affected": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "weak self does not cancel service registrations",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    func observe() {\n        let value = withObservationTracking {\n            resource.value\n        } onChange: { [weak self] in\n            self?.observe()\n        }\n    }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "qualified call with parenthesized closures",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "let value = Observation.withObservationTracking(\n    { resource.value },\n    onChange: { refresh() }\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "function reference cannot bypass ownership",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "let track = withObservationTracking\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "qualified function reference",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "let track = Observation.withObservationTracking\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "empty exception is rejected",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "// lint:allow-unscoped-observation:\nlet value = withObservationTracking { resource.value } onChange: {}\n",
+    "lines": [
+      2
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "unrelated cancellation does not prove observation teardown",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    deinit { task.cancel() }\n    func observe() {\n        withObservationTracking { resource.value } onChange: {}\n    }\n}\n",
+    "lines": [
+      4
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "wrapper filename grants no implicit exemption",
+    "path": "Modules/Utilities/ObservationLifetime/Sources/ObservationLifetime.swift",
+    "source": "withObservationTracking { resource.value } onChange: {}\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "app code also requires ownership",
+    "path": "App/ExampleApp/Sources/App.swift",
+    "source": "withObservationTracking { resource.value } onChange: {}\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "internal package also requires ownership",
+    "path": "InternalPackages/Example/Sources/Example.swift",
+    "source": "withObservationTracking { resource.value } onChange: {}\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "owner lifetime wrapper",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "private let observationLifetime = ObservationLifetime()\nlet value = observationLifetime.observe { resource.value } onChange: { refresh() }\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "reasoned lifetime exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "// lint:allow-unscoped-observation: isActive is read here and changed in deinit.\nwithObservationTracking { _ = isActive; return read() } onChange: { onChange() }\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "reasoned qualified exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "// lint:allow-unscoped-observation: only this object owns the observed state.\nObservation.withObservationTracking { snapshot } onChange: {}\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "tests may exercise raw observations",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.tests.swift",
+    "source": "withObservationTracking { source.value } onChange: {}\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "generated files excluded",
+    "path": "Modules/Models/Example/Generated/Observation.swift",
+    "source": "withObservationTracking { source.value } onChange: {}\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "tool code excluded",
+    "path": "Tools/Example/Example.swift",
+    "source": "withObservationTracking { source.value } onChange: {}\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "comments and strings are not references",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "// withObservationTracking { resource.value } onChange: {}\n/* withObservationTracking */\nlet example = \"withObservationTracking\"\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "unrelated member is not the Observation API",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "custom.withObservationTracking { source.value } onChange: {}\n",
+    "lines": []
+  },
+  {
+    "rule": "unscoped_observation_tracking",
+    "name": "exception remains local",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "// lint:allow-unscoped-observation: only this object owns the observed state.\nwithObservationTracking { snapshot } onChange: {}\nprepare()\nprepare()\nwithObservationTracking { resource.value } onChange: {}\n",
+    "lines": [
+      5
+    ]
   }
 ]

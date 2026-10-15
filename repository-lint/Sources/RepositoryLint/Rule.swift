@@ -21,6 +21,7 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
     case singleUseDependency = "single_use_dependency"
     case testContextSetup = "test_context_setup"
     case unstableForeachIdentity = "unstable_foreach_identity"
+    case unscopedObservationTracking = "unscoped_observation_tracking"
     case unusedBindable = "unused_bindable"
     case viewHelperInForeach = "view_helper_in_foreach"
 
@@ -79,6 +80,9 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
                 + "lint:ignore-test-context: reason."
         case .unstableForeachIdentity:
             "Use stable element IDs instead of collection indices in SwiftUI ForEach rows."
+        case .unscopedObservationTracking:
+            "Use an owner-held ObservationLifetime to release observation registrations; weak self does not "
+                + "cancel them. Document a safe raw observation with lint:allow-unscoped-observation: reason."
         case .unusedBindable:
             "Store this injected model as let; use @Bindable only when the View reads a $model "
                 + "binding."

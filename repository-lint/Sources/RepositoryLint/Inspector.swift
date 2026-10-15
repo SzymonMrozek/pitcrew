@@ -251,6 +251,7 @@ final class Inspector: SyntaxVisitor {
     }
 
     override func visit(_ node: DeclReferenceExprSyntax) -> SyntaxVisitorContinueKind {
+        checkObservationTracking(node)
         if node.parent?.as(MemberAccessExprSyntax.self)?.declName.id != node.id {
             record(node.baseName.text, node)
         }
