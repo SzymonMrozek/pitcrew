@@ -646,7 +646,8 @@ class Review:
                     'dirty': not clean, 'jevAvailable': bool(os.environ.get('JEV_API_KEY')),
                     'tool': self.tool_info(),
                     'simulator': self.simulator() if live else None,
-                    'canMerge': live and not merge_id and bool(self.files) and bool(self.branch) and self.branch != self.target}
+                    'canMerge': live and not merge_id and bool(self.files) and bool(self.branch) and self.branch != self.target
+                                and not any(file['submoduleDirty'] for file in self.files)}
 
     def feedback(self):
         directory = self.store / 'feedback'
@@ -1225,6 +1226,8 @@ class Review:
             raise ValueError('Reviewed files changed. Refresh and review the updated diff before approving.')
         if not self.branch or self.branch == self.target or not self.files:
             raise ValueError('No branch changes to merge')
+        if any(file['submoduleDirty'] for file in self.files):
+            raise ValueError('Commit uncommitted submodule changes inside the submodule, then refresh and approve.')
         if self.git('branch', '--show-current').strip() != self.branch:
             raise ValueError('The checked-out branch changed')
         if not isinstance(title, str) or len(title) > 250 or not isinstance(description, str) or len(description) > 20000:

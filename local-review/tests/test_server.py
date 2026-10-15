@@ -164,6 +164,7 @@ class ReviewTests(unittest.TestCase):
         self.git('-C', str(dependency), 'commit', '-am', 'feat(test): second release')
         second = self.git('-C', str(dependency), 'rev-parse', 'HEAD')
         self.review.refresh()
+        self.assertTrue(self.review.state()['canMerge'])
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         live = next(file for file in self.review.files if file['path'] == 'Tools/Dependency')
         captured = self.review.capture(before=request['snapshotBase'], after=request['snapshotCommit'])
@@ -174,6 +175,9 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', request['snapshotRef'] + ':Tools/Dependency'), second)
         self.write('Tools/Dependency/version.txt', 'uncommitted\n')
         self.review.refresh()
+        self.assertFalse(self.review.state()['canMerge'])
+        with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
+            self.review.request_merge(self.review.approval_revision(), '', '')
         with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
             self.review.start_merge(self.review.revision, 'fix(test): pin dependency', 'Keep dirty submodules out.')
 
@@ -1517,11 +1521,25 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
         self.git('-c', 'protocol.file.allow=always', 'submodule', 'add', str(sub), 'proto')
         self.git('add', '.')
         self.git('commit', '-m', 'feat(test): submodule')
-        (self.root / 'proto' / 'Model.swift').write_text('let model = 2\n')
-        self.review.refresh()
-        self.assertTrue(next(f for f in self.review.files if f['path'] == 'proto')['submoduleDirty'])
-        with self.assertRaisesRegex(ValueError, 'submodule'):
-            self.review.start_merge(self.review.revision, 'fix(test): dirty submodule', 'Final change and validation.')
+        for path in ('Model.swift', 'untracked.swift'):
+            with self.subTest(path=path):
+                file = self.root / 'proto' / path
+                file.write_text('let model = 2\n')
+                self.review.refresh()
+                self.assertTrue(next(f for f in self.review.files if f['path'] == 'proto')['submoduleDirty'])
+                self.assertFalse(self.review.state()['canMerge'])
+                with patch.object(self.review, 'snapshot') as snapshot:
+                    with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
+                        self.review.request_merge(self.review.approval_revision(), '', '')
+                snapshot.assert_not_called()
+                self.assertIsNone(self.review.merge_request())
+                self.notify.assert_not_called()
+                with self.assertRaisesRegex(ValueError, 'submodule'):
+                    self.review.start_merge(self.review.revision, 'fix(test): dirty submodule', 'Final change and validation.')
+                if path == 'Model.swift':
+                    file.write_text('let model = 1\n')
+                else:
+                    file.unlink()
 
     def test_symlink_does_not_read_external_file(self):
         external = self.root.parent / ('review-secret-' + self.root.name)
