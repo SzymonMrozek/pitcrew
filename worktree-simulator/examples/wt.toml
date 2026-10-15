@@ -1,0 +1,3 @@
+# .config/wt.toml: Worktrunk project hooks. Adjust the path to where you keep pitcrew.
+pre-start = "python3 tools/pitcrew/worktree-simulator/worktree_simulator.py create --name 'MyApp {{ branch | sanitize_hash }}'"
+pre-remove = "python3 tools/pitcrew/worktree-simulator/worktree_simulator.py delete"

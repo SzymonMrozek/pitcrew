@@ -1,0 +1,31 @@
+name: worktree-simulator
+
+on:
+  push:
+    branches: [main]
+    paths: ["worktree-simulator/**", ".github/workflows/worktree-simulator.yml"]
+  pull_request:
+    paths: ["worktree-simulator/**", ".github/workflows/worktree-simulator.yml"]
+
+defaults:
+  run:
+    working-directory: worktree-simulator
+
+jobs:
+  fake-simctl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/test_worktree_simulator.py
+
+  real-simulator:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create, reuse and delete a device
+        run: |
+          udid=$(python3 worktree_simulator.py create --name "pitcrew-ci-$GITHUB_RUN_ID")
+          test "$(python3 worktree_simulator.py create --name "pitcrew-ci-$GITHUB_RUN_ID")" = "$udid"
+          xcrun simctl list devices --json | grep -q "$udid"
+          python3 worktree_simulator.py delete
+          ! xcrun simctl list devices --json | grep -q "$udid"
