@@ -11,6 +11,8 @@ worktrees wait in one queue, so merges never race each other.
 It's a Python standard-library server and plain browser JavaScript. There's no
 build step, no dependency to install, and no hosting.
 
+![A review of an agent's branch in a mock coffee-ordering app. Files are ranked by importance and tagged with their module, the interface file is prioritized, one file is marked viewed, and an inline comment asks the agent to handle a failed reorder.](images/changes.png)
+
 - **The diff you'd actually review:** the branch against its merge base, plus
   staged, unstaged and untracked files.
 - **Importance ranking:** files sort by importance. Optionally,
@@ -90,7 +92,10 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   move between files, `V` marks one viewed and moves on, and `S` toggles snapshots.
   Marking a file viewed is always explicit, never automatic on scroll.
 - **Snapshots** show old, new and a highlighted pixel diff (exact RGBA,
-  including size changes). Click an image to inspect it. Missing Git LFS
+  including size changes).
+
+  ![The Snapshots feed for the same mock app: the order history screen before and after a Reorder button was added, with changed pixels highlighted in the third column.](images/snapshots.png)
+ Click an image to inspect it. Missing Git LFS
   objects are reported; the tool never downloads them.
 - **Context.** Gap rows reveal 20 more lines at a time, or the whole gap.
   **Show full file** expands every gap. Expanded lines take comments too.
@@ -184,7 +189,10 @@ already did stays in the worktree.
 ## Merge queue
 
 **Merge queue** opens the repository's queue: approvals in arrival order, ones
-that need attention, and the last 20 merges. `review --queue` prints it as JSON
+that need attention, and the last 20 merges.
+
+![The standalone merge queue page: one approval validating and merging, one waiting second, and recently merged branches below.](images/queue.png)
+ `review --queue` prints it as JSON
 without starting a server. `review --queue-page` prints the URL of a standalone
 page.
 
