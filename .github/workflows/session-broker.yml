@@ -50,5 +50,8 @@ jobs:
       - run: tuist generate --no-open
       - name: Keychain and swap tests
         run: |
+          # Runner images change their simulators, so take the first available iPhone.
+          udid=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.name | startswith("iPhone"))][0].udid')
           xcodebuild test -workspace SessionStoreExample.xcworkspace -scheme SessionStoreExample \
-            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16'
+            -destination "id=$udid"
