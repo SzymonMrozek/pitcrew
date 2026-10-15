@@ -11,6 +11,8 @@ self-contained and optional.
 | Tool | Problem it solves |
 | --- | --- |
 | [session-broker](session-broker) | Every simulator needs its own login, and rotating refresh tokens revoke each other. One local service shares the session and device ID across all simulators. |
+| [local-review](local-review) | Agents write changes faster than you can review and merge them. A local review page ranks the diff and tracks each agent turn. Approving hands the merge back to the agent that wrote the change, through one merge queue. |
+| [worktree-simulator](worktree-simulator) | Worktrees that share a simulator overwrite each other's app, Keychain and data. Each worktree gets its own device, created and deleted with it. |
 
 I wrote about the workflow behind the session broker in
 [Per-Worktree iOS Simulators with a Shared OAuth Session](https://mrozek.dev/posts/one-worktree-one-simulator-one-shared-session).
@@ -18,8 +20,9 @@ I wrote about the workflow behind the session broker in
 ## Three ways to use this
 
 **1. Run a tool as it is.** Pin a release tag and configure it from your own
-repository. Each tool's `examples/` folder shows exactly what to add. Tags are
-per tool, for example `session-broker-v0.1.0`.
+repository: a Docker build from the tag, or this repository as a git submodule
+checked out at it. Each tool's `examples/` folder shows exactly what to add.
+Tags are per tool, for example `session-broker-v0.1.0`.
 
 **2. Copy what you need.** Everything is MIT. Take one file, one pattern, or
 one test.
@@ -56,7 +59,8 @@ tag. Issues and pull requests are welcome, but there's no support promise.
 ## Requirements
 
 - Docker (Docker Desktop or Colima) for the session broker
-- macOS with Xcode for the iOS examples
+- Python 3.11+ and Git for local-review, plus [Worktrunk](https://github.com/max-sixty/worktrunk) to merge
+- macOS with Xcode for the iOS examples and worktree-simulator
 
 ## Repository hygiene
 
