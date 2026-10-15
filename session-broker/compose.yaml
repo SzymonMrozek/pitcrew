@@ -1,0 +1,14 @@
+name: session-broker
+
+services:
+  session-broker:
+    build: .
+    ports:
+      # Bind to loopback only: tokens are stored unencrypted.
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - session-broker-data:/data
+    restart: unless-stopped
+
+volumes:
+  session-broker-data:

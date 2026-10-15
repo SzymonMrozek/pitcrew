@@ -1,0 +1,21 @@
+# Drop this into your app repository. It is the only thing your project needs:
+# Docker builds the broker straight from a pinned pitcrew tag.
+name: myapp-session-broker
+
+services:
+  session-broker:
+    build:
+      context: https://github.com/SzymonMrozek/pitcrew.git#session-broker-v0.1.0:session-broker
+    environment:
+      # Optional: match the header your existing client already sends.
+      SESSION_BROKER_CLIENT_ID_HEADER: X-Session-Client-ID
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - session-broker-data:/data
+    restart: unless-stopped
+
+volumes:
+  session-broker-data:
+    # A fixed name lets every worktree share one session.
+    name: myapp-session-broker-data

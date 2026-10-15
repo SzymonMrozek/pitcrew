@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Enable once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+zero=0000000000000000000000000000000000000000
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  "$(git rev-parse --show-toplevel)/scripts/check-forbidden-terms.sh" "$range"
+done
