@@ -455,11 +455,14 @@ class Review:
                 if after:
                     new = self.git('rev-parse', f'{after}:{path}', binary=True)
                 else:
+                    new = self.work_blob(path)
                     result = subprocess.run(['git', '-C', str(self.repo / path), 'status', '--porcelain'], capture_output=True, timeout=30)
                     submodule_dirty = bool(result.returncode or result.stdout)
             # Executable-bit and symlink changes matter even with identical bytes.
             if after:
                 mode = int(tree_entry.split(b' ', 1)[0], 8) if tree_entry else 0
+            elif submodule:
+                mode = 0o160000
             else:
                 mode = (self.repo / path).lstat().st_mode if (self.repo / path).exists() or (self.repo / path).is_symlink() else 0
             # Git LFS stores pointers; compare the image bytes that the reviewer sees.

@@ -147,6 +147,36 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(m.category('Sources/ProjectSettings.swift'), 'code')
         self.assertTrue(m.DEFAULTS['hideManifests'])
 
+    def test_queue_snapshot_matches_a_live_submodule_pin_and_rejects_dirty_execution(self):
+        dependency = self.root / 'Tools/Dependency'
+        dependency.mkdir(parents=True)
+        self.git('-C', str(dependency), 'init', '-b', 'main')
+        self.git('-C', str(dependency), 'config', 'user.name', 'Test')
+        self.git('-C', str(dependency), 'config', 'user.email', 'test@example.com')
+        self.write('Tools/Dependency/version.txt', 'one\n')
+        self.git('-C', str(dependency), 'add', '.')
+        self.git('-C', str(dependency), 'commit', '-m', 'feat(test): first release')
+        first = self.git('-C', str(dependency), 'rev-parse', 'HEAD')
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{first},Tools/Dependency')
+        self.git('commit', '-m', 'chore(test): pin first release')
+        self.git('update-ref', 'refs/heads/main', 'HEAD')
+        self.write('Tools/Dependency/version.txt', 'two\n')
+        self.git('-C', str(dependency), 'commit', '-am', 'feat(test): second release')
+        second = self.git('-C', str(dependency), 'rev-parse', 'HEAD')
+        self.review.refresh()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        live = next(file for file in self.review.files if file['path'] == 'Tools/Dependency')
+        captured = self.review.capture(before=request['snapshotBase'], after=request['snapshotCommit'])
+        saved = next(file for file in captured[3] if file['path'] == 'Tools/Dependency')
+        self.assertEqual(live['fingerprint'], saved['fingerprint'])
+        self.assertEqual(self.review.blobs[live['id']]['new'], (second + '\n').encode())
+        self.assertEqual(captured[4][saved['id']]['new'], (second + '\n').encode())
+        self.assertEqual(self.git('rev-parse', request['snapshotRef'] + ':Tools/Dependency'), second)
+        self.write('Tools/Dependency/version.txt', 'uncommitted\n')
+        self.review.refresh()
+        with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
+            self.review.start_merge(self.review.revision, 'fix(test): pin dependency', 'Keep dirty submodules out.')
+
     def test_saved_trees_with_submodule_commits_are_readable(self):
         # The superproject never has the submodule's commit objects; only the gitlink.
         old_link, new_link = '1' * 40, '2' * 40
