@@ -1,39 +1,71 @@
 # pitcrew
 
-Tools for developing one iOS app in many places at once: several git worktrees,
-several simulators, several coding agents.
+The tools I built for my own iOS work, where one app is developed in many
+places at once: several git worktrees, several simulators, several coding
+agents.
+
+They're public because seeing how a problem was already solved is often worth
+more than starting from scratch. You don't need to adopt any of it. Each tool is
+self-contained and optional.
 
 | Tool | Problem it solves |
 | --- | --- |
-| [session-broker](session-broker) | Every simulator needs its own login, and rotating refresh tokens revoke each other. The broker shares one session and one device ID across all simulators. |
+| [session-broker](session-broker) | Every simulator needs its own login, and rotating refresh tokens revoke each other. One local service shares the session and device ID across all simulators. |
 
-## How you use a tool
+## Three ways to use this
 
-You don't fork or wrap it. Your repository pins a release tag and configures the
-tool, and that's all. Each tool's `examples/` folder shows exactly what to add.
+**1. Run a tool as it is.** Pin a release tag and configure it from your own
+repository. Each tool's `examples/` folder shows exactly what to add. Tags are
+per tool, for example `session-broker-v0.1.0`.
 
-Tags are per tool: `<tool>-vX.Y.Z`, for example `session-broker-v0.1.0`.
+**2. Copy what you need.** Everything is MIT. Take one file, one pattern, or
+one test.
 
-## Requirements
+**3. Have your agent build your own.** Your stack, naming and constraints are
+different, and a version made for your project may fit better than mine. Point
+your coding agent at the tool and its design notes:
 
-- macOS with Xcode for the iOS examples
-- Docker (Docker Desktop or Colima) for the session broker
+```text
+Build a simulator session broker for this project. Use
+https://github.com/SzymonMrozek/pitcrew/tree/main/session-broker as a reference:
+read its DESIGN.md first, keep the invariants it lists, and adapt the stack,
+names and integration to this repository. Port the tests that describe the
+behavior, then summarize what you changed and why.
+```
+
+## What each tool folder contains
+
+| File | What it's for |
+| --- | --- |
+| `README.md` | What the tool does and how to run it. |
+| `DESIGN.md` | Why it works this way: the decisions, the invariants that matter, what's incidental, and the pitfalls I hit. Read this one before building your own. |
+| `examples/` | Integration code you can run or copy. |
+| tests | The behavior, written down. Port them along with the idea. |
+
+[AGENTS.md](AGENTS.md) tells coding agents how to read this repository.
 
 ## Status
 
-Each tool here runs every day in a production iOS codebase. APIs can still
-change before `1.0`. Pin a tag.
+I use these tools every day on a production iOS app. They change when my work
+needs them to, and APIs can change before `1.0`. If you depend on one, pin a
+tag. Issues and pull requests are welcome, but there's no support promise.
 
-## Contributing
+## Requirements
+
+- Docker (Docker Desktop or Colima) for the session broker
+- macOS with Xcode for the iOS examples
+
+## Repository hygiene
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
 The pre-push hook runs [`scripts/check-forbidden-terms.sh`](scripts/check-forbidden-terms.sh)
-against your own list of terms in `~/.config/pitcrew/forbidden-terms` (one
-regex per line, kept outside the repository), so names from private projects
-can't reach a public commit.
+against a private list of terms in `~/.config/pitcrew/forbidden-terms` (one
+regex per line, kept outside the repository). That's how names from my private
+projects stay out of public commits. The same trick works if you publish your
+own tools.
 
 ## License
 

@@ -75,14 +75,15 @@ operation unconditional, which is what login and logout use.
 
 Run exactly **one** Uvicorn worker. Refresh coordination is held in memory.
 
-## Use it in your project
+## Using it
 
-- [`examples/consumer`](examples/consumer): an app repository only needs a
-  `compose.yaml` that builds the broker from a pinned pitcrew tag.
-- [`examples/swift`](examples/swift): `SessionStore`, a single type that uses
-  the Keychain on devices and the broker in simulators, with the same call sites
-  for login, logout and token refresh.
-- [`examples/ios-app`](examples/ios-app): a runnable SwiftUI app built on it.
+- **As it is:** [`examples/consumer`](examples/consumer) is the whole
+  integration: a `compose.yaml` that builds the broker from a pinned pitcrew tag.
+- **In app code:** [`examples/swift`](examples/swift) has `SessionStore`, one
+  type that uses the Keychain on devices and the broker in simulators.
+  [`examples/ios-app`](examples/ios-app) is a runnable SwiftUI app built on it.
+- **As a reference for your own:** read [DESIGN.md](DESIGN.md) for the
+  invariants that matter, the parts you can swap out, and the pitfalls.
 
 ## Failure modes
 
