@@ -9,6 +9,7 @@ import sys
 import tempfile
 import shutil
 import shlex
+import socket
 import time
 import threading
 import unittest
@@ -24,6 +25,39 @@ spec = importlib.util.spec_from_file_location('review_server', TOOL / 'server.py
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 parent_agent_impl = m.parent_agent
+
+
+def run_launcher(args, store, timeout=30):
+    """Run the launcher; on a hang, dump launcher and server stacks so CI shows where it waits."""
+    import signal
+    env = {**os.environ, 'PYTHONFAULTHANDLER': '1'}
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        servers = [int(line.split()[0]) for line in subprocess.run(['ps', '-ax', '-o', 'pid,command'], capture_output=True, text=True).stdout.splitlines()
+                   if '--serve' in line and 'server.py' in line]
+        for pid in (process.pid, *servers):
+            if pid:
+                try:
+                    os.kill(pid, signal.SIGABRT)
+                except OSError:
+                    pass
+        stdout, stderr = process.communicate()
+        time.sleep(1)
+        log = (store / 'shared-server.log').read_text() if (store / 'shared-server.log').exists() else ''
+        ps = subprocess.run(['ps', '-ax', '-o', 'pid,ppid,stat,etime,command'], capture_output=True, text=True).stdout
+        raise AssertionError(f'Launcher hung.\nstdout:\n{stdout}\nstderr:\n{stderr}\nserver log:\n{log}\n'
+                             f'metadata: {read_json_safely(store / "shared-server.json")}\nprocesses:\n'
+                             + '\n'.join(line for line in ps.splitlines() if 'python' in line or 'git' in line))
+    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def read_json_safely(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 class ReviewTests(unittest.TestCase):
@@ -269,7 +303,7 @@ class ReviewTests(unittest.TestCase):
         other.finish_iteration('other', 'Done', 'fix(test): other', 'Other change')
         m.register_review(other)
         def serve():
-            server = m.ThreadingHTTPServer(('127.0.0.1', 0), m.Handler)
+            server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
             server.registry = m.ReviewRegistry(self.review.store)
             server.token, server.version, server.assets = 'stable-token', 'test-version', {}
             threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -298,8 +332,15 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             request(restarted, '../outside')
 
+    def test_server_binds_without_resolving_the_host_name(self):
+        # HTTPServer's default bind runs a reverse DNS lookup that hung CI runners.
+        with patch.object(socket, 'getfqdn', side_effect=AssertionError('reverse DNS lookup')):
+            server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
+        self.addCleanup(server.server_close)
+        self.assertEqual((server.server_name, server.server_port), ('127.0.0.1', server.server_address[1]))
+
     def test_shared_launcher_reuses_port_token_and_review_identity_after_restart(self):
-        probe = m.ThreadingHTTPServer(('127.0.0.1', 0), m.Handler)
+        probe = m.ReviewServer(('127.0.0.1', 0), m.Handler)
         origin = f'http://127.0.0.1:{probe.server_port}/'
         probe.server_close()
         metadata = self.review.store / 'shared-server.json'
@@ -311,8 +352,7 @@ class ReviewTests(unittest.TestCase):
         self.addCleanup(stop)
         def launch(repo):
             # Launching never opens a browser, so the user opens the printed URL manually.
-            result = subprocess.run([sys.executable, str(Path(m.__file__)), '--repo', str(repo)],
-                                    capture_output=True, text=True, timeout=30)
+            result = run_launcher([sys.executable, str(Path(m.__file__)), '--repo', str(repo)], self.review.store)
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout.strip()
         first = launch(self.root)
@@ -349,7 +389,7 @@ class ReviewTests(unittest.TestCase):
         source = (legacy_assets / 'server.py').read_text()
         (legacy_assets / 'server.py').write_text(source.replace(
             "running.get('runtimeVersion', running['version']) != version", "running['version'] != version"))
-        probe = m.ThreadingHTTPServer(('127.0.0.1', 0), m.Handler)
+        probe = m.ReviewServer(('127.0.0.1', 0), m.Handler)
         origin = f'http://127.0.0.1:{probe.server_port}/'
         probe.server_close()
         m.write_json(metadata, {'url': origin + '#persisted-token'})
@@ -359,8 +399,7 @@ class ReviewTests(unittest.TestCase):
                 os.kill(saved['pid'], 15)
         self.addCleanup(stop)
         def launch(script):
-            result = subprocess.run([sys.executable, str(script), '--repo', str(self.root), '--no-open'],
-                                    capture_output=True, text=True, timeout=30)
+            result = run_launcher([sys.executable, str(script), '--repo', str(self.root), '--no-open'], self.review.store)
             self.assertEqual(result.returncode, 0, result.stderr)
         launch(legacy_assets / 'server.py')
         legacy = m.read_json(metadata, {})
@@ -516,7 +555,7 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn(1, {row['new'] for row in file['rows']})
         lines = self.review.file_lines(file['id'])
         self.assertEqual((len(lines['old']), len(lines['new']), lines['new'][19]), (40, 40, 'let line20 = 0'))
-        server = m.ThreadingHTTPServer(('127.0.0.1', 0), m.Handler)
+        server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
         server.review, server.token, server.assets = self.review, 'test-token', {}
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -1509,7 +1548,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
         self.assertEqual(self.review.review_time()['totalMs'], 0)
 
     def test_http_auth_origin_comments_and_image_validation(self):
-        server = m.ThreadingHTTPServer(('127.0.0.1', 0), m.Handler)
+        server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
         server.review, server.token, server.assets = self.review, 'test-token', {'index.html': b'hello'}
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

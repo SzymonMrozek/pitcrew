@@ -25,6 +25,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socketserver
 from urllib.parse import urlparse, parse_qs
 
 ASSETS = Path(__file__).resolve().parent
@@ -1440,6 +1441,14 @@ def register_review(review):
         'targetHead': review.target_head, 'base': review.base, 'tree': tree})
 
 
+class ReviewServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves the host's FQDN while binding, a reverse DNS lookup that can stall for
+        # minutes on some machines. A loopback server never needs it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -1792,7 +1801,7 @@ def main():
     port = parsed.port if parsed.hostname == '127.0.0.1' else 8732
     for attempt in range(50):
         try:
-            server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+            server = ReviewServer(('127.0.0.1', port), Handler)
             break
         except OSError:
             if attempt == 49:
