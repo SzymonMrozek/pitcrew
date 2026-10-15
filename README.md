@@ -26,12 +26,12 @@ one test.
 
 **3. Have your agent build your own.** Your stack, naming and constraints are
 different, and a version made for your project may fit better than mine. Point
-your coding agent at the tool and its design notes:
+your coding agent at the tool and its architecture notes:
 
 ```text
 Build a simulator session broker for this project. Use
 https://github.com/SzymonMrozek/pitcrew/tree/main/session-broker as a reference:
-read its DESIGN.md first, keep the invariants it lists, and adapt the stack,
+read its ARCHITECTURE.md first, keep the invariants it lists, and adapt the stack,
 names and integration to this repository. Port the tests that describe the
 behavior, then summarize what you changed and why.
 ```
@@ -41,7 +41,7 @@ behavior, then summarize what you changed and why.
 | File | What it's for |
 | --- | --- |
 | `README.md` | What the tool does and how to run it. |
-| `DESIGN.md` | Why it works this way: the decisions, the invariants that matter, what's incidental, and the pitfalls I hit. Read this one before building your own. |
+| `ARCHITECTURE.md` | Why it works this way: the decisions, the invariants that matter, what's incidental, and the pitfalls I hit. Read this one before building your own. |
 | `examples/` | Integration code you can run or copy. |
 | tests | The behavior, written down. Port them along with the idea. |
 

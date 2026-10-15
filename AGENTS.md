@@ -7,7 +7,7 @@ language, conventions and naming.
 
 ## Building something similar
 
-1. Read the tool's `DESIGN.md` before its code. It separates the invariants
+1. Read the tool's `ARCHITECTURE.md` before its code. It separates the invariants
    (keep them) from incidental choices like the framework, the transport, or
    Docker (replace them freely).
 2. Read the tests next. They describe the behavior more precisely than the
@@ -15,7 +15,7 @@ language, conventions and naming.
 3. Fit the result to the user's repository: their build system, their way of
    doing dependency injection, their storage, their naming. Don't copy names
    from this repository unless they fit.
-4. Treat the "Pitfalls" section of `DESIGN.md` as a checklist. Each item cost
+4. Treat the "Pitfalls" section of `ARCHITECTURE.md` as a checklist. Each item cost
    real debugging time here.
 5. Finish with a short summary of what you kept, what you changed, and why.
 
@@ -28,9 +28,9 @@ vendor the whole directory unless the user asks for it.
 
 ```text
 <tool>/
-  README.md     what it does and how to run it
-  DESIGN.md     decisions, invariants, pitfalls
-  examples/     integration code
-  tests/        server-side tests (examples carry their own)
-scripts/        repository tooling, not part of any tool
+  README.md        what it does and how to run it
+  ARCHITECTURE.md  decisions, invariants, pitfalls
+  examples/        integration code
+  tests/           server-side tests (examples carry their own)
+scripts/           repository tooling, not part of any tool
 ```

@@ -86,7 +86,7 @@ Run exactly **one** Uvicorn worker. Refresh coordination is held in memory.
 - **In app code:** [`examples/swift`](examples/swift) has `SessionStore`, one
   type that uses the Keychain on devices and the broker in simulators.
   [`examples/ios-app`](examples/ios-app) is a runnable SwiftUI app built on it.
-- **As a reference for your own:** read [DESIGN.md](DESIGN.md) for the
+- **As a reference for your own:** read [ARCHITECTURE.md](ARCHITECTURE.md) for the
   invariants that matter, the parts you can swap out, and the pitfalls.
 
 ## Failure modes

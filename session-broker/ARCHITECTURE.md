@@ -1,4 +1,4 @@
-# Session broker: design notes
+# Session broker: architecture notes
 
 Why the broker works the way it does. Read this before building your own.
 
