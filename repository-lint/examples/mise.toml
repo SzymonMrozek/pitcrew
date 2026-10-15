@@ -1,0 +1,11 @@
+[tools]
+swiftlint = "0.65.1"
+
+[tasks."swiftlint:diff"]
+run = "scripts/lint-swift-diff.sh"
+
+[tasks."swiftlint:all"]
+run = "scripts/lint-swift-diff.sh --all"
+
+[tasks."swiftlint:self-test"]
+run = "scripts/lint-swift-diff.sh --self-test"

@@ -12,6 +12,7 @@ self-contained and optional.
 | --- | --- |
 | [session-broker](session-broker) | Every simulator needs its own login, and rotating refresh tokens revoke each other. One local service shares the session and device ID across all simulators. |
 | [local-review](local-review) | Agents write changes faster than you can review and merge them. A local review page ranks the diff and tracks each agent turn. Approving hands the merge back to the agent that wrote the change, through one merge queue. |
+| [repository-lint](repository-lint) | Custom Swift rules need syntax-aware checks, changed-line filtering and a cached runner outside the app dependency graph. |
 | [worktree-simulator](worktree-simulator) | Worktrees that share a simulator overwrite each other's app, Keychain and data. Each worktree gets its own device, created and deleted with it. |
 
 I wrote about the workflow behind the session broker in

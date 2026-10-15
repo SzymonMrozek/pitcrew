@@ -1,0 +1,3911 @@
+[
+  {
+    "rule": "design_system_color",
+    "name": "color token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".foregroundStyle(DesignColor.Text.secondary)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "background token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".background(DesignColor.Background.card, in: .rect(cornerRadius: DesignRadius.large))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "clear",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".background(.clear)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "token conversion",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = UIColor(DesignColor.Text.primary)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "view opacity",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.opacity(0.4)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// .foregroundStyle(.white)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-color: QR codes need maximum contrast to scan.\nUIColor.white.setFill()\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "documented file exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-color-file: predates the design system.\nenum LegacyColor {\n    static let top = Color(red: 0.1, green: 0.2, blue: 0.3)\n    static let bottom = Color(red: 0.0, green: 0.1, blue: 0.2)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "design system",
+    "path": "Modules/UIComponents/DesignColor/Sources/DesignColor.swift",
+    "source": "Color.design(hex: 0xA8FFC6)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "hex helper",
+    "path": "Modules/Extensions/SwiftExtensions/Sources/Color+Hex.swift",
+    "source": "Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_color",
+    "name": "named color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let shade = Color.black.opacity(0.3)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "shorthand style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".foregroundStyle(.white)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "hierarchical style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".foregroundStyle(.secondary)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "component color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "static let background = Color(red: 23 / 255, green: 45 / 255, blue: 51 / 255)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "uikit color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "UIColor.systemGray.setFill()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "asset color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let brand = Color(\"Brand\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "hex color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let glow = Color.design(hex: 0x95FFBE)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "shadow color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".shadow(color: .black.opacity(0.2), radius: 8)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "token opacity",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".fill(DesignColor.Text.primary.opacity(0.12))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "shape token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "RoundedRectangle(cornerRadius: DesignRadius.large, style: .continuous)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "clip token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".clipShape(.rect(cornerRadius: DesignRadius.medium))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "square corners",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "RoundedRectangle(cornerRadius: 0)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "shadow blur",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".shadow(color: shadowColor, radius: 8, x: 0, y: 4)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-radius: follows the camera preview mask.\nRoundedRectangle(cornerRadius: 6)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "design system",
+    "path": "Modules/UIComponents/DesignChip/Sources/DesignChip.swift",
+    "source": ".clipShape(.rect(cornerRadius: 6))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "shape number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "RoundedRectangle(cornerRadius: 20)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "clip number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".clipShape(.rect(cornerRadius: 6))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "corner modifier",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".cornerRadius(1.5)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "uneven corners",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "UnevenRoundedRectangle(topLeadingRadius: DesignRadius.large, bottomLeadingRadius: 4)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "corner size",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "RoundedRectangle(cornerSize: CGSize(width: 8, height: 8))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "derived token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "RoundedRectangle(cornerRadius: DesignRadius.large - 2)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "custom radius constant",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "static let cornerRadius: CGFloat = 10\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "item sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".designSheet(item: viewModel.pending, onDismiss: interactor.dismissed) { _ in Text(\"\") }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "presented sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".designSheet(isPresented: $isPresented) { Text(\"\") }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "selection sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".designSelectionSheet(isPresented: $isPresented, title: title, options: options)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "UIKit host",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "SheetPresenter.present(content.designSheetPresentation(), from: host)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// .sheet(isPresented: $isPresented)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-sheet: hosts sheets for UIKit presenters.\n.sheet(isPresented: $isPresented) {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "design system",
+    "path": "Modules/UIComponents/DesignSheetPresentation/Sources/DesignSheetPresentation.swift",
+    "source": ".sheet(isPresented: isPresented) {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "development menu",
+    "path": "Modules/Scenes/DevMenu/Sources/DevMenuView.swift",
+    "source": ".presentationDetents([.medium])\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "raw presented sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".sheet(isPresented: $isPresented) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "raw item sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".sheet(item: $item) { item in Text(item.title) }\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "detents",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".presentationDetents([.height(264)])\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "drag indicator",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".presentationDragIndicator(.hidden)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "corner radius",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".presentationCornerRadius(DesignRadius.large)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "background",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".presentationBackground(DesignColor.Background.base)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "confirmation dialog",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".confirmationDialog(\"Delete?\", isPresented: $isPresented) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "action sheet",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".actionSheet(isPresented: $isPresented) { ActionSheet(title: title) }\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "multiline modifier",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content\n    .sheet(\n        isPresented: $isPresented\n    ) {}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "padding token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.horizontal, DesignSpacing.medium)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "stack token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "VStack(alignment: .leading, spacing: DesignSpacing.small) {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "flush stack",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "VStack(spacing: 0) {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "conditional tokens",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.top, isCompact ? 0 : -DesignSpacing.extraSmall)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "token parameter",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "init(spacing: CGFloat = DesignSpacing.small) {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "non spacing number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".frame(width: 40, height: 40)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// .padding(16)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-spacing: matches the system keyboard inset.\n.padding(.bottom, 6)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "design system",
+    "path": "Modules/UIComponents/DesignCard/Sources/DesignCard.swift",
+    "source": ".padding(14)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "snapshot harness",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleSnapshot.tests.swift",
+    "source": ".padding(16)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "padding number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(14)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "edge padding number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.horizontal, 5)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "system default padding",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "system default edge padding",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.horizontal)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "stack number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "HStack(alignment: .center, spacing: 6) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "grid spacing",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "Grid(horizontalSpacing: 10, verticalSpacing: DesignSpacing.small) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "derived token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.vertical, -DesignSpacing.extraExtraSmall / 2)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "conditional number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(.top, hasHeader ? DesignSpacing.large : 120)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "custom spacing constant",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "static let spacing: CGFloat = 10\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "edge insets",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let insets = EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "content margins",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".contentMargins(.horizontal, 24, for: .scrollContent)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "multiline padding",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".padding(\n    .horizontal,\n    18\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "text component",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "DesignText(title, style: .headline)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "style font",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(DesignTypography.Style.title2.font)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "style metrics",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".tracking(DesignTypography.Style.body.tracking)\n.lineSpacing(DesignTypography.Style.body.lineSpacing)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "forwarded font",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(style.font)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// .font(.system(size: 12))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-custom-typography: podium rank numeral is artwork.\n.font(.system(size: 104, weight: .semibold))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "design system",
+    "path": "Modules/UIComponents/DesignBadge/Sources/DesignBadge.swift",
+    "source": ".font(.system(size: 11))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "development menu",
+    "path": "Modules/Scenes/DevMenu/Sources/DevMenuView.swift",
+    "source": ".font(.caption)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "system size",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(.system(size: 9, weight: .semibold))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "text style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(.caption)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "custom family",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(.custom(\"Noteworthy-Light\", fixedSize: 17))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "font constant",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let font = Font.system(size: buttonSize)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "uikit font",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "label.font = UIFont.systemFont(ofSize: 14)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "modified style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".font(DesignTypography.Style.bodyStrong.font.weight(.black))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "weight modifier",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "Text(name)\n    .fontWeight(.semibold)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "digit modifier",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "Text(price)\n    .monospacedDigit()\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "tracking number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".tracking(0.4)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "line spacing number",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".lineSpacing(6)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "strong protocol property",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "private let coordinator: any ExampleCoordinator\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "strong concrete property",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let flow: LoginCoordinator\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "interactor ownership",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    private let coordinator: any ExampleCoordinator\n\n    init(coordinator: any ExampleCoordinator) {\n        self.coordinator = coordinator\n    }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "local variable",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "func run() { let coordinator: ExampleCoordinator = makeCoordinator() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "other file",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "weak var coordinator: ExampleCoordinator?\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "weak optional",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "private weak var coordinator: ExampleCoordinator?\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "mutable strong",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "private var coordinator: any ExampleCoordinator\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "optional let",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "private let coordinator: ExampleCoordinator?\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "unowned mutable",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "unowned var flow: LoginCoordinator\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "weak property in interactor",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    private weak var coordinator: ExampleCoordinator?\n\n    func didTapContinue() { coordinator?.showNext() }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "generated spy",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "let service = ServiceSpy()\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "documented Spyable limitation",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "// Spyable cannot model observation here.\nfinal class ServiceSpy {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "documented Stubable limitation",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "// Stubable cannot construct this actor.\nactor ServiceStub {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "BDD scenario",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class GivenServiceStub {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "generated spy in context",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "@Test func navigatesToDetails() {\n    let coordinator = ExampleCoordinatorSpy()\n    let interactor = ExampleInteractor(coordinator: coordinator)\n    interactor.detailsTapped()\n    #expect(coordinator.showDetailsCallsCount == 1)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "production type",
+    "path": "Modules/Scenes/Example/Sources/ServiceMock.swift",
+    "source": "final class ServiceMock {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "manual mock",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class ServiceMock {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "manual stub",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "struct ServiceStub {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "manual fake",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "actor ServiceFake {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "prefix fake",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class FakeService {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "unrelated comment",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "// This test needs a service.\nfinal class ServiceSpy {}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "handwritten mock implementation",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class AccountServiceMock: AccountService {\n    var returnedAccount: Account?\n    func load() async -> Account? { returnedAccount }\n}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "presentation state",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let selectedID: UInt64\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "action closure",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let onSelect: (UInt64) -> Void\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "interactor owns coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let coordinator: ExampleCoordinator\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// let coordinator: ExampleCoordinator\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "stored coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let coordinator: ExampleCoordinator\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "optional coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "private var flow: any ExampleCoordinator?\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "later property",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let title: String\nprivate let navigation: LoginCoordinator\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "coordinator in view model",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "final class ExampleViewModel {\n    let flow: LoginCoordinator\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "project wrapper",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "// @Injected private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "string literal",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let note = \"@Injected\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "wrapper implementation",
+    "path": "Modules/Utilities/DependencyInjection/Sources/Dependency.swift",
+    "source": "@Injected private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "stored property",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Injected private var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "qualified attribute",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Injected(\\.service) private var service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "test file",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class TestContext {\n    @Injected var service: Service\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "second line",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import DependencyInjection\n@Injected var provider: Provider\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "project wrapper",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import DependencyInjection\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "// import Injected\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "similarly named module",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import InjectedHelpers\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "wrapper implementation",
+    "path": "Modules/Utilities/DependencyInjection/Sources/Dependency.swift",
+    "source": "import Injected\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "plain import",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import Injected\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "indented import",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "    import Injected\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "second import",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import Foundation\nimport Injected\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "test import",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "import Injected\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "lazy default",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "explicit key",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(key: \"service\") private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "// @Dependency(resolve: .eager) private var service: Service\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "string literal",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let note = \"@Dependency(resolve: .eager)\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "eager registration",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "container.register(.eager(service as Service), for: Service.self)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "stored property",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(resolve: .eager) private var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "observation ignored",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleViewModel {\n    @ObservationIgnored @Dependency(resolve: .eager) private var service: Service\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "with key",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(resolve: .eager, key: \"service\") private var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "key first",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(key: \"service\", resolve: .eager) private var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "multiline",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(\n    resolve: .eager\n) private var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "test file",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "final class TestContext {\n    @Dependency(resolve: .eager) var service: Service\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "design system asset",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let icon = DesignAssetsAsset.close.image\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "// Image(systemName: \"xmark\")\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "string literal",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let documentation = \"Image(systemName: xmark)\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "non Swift file",
+    "path": "docs/example.md",
+    "source": "Image(systemName: \"xmark\")\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "development menu",
+    "path": "Modules/Scenes/DevMenu/Sources/DevMenuView.swift",
+    "source": "Image(systemName: \"xmark\")\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "SwiftUI image",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let icon = Image(systemName: \"xmark\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "UIKit image",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let icon = UIImage(systemName: \"xmark\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "label symbol",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "Label(\"Close\", systemImage: \"xmark\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "multiline argument",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let icon = Image(\n    systemName: \"xmark\"\n)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "expanded labeled call",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(\n    with: .init(\n        test: \"String\"\n    )\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "expanded enum case",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Order.spot(\n    .init(\n        id: \"spot\"\n    )\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "expanded nested enum case",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = .twap(\n    .init(\n        totalValue: 2000\n    )\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "single line",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: .init(test: \"String\"))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "// let x = Stub(with: .init(\n//     test: \"String\"\n// ))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "string literal",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let text = \"Stub(with: .init(\\n test: 1))\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "multiline string",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let text = \"\"\"\nStub(with: .init(\n    test: 1))\n\"\"\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "expanded analytics event",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "tracker.capture(\n    .assetDetailChartPeriodSelected(\n        period\n    )\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "expanded append",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "items.append(\n    Item(\n        id: 1\n    )\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "requested shape",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: .init(\n    test: \"String\"\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "separate outer close",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: .init(\n    test: \"String\"\n)\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "order spot",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let spot = Order.spot(.init(\n    id: \"spot\"\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "order twap",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let order = .twap(.init(\n    totalValue: 2000\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "nested enum cases",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let order = Order.perpetual(.init(\n    strategy: .twap(.init(\n        totalValue: 2000\n    ))\n))\n",
+    "lines": [
+      1,
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      [
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "multiple fields",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: .init(\n    a: 1,\n    b: 2\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "nested value call",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: .init(\n    value: make(1, 2)\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "later source line",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let y = 1\nlet x = Stub(with: .init(\n    a: y\n))\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "prior outer argument",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(name: \"A\", with: .init(\n    a: 1\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "asset detail analytics",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "analyticsTracker.capture(.assetDetailChartPeriodSelected(\n    period,\n    assetID: id\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "asset detail trade",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "analyticsTracker.capture(.assetDetailTradeTapped(\n    direction: direction,\n    source: source\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "append construction",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "items.append(Item(\n    id: 1\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "different nested call",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: makeValue(\n    test: 1\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "nested call followed by argument",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let x = Stub(with: makeValue(\n    test: 1\n), mode: .live)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "managed task",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".task { await interactor.load() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "synchronous preparation",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".onAppear { isReady = true }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "documented long-lived work",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-on-appear-task: starts a shared upload.\n.onAppear { Task { await uploads.start() } }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "commented task",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".onAppear {\n    // Task { await load() }\n    prepare()\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "direct task",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".onAppear {\n    Task { await interactor.load() }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "guarded task",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".onAppear {\n    guard shouldLoad else { return }\n    Task { await interactor.loadNextPage() }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "nested task",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": ".onAppear {\n    if isVisible {\n        Task { await refresh() }\n    }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "default isolation",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "function type annotation",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let callback: @MainActor () -> Void\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "Sendable mutable class exception",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor\nfinal class MutableState: @unchecked Sendable { var value = 0 }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "// lint:allow-main-actor: required by ObjC override.\n@MainActor\nfinal class LegacyBridge {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "outside modules",
+    "path": "Tools/Tool.swift",
+    "source": "@MainActor\nfinal class Tool {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "class attribute",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor\nfinal class ExampleInteractor {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "inline function",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor func load() async {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "struct attribute",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor\nstruct ViewState {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "test context",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "@MainActor\nfinal class ExampleTestContext {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "shared format",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = price.formatted(.currency(precision: .upTo(2)))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "shared format with currency code",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = price.formatted(.currency(currencyCode: code))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "preview literal",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let pnl = Row(value: \"+$482.85\")\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// value.formatted(.currency(code: \"USD\"))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "documented exception above multiline statement",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// lint:allow-currency-format: keyboard input keeps typed digits.\nlet text = amount.formatted(\n    .currency(code: code)\n        .grouping(.never)\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// lint:allow-currency-format: keyboard input keeps typed digits.\nlet text = amount.formatted(.currency(code: code))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "currency module",
+    "path": "Modules/Utilities/CurrencyFormatting/Sources/CurrencyFormat.swift",
+    "source": "value.formatted(.currency(code: currencyCode))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "outside modules",
+    "path": "Tools/Tool.swift",
+    "source": "value.formatted(.currency(code: \"USD\"))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "foundation style",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(.currency(code: \"USD\"))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "multiline foundation style",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(\n    .currency(code: \"USD\")\n        .presentation(.narrow)\n)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "format style type",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = Decimal.FormatStyle.Currency(code: \"USD\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "integer format style type",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = IntegerFormatStyle<Int>.Currency(code: \"USD\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "number formatter",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "formatter.numberStyle = .currency\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "interpolated dollar sign",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = \"$\\(amount)\"\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "concatenated dollar sign",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = \"+$\" + amount.description\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "swiftui text format",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "Text(amount, format: .currency(code: \"USD\"))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "shared format",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = change.formatted(.percentage(.points, sign: .always))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "model property named percent",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let ratio = allocation.percent / 100\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "localized string",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = L10n.winRate(rate.formatted(.percentage(.points)))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "comment",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// value.formatted(.percent)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "documented exception above multiline statement",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// lint:allow-percentage-format: keyboard input keeps typed digits.\nlet text = amount.formatted(\n    .percent\n        .grouping(.never)\n)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "// lint:allow-percentage-format: keyboard input keeps typed digits.\nlet text = amount.formatted(.percent)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "percentage module",
+    "path": "Modules/Utilities/PercentageFormatting/Sources/PercentageFormat.swift",
+    "source": "let text = number + \"%\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "outside modules",
+    "path": "Tools/Tool.swift",
+    "source": "let text = number + \"%\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "foundation style",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = ratio.formatted(.percent)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "foundation style modifiers",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = .percent.precision(.fractionLength(0))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "swiftui text format",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "Text(progress, format: .percent)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "format style type",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = FloatingPointFormatStyle<Double>.Percent()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "number formatter",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "formatter.numberStyle = .percent\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "appended suffix",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(.number) + \"%\"\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "multiline appended suffix",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(\n    .number.precision(.fractionLength(1))\n) + \"%\"\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "interpolated suffix",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let title = \"+\\(adjustment)%\"\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "format specifier",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = String(format: \"%.1f%%\", value)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "used by two functions",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var toastPresenter: ToastPresenter\n\n    func saved() { toastPresenter.show(.saved) }\n    func failed() { toastPresenter.show(.failed) }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "resolved inline",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    func saved() {\n        @Dependency var toastPresenter: ToastPresenter\n        toastPresenter.show(.saved)\n    }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "used by a function and an extension",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var service: Service\n\n    func load() async { await service.load() }\n}\n\nextension ExampleInteractor {\n    func reload() async { await service.reload() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "used by a stored property initializer",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleViewModel {\n    @Dependency private var formatter: Formatter\n    private lazy var title = formatter.title\n\n    func refresh() { formatter.reset() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "internal property",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "struct ExampleResolver {\n    @Dependency var client: HTTPClient\n\n    func fetch() { client.fetch() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "exception marker",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    // lint:allow-member-dependency: resolved once to keep the subscription alive\n    @Dependency private var service: Service\n\n    func load() { service.load() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "label and other member with the same name",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var service: Service\n\n    func load() { service.load() }\n    func route() { coordinator.open(service: other.service) }\n    func reload() { service.reload() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "wrapper storage",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var service: Service\n\n    init(service: Dependency<Service>) { _service = service }\n    func load() { service.load() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "single function",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var authenticationService: AuthenticationService\n    private let coordinator: any ExampleCoordinator\n\n    func logout() async throws {\n        try await authenticationService.logout()\n        coordinator.close()\n    }\n\n    func close() { coordinator.close() }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        6
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "used several times in one function",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var toastPresenter: ToastPresenter\n\n    func save() {\n        toastPresenter.dismiss()\n        Task { self.toastPresenter.show(.saved) }\n    }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        5,
+        6
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "computed view body",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "struct ExampleView: View {\n    @Dependency private var entryPoint: ExampleEntryPoint\n\n    var body: some View {\n        entryPoint.makeView()\n    }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        5
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "observation ignored on its own line",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "@Observable\nfinal class ExampleViewModel {\n    @ObservationIgnored\n    @Dependency private var formatter: Formatter\n\n    func title() -> String { formatter.title }\n}\n",
+    "lines": [
+      4
+    ],
+    "affected": [
+      [
+        4,
+        6
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "only one of two dependencies",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var service: Service\n    @Dependency private var analytics: Analytics\n\n    func load() { service.load(); analytics.track() }\n    func reload() { service.reload() }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3,
+        5
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "nested type",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "enum Example {\n    final class Interactor {\n        @Dependency fileprivate var service: Service\n\n        init() {}\n        func load() { service.load() }\n    }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3,
+        6
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "explicit key",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency(key: \"primary\") private var priceProvider: PriceProvider\n\n    func start() { priceProvider.start() }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "context owns SUT",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "private final class ExampleInteractorTestContext {\n    let interactor = ExampleInteractor()\n}\n@Test func loads() {\n    let ctx = ExampleInteractorTestContext()\n    ctx.interactor.load()\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "shared context property",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "struct ExampleInteractorTests {\n    let ctx = ExampleInteractorTestContext()\n    @Test func loads() { ctx.interactor.load() }\n}\nprivate struct ExampleInteractorTestContext { let interactor = ExampleInteractor() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "documented one-off setup",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "struct ExampleInteractorTestContext { let interactor = ExampleInteractor() }\n@Test func ordinaryCase() { let ctx = ExampleInteractorTestContext(); ctx.interactor.load() }\n// lint:ignore-test-context: verifies the initializer itself.\n@Test func initializerCase() { let interactor = ExampleInteractor(); #expect(interactor.isReady) }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "documented file exception",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "// lint:ignore-test-context-file: this legacy suite needs a separate migration.\n@Test func createsDirectly() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "unrelated test file",
+    "path": "Modules/Models/Example/Sources/Example.tests.swift",
+    "source": "@Test func creates() { let value = ExampleInteractor() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "missing context",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "@Test func loads() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [
+      1,
+      1
+    ],
+    "affected": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "unused context",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "struct ExampleInteractorTestContext { let sut = ExampleInteractor() }\n@Test func loads() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [
+      1,
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ],
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "direct construction despite context",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "struct ExampleInteractorTestContext { let sut = ExampleInteractor() }\n@Test func first() { let ctx = ExampleInteractorTestContext(); ctx.sut.load() }\n@Test func second() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "view model direct setup",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.tests.swift",
+    "source": "struct ExampleViewModelTestContext { let viewModel = ExampleViewModel() }\n@Test func first() { let ctx = ExampleViewModelTestContext(); #expect(ctx.viewModel.isReady) }\n@Test func second() { let viewModel = ExampleViewModel(); #expect(viewModel.isReady) }\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "ignore requires reason",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "// lint:ignore-test-context:\n@Test func loads() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [
+      2,
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ],
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "method ignore does not replace context",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "// lint:ignore-test-context: initializer coverage.\n@Test func loads() { let sut = ExampleInteractor(); sut.load() }\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "identifiable elements",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(categories) { category in\n    CategoryRow(category: category)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "fixed range",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(0 ..< 4, id: \\.self) { index in\n    Placeholder(index: index)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "design system exception",
+    "path": "Modules/UIComponents/DesignDividedList/Sources/DesignDividedList.swift",
+    "source": "ForEach(subviews.indices, id: \\.self) { index in\n    subviews[index]\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "commented example",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// ForEach(categories.indices, id: \\.self) { page in }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "mutable categories",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(categories.indices, id: \\.self) { page in\n    Text(categories[page].title)\n}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "multiline identity",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(\n    items.indices,\n    id: \\.self\n) { index in\n    Row(item: items[index])\n}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "spacing",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach ( items.indices , id: \\.self ) { index in\n    Row(item: items[index])\n}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "projected binding",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct EditorView: View {\n    @Bindable var model: EditorModel\n    var body: some View { TextField(\"Name\", text: $model.name) }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "local projection",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct EditorView: View {\n    let model: EditorModel\n    var body: some View {\n        @Bindable var model = model\n        return TextField(\"Name\", text: $model.name)\n    }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "read-only input",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct DetailView: View {\n    let model: DetailModel\n    var body: some View { Text(model.name) }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "non View owner",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "final class Coordinator {\n    @Bindable var presentation: Presentation\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "read-only model",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct DetailView: View {\n    @Bindable var model: DetailModel\n    var body: some View { Text(model.name) }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "forwarded model",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct DetailView: View {\n    @Bindable var model: DetailModel\n    var body: some View { Child(model: model) }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "multiline declaration",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct DetailView: View {\n    @Bindable\n    var model: DetailModel\n    var body: some View { Text(model.name) }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "focused row",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(items) { item in\n    ItemRow(item: item)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "helper outside collection",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func header() -> some View { Text(\"Title\") }\nVStack { header() }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "non View helper",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func title(_ item: Item) -> String { item.name }\nForEach(items) { item in Text(title(item)) }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "commented helper",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func row(_ item: Item) -> some View { Text(item.name) }\nForEach(items) { item in\n    // row(item)\n    ItemRow(item: item)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "documented exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func row(_ item: Item) -> some View { Text(item.name) }\nForEach(items) { item in\n    // lint:allow-view-helper-row: shared with a single-item presentation.\n    row(item)\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "row function",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func row(_ item: Item) -> some View { Text(item.name) }\nForEach(items) { item in\n    row(item)\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "nested label",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func scopeLabel(_ item: Scope) -> some View { Text(item.name) }\nForEach(scopes) { item in\n    Button { select(item) } label: { scopeLabel(item) }\n}\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "builder function",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "@ViewBuilder\nprivate func option(_ item: Option) -> some View { Text(item.name) }\nForEach(options) { item in\n    option(item)\n}\n",
+    "lines": [
+      4
+    ],
+    "affected": [
+      [
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "audit macro outer",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "#expect(make(\n    value: 1\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "audit macro argument",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "let value = wrap(#make(\n    value: 1\n))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "nested_call_arguments",
+    "name": "audit parameter default",
+    "path": "Modules/Scenes/Example/Sources/Example.swift",
+    "source": "func build(value: Value = make(\n    count: 1\n)) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit qualified named color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = SwiftUI.Color.black\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit qualified UIKit color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = UIKit.UIColor.systemBlue\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit multiline literal color",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = Color(\n    \"Brand\"\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit multiline bridge",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = Color(\n    uiColor: UIColor.systemBlue\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit qualified token opacity",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = Tokens.DesignColor.Text.primary.opacity(0.3)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit all named color calls",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = NSColor(named: \"Brand\")\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit color literal argument",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.shadow(\n    color: .black\n)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit multiline token opacity",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let color = DesignColor.Text.primary.opacity(\n    0.3\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit UIFont reference",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let factory = UIFont.systemFont\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit qualified Font",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let font = SwiftUI.Font.system(size: 12)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit qualified UIFont",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let font = UIKit.UIFont.preferredFont(forTextStyle: .body)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit shorthand chained font",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.font(\n    .caption.bold()\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit multiline property modifier",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let font = style.font\n    .weight(.black)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit multiline numeric typography",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.tracking(\n    2\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_typography",
+    "name": "audit UIFont descriptor",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let font = UIFont(descriptor: descriptor, size: 12)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "audit multiline call boundary",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.padding(\n    .horizontal,\n    12\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3,
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "audit default parameter",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "func layout(spacing: CGFloat = 12) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_spacing",
+    "name": "audit directional insets",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let insets = NSDirectionalEdgeInsets(top: 1, leading: 0, bottom: 0, trailing: 0)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "audit multiline call boundary",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.cornerRadius(\n    12\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "audit default parameter",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "func layout(cornerRadius: CGFloat = 12) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_radius",
+    "name": "audit all radius labels",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let shape = UnevenRoundedRectangle(topTrailingRadius: 4, bottomTrailingRadius: 5)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "audit multiline modifier boundary",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.sheet\n(\n    isPresented: $visible\n) {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_sheet",
+    "name": "audit presentation sizing",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.presentationSizing(.page)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "audit optional any coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "let flow: any ExampleCoordinator?\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "interactor_coordinator_ownership",
+    "name": "audit mutable local on new line",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "func run() {\n    var coordinator: ExampleCoordinator = make()\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "audit local coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "func run() { let coordinator: ExampleCoordinator = make() }\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_coordinator_in_view_model",
+    "name": "audit any optional coordinator",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let flow: any ExampleCoordinator?\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected_import",
+    "name": "audit import boundary",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "import\tInjected\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_direct_injected",
+    "name": "audit attribute argument",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Injected(\\.service) var service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_eager_dependency",
+    "name": "audit multiline eager",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@Dependency(\n    key: \"service\",\n    resolve: .eager\n) var service: Service\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "audit tuple type label",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "let image: (systemName: String, count: Int)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_sf_symbols",
+    "name": "audit parameter and property",
+    "path": "Modules/Scenes/Example/Sources/ExampleView.swift",
+    "source": "func icon(_ systemName: String) {}\nvar systemImage: String\n",
+    "lines": [
+      1,
+      2
+    ],
+    "affected": [
+      [
+        1
+      ],
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "on_appear_task",
+    "name": "audit closure range",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "content.onAppear {\n    if ready { Task { await load() } }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "audit same line Sendable",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor final class State: Sendable {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "redundant_main_actor",
+    "name": "audit extension declaration",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.swift",
+    "source": "@MainActor\nextension State {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "audit multiline code label",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(\n    .currency(\n        code: \"USD\"\n    )\n)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "audit multiline number style",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "formatter.numberStyle\n    =\n    .currencyAccounting\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "audit multiline format style type",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = Decimal.FormatStyle\n    .Currency(code: \"USD\")\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_currency_format",
+    "name": "audit non Swift path",
+    "path": "Modules/Scenes/Example/Sources/Example.md",
+    "source": "value.formatted(.currency(code: \"USD\"))\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "audit multiline style argument",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let text = value.formatted(\n    .percent\n)\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "audit multiline style modifier",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let style = .percent\n    .precision(.fractionLength(2))\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "audit interpolated suffix offset",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "let title = \"Value \\(amount)%\"\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "audit multiline number style",
+    "path": "Modules/Scenes/Example/Sources/ExampleViewModel.swift",
+    "source": "formatter.numberStyle\n    =\n    .percent\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "shared_percentage_format",
+    "name": "audit non Swift path",
+    "path": "Modules/Scenes/Example/Sources/Example.md",
+    "source": "value.formatted(.percent)\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "audit optional self",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "final class ExampleInteractor {\n    @Dependency private var service: Service\n    func run() { Task { [weak self] in self?.service.load() } }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "single_use_dependency",
+    "name": "audit qualified extension",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
+    "source": "enum Scope {\n    final class ExampleInteractor {\n        @Dependency private var service: Service\n        func load() { service.load() }\n    }\n}\nextension Scope.ExampleInteractor {\n    func reload() { service.reload() }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "audit qualified View",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "struct ExampleView: SwiftUI.View {\n    @Bindable var model: Model\n    var body: some View { Text(model.title) }\n}\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "unused_bindable",
+    "name": "audit non Swift path",
+    "path": "docs/Example.md",
+    "source": "struct ExampleView: View {\n    @Bindable var model: Model\n    var body: some View { Text(model.title) }\n}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "audit extended self key path",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ForEach(items.indices, id: \\.self.hashValue) { item in Text(item) }\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "unstable_foreach_identity",
+    "name": "audit non Swift path",
+    "path": "docs/Example.md",
+    "source": "ForEach(items.indices, id: \\.self) { item in Text(item) }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "audit composition return",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "private func row(_ item: Item) -> some View & Other { Text(item.title) }\nForEach(items) { item in row(item) }\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "view_helper_in_foreach",
+    "name": "audit non Swift path",
+    "path": "docs/Example.md",
+    "source": "private func row(_ item: Item) -> some View { Text(item.title) }\nForEach(items) { item in row(item) }\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "manual_test_double",
+    "name": "audit documented exact range",
+    "path": "Modules/Scenes/Example/Sources/Example.tests.swift",
+    "source": "// Spyable cannot represent this requirement.\n\n\nfinal class ServiceFake {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "test_context_setup",
+    "name": "audit nested test construction",
+    "path": "Modules/Scenes/Example/Sources/ExampleInteractor.tests.swift",
+    "source": "struct ExampleInteractorTestContext { let sut = ExampleInteractor() }\n@Test func first() { let ctx = ExampleInteractorTestContext() }\n@Test func second() {\n    func create() -> ExampleInteractor { ExampleInteractor() }\n    let sut = create()\n}\n",
+    "lines": [
+      4
+    ],
+    "affected": [
+      [
+        4
+      ]
+    ]
+  },
+  {
+    "rule": "design_system_color",
+    "name": "audit opacity on container holding a token",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "ZStack {\n    DesignColor.Background.base\n    DesignAnimatedWatermarkPattern()\n        .opacity(isVisible ? 1 : 0.5)\n}\n",
+    "lines": [],
+    "affected": []
+  }
+]

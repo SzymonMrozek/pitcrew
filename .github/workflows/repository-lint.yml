@@ -1,0 +1,22 @@
+name: repository-lint
+
+on:
+  push:
+    branches: [main]
+    paths: ["repository-lint/**", ".github/workflows/repository-lint.yml"]
+  pull_request:
+    paths: ["repository-lint/**", ".github/workflows/repository-lint.yml"]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check bundled examples
+        run: repository-lint/run.sh --self-test --base HEAD
+      - name: Native regression suite
+        env:
+          REPOSITORY_LINT_BINARY: ${{ github.workspace }}/.build-tools/repository-lint/release/repository-lint
+        run: swift test --package-path repository-lint --scratch-path .build-tools/repository-lint-tests -c release
+      - name: Launcher cache tests
+        run: python3 repository-lint/Tests/test_launcher.py

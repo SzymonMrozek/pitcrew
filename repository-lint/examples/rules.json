@@ -1,0 +1,8 @@
+{
+  "designSystemPrefix": "Design",
+  "colorFactory": "design",
+  "designSystemModulePattern": "^Design.+$",
+  "formatExcludedPrefixes": [
+    "Modules/Models/Proto/Sources/Generated/"
+  ]
+}
