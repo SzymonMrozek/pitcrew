@@ -4,6 +4,10 @@ A local HTTP service that gives every iOS Simulator on your machine the same
 OAuth session and device ID, and lets only one of them refresh tokens at a time.
 Log in once, and every simulator (one per worktree, one per agent) is logged in.
 
+The workflow it was built for (one worktree, one simulator, one shared
+session) is described in my article
+[Per-Worktree iOS Simulators with a Shared OAuth Session](https://mrozek.dev/posts/one-worktree-one-simulator-one-shared-session).
+
 > **Local development only.** Tokens are stored unencrypted in a Docker volume.
 > Bind the broker to `127.0.0.1` only, and never deploy it.
 

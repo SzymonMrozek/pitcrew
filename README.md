@@ -12,6 +12,9 @@ self-contained and optional.
 | --- | --- |
 | [session-broker](session-broker) | Every simulator needs its own login, and rotating refresh tokens revoke each other. One local service shares the session and device ID across all simulators. |
 
+I wrote about the workflow behind the session broker in
+[Per-Worktree iOS Simulators with a Shared OAuth Session](https://mrozek.dev/posts/one-worktree-one-simulator-one-shared-session).
+
 ## Three ways to use this
 
 **1. Run a tool as it is.** Pin a release tag and configure it from your own
