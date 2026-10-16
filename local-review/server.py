@@ -553,10 +553,18 @@ class Review:
             return legacy  # Reviews started before identities included the worktree keep their links and data.
         # A previous worktree with this name owns the legacy review; carry over only this worktree's interactions.
         carried = [item for item in iterations if not earlier(item.get('finishedAt'))]
-        if carried or (session or {}).get('pendingIteration'):
+        pending = (session or {}).get('pendingIteration')
+        if pending:
+            # An interaction begins only after the previous one finished, so one recorded before startedAt existed follows the latest finished one.
+            started = pending.get('startedAt') or max((item['finishedAt'] for item in iterations if item.get('finishedAt')), default=None)
+            if started is None or earlier(started):
+                pending = None  # Another agent's unfinished interaction in the previous worktree must not block this one.
+        if carried or pending:
             fresh = {'comments': [], 'viewed': {}, 'iterations': [{**item, 'number': number} for number, item in enumerate(carried, 1)],
                      'mergeDraft': session['mergeDraft'] if carried else {'title': '', 'description': ''}}
-            for key in ('pendingIteration', 'agent', 'threadId'):
+            if pending:
+                fresh['pendingIteration'] = pending
+            for key in ('agent', 'threadId'):
                 if key in session:
                     fresh[key] = session[key]
             write_json(self.store / f'{current}.json', fresh)
@@ -886,7 +894,7 @@ class Review:
             return
         self.record_agent()
         self.session['pendingIteration'] = {'id': iteration, 'request': request.strip(), 'before': self.snapshot('pending-' + iteration),
-                                           'agent': self.origin_agent()}
+                                           'agent': self.origin_agent(), 'startedAt': datetime.now(timezone.utc).isoformat()}
         self.save_session('pendingIteration')
 
     def finish_iteration(self, iteration, summary, title, description):

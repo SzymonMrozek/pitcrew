@@ -606,6 +606,30 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual((review.session['pendingIteration']['id'], review.session['comments'], review.session['viewed']), ('next', [], {}))
         self.assertEqual(review.session['mergeDraft']['title'], 'feat(x): now')
 
+    def test_recreated_worktree_drops_the_previous_worktrees_pending_interaction(self):
+        path = self.root.resolve() / 'pending-worktree'
+        self.git('worktree', 'add', '-b', 'pending', str(path), 'main')
+        store = self.review.store
+        legacy = m.digest((str(path) + 'pending' + 'main').encode())[:24]
+        old = {'comments': [], 'viewed': {}, 'mergeDraft': {'title': 'feat(x): old', 'description': 'Old'},
+               'iterations': [{'id': 'old', 'number': 1, 'finishedAt': '2020-01-01T00:00:00+00:00'}], 'agent': {'provider': 'claude', 'sessionId': 'old-chat'}}
+        m.write_json(store / f'{legacy}-merge-request.json', {'id': 'old', 'status': 'merged', 'requestedAt': '2020-01-01T00:00:00+00:00'})
+        for pending in ({'id': 'stale', 'request': 'Old'}, {'id': 'stale', 'request': 'Old', 'startedAt': '2020-01-02T00:00:00+00:00'}):
+            m.write_json(store / f'{legacy}.json', {**old, 'pendingIteration': pending})
+            review = m.Review(path, 'main', auto_rank=False)
+            self.assertNotEqual(review.session_id, legacy)
+            self.assertNotIn('pendingIteration', review.session)
+            self.assertEqual(review.session['iterations'], [])
+        review.begin_iteration('fresh', 'New request')
+        self.assertEqual(review.session['pendingIteration']['id'], 'fresh')
+        self.assertFalse(m.datetime.fromisoformat(review.session['pendingIteration']['startedAt']) < review.worktree_created())
+        self.assertEqual(m.read_json(store / f'{legacy}.json', {})['pendingIteration']['id'], 'stale')
+        (store / f'{review.session_id}.json').unlink()
+        started = m.datetime.now(m.timezone.utc).isoformat()
+        m.write_json(store / f'{legacy}.json', {**old, 'pendingIteration': {'id': 'current', 'request': 'Now', 'startedAt': started}})
+        review = m.Review(path, 'main', auto_rank=False)
+        self.assertEqual((review.session['pendingIteration']['id'], review.session['iterations']), ('current', []))
+
     def test_callers_list_call_sites_without_declarations_or_comments(self):
         self.write('Sources/Loader.swift', 'final class Loader {\n    func load(id: Int) {}\n    func reload() { load(id: 1) }\n}\n')
         self.write('Sources/Screen.swift', 'let loader = Loader()\n// load(id: 0) is not a call\nloader.load (id: 2)\nloader.load { }\npreload(id: 3)\n')

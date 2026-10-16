@@ -107,7 +107,9 @@ Each of these cost real debugging time.
 - **Recreated worktrees inherited merged reviews.** A worktree recreated with
   the name of a merged branch got the old review's status and comments. The
   identity now includes when the linked worktree was created, which comes from
-  the `commondir` file's mtime.
+  the `commondir` file's mtime. Only interactions that finished or began after
+  that time carry over, so another agent's unfinished interaction in the old
+  worktree can't block the new worktree's first `--begin-iteration`.
 - **Resuming a running headless Claude session interrupts it.** The resume
   controls stay disabled until the worker exits. **Send to agent** resumes the
   originating conversation itself, so it waits until no interaction is pending
