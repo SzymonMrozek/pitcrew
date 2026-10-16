@@ -232,6 +232,29 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.review.files[0]['path'], interface)
         self.assertNotIn('priority', next(f for f in self.review.files if f['path'] == 'Sources/AuthService.swift'))
 
+    def test_data_models_keep_high_priority_over_evaluated_scores(self):
+        model = 'Modules/Scenes/Portfolio/Implementation/Sources/Scenes/PortfolioDashboard/PortfolioDashboardContent.swift'
+        for path in (model, 'Modules/Models/UserPortfolio/Sources/UserPortfolio.swift', 'Sources/AccountState.swift', 'app/models/user.py'):
+            self.assertEqual(m.priority(path), ('Data model', m.MODEL_SCORE), path)
+            self.assertEqual(m.fallback_score(path), m.MODEL_SCORE, path)
+        for path in ('Sources/ContentView.swift', 'Modules/Models/Proto/Sources/user.pb.swift', 'Modules/Models/Asset/Tests/AssetTests.swift',
+                     'Sources/ContentLoader.swift'):
+            self.assertIsNone(m.priority(path), path)
+        self.write('.config/local-review.toml', "[[priority]]\npattern = '/Interface/'\nlabel = 'Interface target'\n")
+        self.assertEqual(m.priority('Modules/Accounts/Interface/AccountState.swift', m.load_config(self.root)), ('Interface target', m.PRIORITY_SCORE))
+        self.write('.config/local-review.toml', "[files]\nmodel = []\n")
+        self.assertIsNone(m.priority(model, m.load_config(self.root)))
+        (self.root / '.config/local-review.toml').unlink()
+        self.write(model, 'struct PortfolioDashboardContent {}\n')
+        self.review.refresh()
+        file = next(f for f in self.review.files if f['path'] == model)
+        self.review.cache[self.review.score_key(file)] = {'score': 20, 'signals': {'business': 20, 'performance': 0, 'ui': 0}}
+        self.review.apply_scores()
+        self.assertEqual((file['score'], file['scorer'], file['priority']), (m.MODEL_SCORE, 'Jev', 'Data model'))
+        self.review.cache[self.review.score_key(file)] = {'score': 92, 'signals': {'business': 92, 'performance': 0, 'ui': 0}}
+        self.review.apply_scores()
+        self.assertEqual(file['score'], 92, 'A higher evaluated score is kept')
+
     def test_configuration_overrides_defaults_and_rejects_unknown_settings(self):
         self.write('.config/local-review.toml', "name = 'team-review'\ntitle = 'Team'\nlauncher = 'make review --'\n"
                    "[files]\nmanifest = ['(^|/)BUILD$']\n[[modules]]\npattern = '^Packages/(?<name>[^/]+)/'\n"

@@ -40,6 +40,8 @@ MAX_TEXT = 2_000_000
 MAX_SEARCH_RESULTS = 500
 # Priority paths (for example module interfaces) sort near the top regardless of evaluation.
 PRIORITY_SCORE = 95
+# Data model types shape everything built on them, even when their diff looks like plain declarations.
+MODEL_SCORE = 85
 CONFIG_PATH = '.config/local-review.toml'
 # Repository settings; .config/local-review.toml overrides any of them. Path patterns are Python
 # regular expressions searched case-insensitively, except modules, which the browser evaluates.
@@ -60,6 +62,8 @@ CONFIG = {
         'manifest': [r'(^|/)Project\.swift$'],
         'test': [r'tests\.swift$', r'(^|/)tests/', r'\.test\.mjs$', r'(^|/)test[_-][^/]*$'],
         'view': [r'(^|/)(views|navigation)/', r'(view|coordinator|router)\.swift$'],
+        # Code on these paths is a data model and never scores below MODEL_SCORE.
+        'model': [r'(^|/)(models?|entities|dto)/', r'(model|content|state|entity|dto)\.(swift|kt|java|ts|py|go|rs)$'],
         # Fallback scores rank code paths matching this higher while no evaluator is available.
         'important': r'interactor|service|repository|resource|provider|stream|cache|auth',
     },
@@ -339,18 +343,25 @@ def category(path, config=CONFIG):
     return 'code'
 
 
-def priority_label(path, config=CONFIG):
-    if category(path, config) not in ('code', 'view'):
+def priority(path, config=CONFIG):
+    """Return the (label, minimum score) that keeps this path near the top, if any."""
+    kind = category(path, config)
+    if kind not in ('code', 'view'):
         return None
-    return next((item.get('label', 'Prioritized path') for item in config['priority'] if re.search(item['pattern'], path)), None)
+    label = next((item.get('label', 'Prioritized path') for item in config['priority'] if re.search(item['pattern'], path)), None)
+    if label:
+        return label, PRIORITY_SCORE
+    if kind == 'code' and any(re.search(pattern, path, re.I) for pattern in config['files']['model']):
+        return 'Data model', MODEL_SCORE
+    return None
 
 
 def fallback_score(path, config=CONFIG):
     kind = category(path, config)
     if kind in ('localization', 'generated', 'test', 'manifest'):
         return 10
-    if priority_label(path, config):
-        return PRIORITY_SCORE
+    if floor := priority(path, config):
+        return floor[1]
     if kind == 'view':
         return 25
     if kind == 'snapshot':
@@ -557,8 +568,8 @@ class Review:
             score = self.cache.get(self.score_key(file))
             if score is not None:
                 file.update(**score, scorer='Jev')
-            if label := priority_label(file['path'], self.config):
-                file.update(score=max(file['score'], PRIORITY_SCORE), priority=label)
+            if floor := priority(file['path'], self.config):
+                file.update(score=max(file['score'], floor[1]), priority=floor[0])
         files.sort(key=lambda file: (-file['score'], file['path']))
 
     def view(self, iteration=None):

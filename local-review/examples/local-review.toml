@@ -21,6 +21,8 @@ generated = ['\.(pb|grpc)\.swift$', '_pb2\.py$']
 manifest = ['(^|/)Project\.swift$']
 test = ['tests\.swift$', '(^|/)tests/']
 view = ['(^|/)(views|navigation)/', '(view|coordinator|router)\.swift$']
+# Code on these paths is a data model and never scores below 85.
+model = ['(^|/)models?/', '(model|content|state)\.swift$']
 # Without an evaluator, code paths matching this rank above other code.
 important = 'interactor|service|repository|provider|cache|auth'
 

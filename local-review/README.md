@@ -147,6 +147,12 @@ edit under **Defaults**.
 **Priority paths** never score below 95, whatever the evaluator says. Use them
 for code that defines contracts, such as module interfaces.
 
+**Data models** never score below 85. A diff of plain type declarations can look
+routine to an evaluator, but every screen and service built on those types
+depends on it. `files.model` matches `models/`, `entities/` and `dto/`
+directories, and files named like `*Model`, `*Content`, `*State`, `*Entity` or
+`*DTO`. Views, tests and generated code are never data models.
+
 ## Approve and merge
 
 **Approve & merge** shows a summary of the full branch. **Ask agent to merge**
@@ -267,7 +273,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `name` | `local-review` | State directory in the Git common dir, ref namespace, and `<NAME>_HANDOFF`/`<NAME>_QUEUE_PID` variables |
 | `title` | `Local` | Brand word in the page header and tab |
 | `launcher` | `python3 <path>/server.py` | Command given to agents and on the queue page |
-| `[files]` | iOS defaults | Regexes for snapshot, localization, generated, manifest, test and view files, and `important` |
+| `[files]` | iOS defaults | Regexes for snapshot, localization, generated, manifest, test and view files, `model` and `important` |
 | `[[priority]]` | none | `pattern` and `label` for paths that never score below 95 |
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |
