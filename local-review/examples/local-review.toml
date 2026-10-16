@@ -16,6 +16,8 @@ launcher = "mise run review --"
 [files]
 snapshot = ['/__snapshots__/', '\.(png|jpe?g|webp)$']
 localization = ['\.lproj/', '\.(strings|stringsdict|xcstrings)$']
+# Generated code ranks lowest, is hidden by default and never goes to the evaluator.
+generated = ['\.(pb|grpc)\.swift$', '_pb2\.py$']
 manifest = ['(^|/)Project\.swift$']
 test = ['tests\.swift$', '(^|/)tests/']
 view = ['(^|/)(views|navigation)/', '(view|coordinator|router)\.swift$']

@@ -32,7 +32,7 @@ ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
 DEFAULTS = {
-    "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True,
+    "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
     "exclude": [], "imageScale": 70, "diffMode": "split",
     "rubric": "Score review importance from 0 to 1. Prioritize changes affecting business logic, correctness, security, data integrity, concurrency, and application performance. Significant UI changes affecting interactions, accessibility, or user behavior need attention. Pure view styling and navigation changes usually have low importance because lint covers much of them. Do not penalize a performance or business-logic fix just because it is in a view. Localization and unit tests have low review importance. Snapshot changes deserve visual review. Evaluate the actual diff, not only the filename.",
 }
@@ -54,6 +54,9 @@ CONFIG = {
     'files': {
         'snapshot': [r'/__snapshots__/', r'\.(png|jpe?g|webp)$'],
         'localization': [r'\.lproj/', r'\.(strings|stringsdict|xcstrings)$', r'/generated/strings', r'(^|/)l10n\.swift$'],
+        # Protocol Buffers and gRPC output; review the .proto change instead.
+        'generated': [r'\.(pb|grpc)\.swift$', r'\.pb(\.gw)?\.go$', r'_pb2(_grpc)?\.pyi?$', r'\.pb\.(h|cc)$',
+                      r'\.pbobjc\.[hm]$', r'\.pb(json|enum|server)?\.dart$', r'_pb\.(js|d\.ts)$'],
         'manifest': [r'(^|/)Project\.swift$'],
         'test': [r'tests\.swift$', r'(^|/)tests/', r'\.test\.mjs$', r'(^|/)test[_-][^/]*$'],
         'view': [r'(^|/)(views|navigation)/', r'(view|coordinator|router)\.swift$'],
@@ -330,7 +333,7 @@ def thread_title(agent):
 
 
 def category(path, config=CONFIG):
-    for kind in ('snapshot', 'localization', 'manifest', 'test', 'view'):
+    for kind in ('snapshot', 'localization', 'generated', 'manifest', 'test', 'view'):
         if any(re.search(pattern, path, re.I) for pattern in config['files'][kind]):
             return kind
     return 'code'
@@ -344,7 +347,7 @@ def priority_label(path, config=CONFIG):
 
 def fallback_score(path, config=CONFIG):
     kind = category(path, config)
-    if kind in ('localization', 'test', 'manifest'):
+    if kind in ('localization', 'generated', 'test', 'manifest'):
         return 10
     if priority_label(path, config):
         return PRIORITY_SCORE
@@ -975,7 +978,7 @@ class Review:
     def validate_settings(settings):
         if settings['diffMode'] not in ('split', 'unified'):
             raise ValueError('Diff mode must be split or unified')
-        if any(type(settings[key]) is not bool for key in ('hideLocalization', 'hideTests', 'hideViews', 'hideManifests')):
+        if any(type(settings[key]) is not bool for key in ('hideLocalization', 'hideTests', 'hideViews', 'hideManifests', 'hideGenerated')):
             raise ValueError('Filter flags must be booleans')
         if type(settings['imageScale']) is not int or not 25 <= settings['imageScale'] <= 100:
             raise ValueError('Image scale must be between 25 and 100')
@@ -1003,6 +1006,8 @@ class Review:
                 if cache_key in self.cache:
                     return 0
                 rubric = self.settings['rubric']
+            if file['kind'] == 'generated':
+                return 0  # Regenerated output keeps its fallback score; the source schema carries the change.
             if re.search(r"\b(password|secret|credential|api[_-]?key|dsn)\b", file['patch'], re.I):
                 return 1
             if file['limited']:

@@ -84,7 +84,8 @@ trigger actions you didn't take. The tool doesn't open browsers either.
 
 ## Reviewing
 
-- **Filters.** Localization, tests and project manifests are hidden by default.
+- **Filters.** Localization, tests, project manifests and generated Protocol Buffers
+  and gRPC code are hidden by default.
   **Defaults** can also hide views or match extra exclusion globs (`*` and `?`
   match across slashes). Expand **Filtered out** in the sidebar to see what's
   hidden and why. Snapshot images stay visible, even when they live next to tests.
@@ -125,7 +126,7 @@ Files sort by one 0–100 importance score. Path is the tie-breaker.
 Without an evaluator, scores come from the path and are labeled
 **Fallback**. Localization, tests and manifests rank lowest, views low, and
 code matching `files.important` (services, repositories, auth and similar)
-high.
+high. Generated code ranks lowest too.
 
 With `JEV_API_KEY` in the server's environment, Jev (Typesafe's evaluation
 API at `api.typesafe.ai`) scores each actual diff with three evaluators: business logic and correctness,
@@ -137,6 +138,7 @@ Some files never leave the machine and keep fallback scores:
 
 - diffs that mention passwords, secrets, credentials, API keys or DSNs
 - text files over 2 MB, or with oversized lines
+- generated code, such as `*.pb.swift`; review its schema instead
 - image pixels
 
 Results are cached by content and by your evaluation preferences, which you
@@ -265,7 +267,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `name` | `local-review` | State directory in the Git common dir, ref namespace, and `<NAME>_HANDOFF`/`<NAME>_QUEUE_PID` variables |
 | `title` | `Local` | Brand word in the page header and tab |
 | `launcher` | `python3 <path>/server.py` | Command given to agents and on the queue page |
-| `[files]` | iOS defaults | Regexes for snapshot, localization, manifest, test and view files, and `important` |
+| `[files]` | iOS defaults | Regexes for snapshot, localization, generated, manifest, test and view files, and `important` |
 | `[[priority]]` | none | `pattern` and `label` for paths that never score below 95 |
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |

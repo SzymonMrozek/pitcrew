@@ -160,11 +160,12 @@ test('line range highlighting stays inside the selected file in a continuous fee
 test('filtered files explain matching defaults and custom exclusions', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const filter = source.slice(source.indexOf('function filterReason('), source.indexOf('function viewed('));
-  const context = vm.createContext({state: {settings: {hideTests: true, hideLocalization: true, exclude: ['generated']}}, globMatch: (pattern, path) => path.startsWith(pattern)});
+  const context = vm.createContext({state: {settings: {hideTests: true, hideLocalization: true, hideGenerated: true, exclude: ['generated']}}, globMatch: (pattern, path) => path.startsWith(pattern)});
   vm.runInContext(filter, context);
   assert.equal(context.filterReason({kind: 'test', path: 'Test.swift'}), 'Unit tests');
   assert.equal(context.filterReason({kind: 'snapshot', path: 'Tests/image.png'}), '');
   assert.equal(context.filterReason({path: 'generated/Code.swift'}), 'Excluded by generated');
+  assert.equal(context.filterReason({kind: 'generated', path: 'Sources/user.pb.swift'}), 'Generated code');
 });
 
 

@@ -40,6 +40,7 @@ function filterReason(file) {
   if (s.hideTests && file.kind === 'test') return 'Unit tests';
   if (s.hideViews && file.kind === 'view') return 'Views and navigation';
   if (s.hideManifests && file.kind === 'manifest') return 'Project manifests';
+  if (s.hideGenerated && file.kind === 'generated') return 'Generated code';
   const pattern = s.exclude.find(pattern => globMatch(pattern, file.path));
   return pattern ? `Excluded by ${pattern}` : '';
 }
@@ -517,9 +518,9 @@ for (const id of ['search', 'show-hidden', 'only-unviewed']) $('#' + id).addEven
 $('#mode').onchange = () => run(async () => {state = await api('settings', {diffMode: $('#mode').value}); await load();});
 document.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => run(async () => {tab = node.dataset.tab; await load();}));
 document.querySelectorAll('[data-close]').forEach(node => node.onclick = () => node.closest('dialog').close());
-$('#settings').onclick = () => {const form = $('#defaults-form'), s = state.settings; for (const key of ['hideLocalization', 'hideTests', 'hideViews', 'hideManifests']) form.elements[key].checked = s[key]; form.elements.exclude.value = s.exclude.join('\n'); form.elements.imageScale.value = s.imageScale; form.elements.rubric.value = s.rubric; $('#scale-label').textContent = s.imageScale + '%'; $('#defaults-dialog').showModal();};
+$('#settings').onclick = () => {const form = $('#defaults-form'), s = state.settings; for (const key of ['hideLocalization', 'hideTests', 'hideViews', 'hideManifests', 'hideGenerated']) form.elements[key].checked = s[key]; form.elements.exclude.value = s.exclude.join('\n'); form.elements.imageScale.value = s.imageScale; form.elements.rubric.value = s.rubric; $('#scale-label').textContent = s.imageScale + '%'; $('#defaults-dialog').showModal();};
 $('#defaults-form').elements.imageScale.oninput = event => $('#scale-label').textContent = event.target.value + '%';
-$('#defaults-form').onsubmit = event => {event.preventDefault(); run(async () => {const form = event.target, settings = {}; for (const key of ['hideLocalization', 'hideTests', 'hideViews', 'hideManifests']) settings[key] = form.elements[key].checked; settings.exclude = form.elements.exclude.value.split('\n').map(s => s.trim()).filter(Boolean); settings.imageScale = Number(form.elements.imageScale.value); settings.rubric = form.elements.rubric.value; state = await api('settings', settings); $('#defaults-dialog').close(); await load();});};
+$('#defaults-form').onsubmit = event => {event.preventDefault(); run(async () => {const form = event.target, settings = {}; for (const key of ['hideLocalization', 'hideTests', 'hideViews', 'hideManifests', 'hideGenerated']) settings[key] = form.elements[key].checked; settings.exclude = form.elements.exclude.value.split('\n').map(s => s.trim()).filter(Boolean); settings.imageScale = Number(form.elements.imageScale.value); settings.rubric = form.elements.rubric.value; state = await api('settings', settings); $('#defaults-dialog').close(); await load();});};
 $('#comment-form').onkeydown = event => {
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
     event.preventDefault();

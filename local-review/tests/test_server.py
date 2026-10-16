@@ -147,6 +147,25 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(m.category('Sources/ProjectSettings.swift'), 'code')
         self.assertTrue(m.DEFAULTS['hideManifests'])
 
+    def test_generated_protobuf_code_is_hidden_and_ranked_lowest(self):
+        for path in ('Modules/Models/Proto/Sources/Generated/user/v2/user.pb.swift', 'Sources/Generated/api.grpc.swift',
+                     'api/user.pb.go', 'api/user_grpc.pb.go', 'service/user_pb2.py', 'web/user_pb.d.ts'):
+            self.assertEqual(m.category(path), 'generated', path)
+            self.assertEqual(m.fallback_score(path), 10, path)
+        self.assertEqual(m.category('Sources/ProtobufMapping.swift'), 'code')
+        self.assertTrue(m.DEFAULTS['hideGenerated'])
+        with self.assertRaises(ValueError):
+            self.review.update_settings({'hideGenerated': 'yes'})
+        self.write('Sources/user.pb.swift', 'struct User {}\n')
+        self.review.refresh()
+        file = next(f for f in self.review.files if f['path'] == 'Sources/user.pb.swift')
+        self.assertEqual(file['kind'], 'generated')
+        with patch.dict(os.environ, {'JEV_API_KEY': 'test'}), patch.object(m.urllib.request, 'urlopen') as urlopen:
+            self.review.files = [file]
+            self.review.rank()
+        urlopen.assert_not_called()
+        self.assertEqual((self.review.ranking['fallbacks'], file['scorer']), (0, 'Fallback'))
+
     def test_queue_snapshot_matches_a_live_submodule_pin_and_rejects_dirty_execution(self):
         dependency = self.root / 'Tools/Dependency'
         dependency.mkdir(parents=True)
