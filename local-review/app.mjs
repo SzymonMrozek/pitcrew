@@ -97,6 +97,7 @@ function updateChrome() {
   $('#approve').textContent = requested ? 'Merge requested' : 'Approve & merge';
   $('#approve').disabled = requested || !state.canMerge || state.job.status === 'running' || state.job.status === 'merged';
   renderMergeRequest();
+  renderHandoff();
   run(updateMergeProgress);
   $('#simulator').disabled = simulatorOpening || !state.simulator || state.job.status === 'running' || state.job.status === 'merged';
   $('#simulator').title = state.simulator ? `Open ${state.simulator.name}` : 'No dedicated simulator is assigned to this worktree';
@@ -161,6 +162,26 @@ function renderMergeRequest() {
     box.append(button('Copy request', async () => {await navigator.clipboard.writeText(request.prompt); notice('Copied request. Paste it in the agent chat.');}));
     if (request.status === 'pending') box.append(button('Withdraw approval', async () => {state = await api('merge/cancel', {id: request.id}); updateChrome();}));
     const details = el('details'), prompt = el('textarea'); prompt.readOnly = true; prompt.value = request.prompt; prompt.rows = 4; prompt.setAttribute('aria-label', 'Request for agent'); details.append(el('summary', '', 'Request for agent'), prompt); box.append(details);
+  }
+}
+function agentName(agent) {return agent?.provider === 'claude' ? 'Claude' : 'Codex';}
+function renderHandoff() {
+  const handoff = state.handoff, last = handoff?.last, send = $('#send-review'), box = $('#review-handoff-status');
+  send.hidden = !handoff;
+  send.disabled = !handoff || Boolean(handoff.blocker) || Boolean(watchedMerge);
+  send.textContent = last?.status === 'running' ? 'Agent working…' : `Send to agent${handoff?.unsent ? ` · ${handoff.unsent}` : ''}`;
+  send.title = handoff?.blocker || `Send ${handoff?.unsent || 'no'} new unresolved comment${handoff?.unsent === 1 ? '' : 's'} to the ${agentName(state.agent)} conversation that wrote this change`;
+  let dismissed = null;
+  try {dismissed = sessionStorage.getItem('review-handoff-dismissed');} catch {}
+  box.hidden = !last || dismissed === last.id;
+  box.replaceChildren();
+  if (box.hidden) return;
+  const name = agentName(last.agent), count = `${last.comments.length} comment${last.comments.length === 1 ? '' : 's'}`;
+  box.append(el('strong', '', last.status === 'running' ? `${name} is working on your review` : last.status === 'finished' ? `${name} finished your review` : 'Review not delivered'));
+  box.append(el('span', '', last.status === 'running' ? `Sent ${count}${last.note ? ' and a note' : ''} to the conversation that wrote this change. It continues in this worktree; refresh when it finishes.` : last.summary));
+  if (last.status !== 'running') {
+    if (last.status === 'finished') box.append(button('Refresh', () => load(true)));
+    box.append(button('Dismiss', () => {try {sessionStorage.setItem('review-handoff-dismissed', last.id);} catch {} renderHandoff();}));
   }
 }
 async function updateMergeProgress() {
@@ -499,7 +520,7 @@ function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
   const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : ''));
   node.append(button(comment.resolved ? 'Reopen' : 'Resolve', async () => {state = await api('resolve', {id: comment.id, resolved: !comment.resolved}); await updateFileComments(comment.file);}));
-  node.append(el('small', '', `${comment.path} · ${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}`), el('p', '', comment.text)); return node;
+  node.append(el('small', '', `${comment.path} · ${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text)); return node;
 }
 function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
 function statsTable(heading, rows, max) {
@@ -792,6 +813,21 @@ async function showInDiff(file, line, side = 'new') {
   pendingLine = {file: file.id, line, side}; active = file.id;
   await load();
 }
+$('#send-review').onclick = () => {
+  const unsent = state.handoff.unsent;
+  $('#send-heading').textContent = `Send review to ${agentName(state.agent)}`;
+  $('#send-summary').textContent = unsent ? `Send ${unsent} new unresolved comment${unsent === 1 ? '' : 's'} from every review scope. Resolved comments and comments sent earlier stay here.` : 'No new comments. Write a note to send one anyway.';
+  $('#send-agent-note').textContent = `Resumes the ${agentName(state.agent)} conversation that wrote this change, in the background. It records its work as a new interaction; it never merges.`;
+  $('#send-form').reset(); $('#send-dialog').showModal(); $('#send-form').elements.note.focus();
+};
+$('#send-form').onsubmit = event => {
+  event.preventDefault();
+  run(async () => {
+    const submit = event.target.querySelector('.primary'); submit.disabled = true;
+    try {state = await api('review/send', {note: event.target.elements.note.value}); $('#send-dialog').close(); updateChrome(); notice(`Sent your review to ${agentName(state.agent)}.`);}
+    finally {submit.disabled = false;}
+  });
+};
 let mergeRevision;
 $('#approve').onclick = () => {
   mergeRevision = state.merge.revision;
@@ -814,7 +850,7 @@ $('#merge-form').onsubmit = event => {
   });
 };
 document.addEventListener('keydown', event => {if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || event.metaKey || event.ctrlKey || event.altKey) return; run(async () => {const files = visibleFiles(), index = files.findIndex(f => f.id === active); if (event.key.toLowerCase() === 'j' && files[index + 1]) await selectFile(files[index + 1].id); if (event.key.toLowerCase() === 'k' && files[index - 1]) await selectFile(files[index - 1].id); if (event.key.toLowerCase() === 'v' && active) await markAndNext(); if (event.key.toLowerCase() === 's') {tab = tab === 'snapshot' ? 'all' : 'snapshot'; await load();}});});
-setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working')) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; state = nextState; updateChrome(); if (state.job.status !== 'idle') renderJob();});}, 1500);
+setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running')) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; state = nextState; updateChrome(); if (state.job.status !== 'idle') renderJob();});}, 1500);
 run(loadFeedback);
 run(async () => {await load(); if (!state.jevAvailable) notice('Jev is unavailable without JEV_API_KEY in the review server environment. Files use clearly labeled fallback scores.');});
 

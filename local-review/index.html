@@ -25,6 +25,7 @@
 <button id="feedback">Tool feedback</button>
 <button id="queue">Merge queue</button>
 <button id="simulator" disabled>Open Simulator</button>
+<button id="send-review" title="Send your new comments to the agent conversation that wrote this change">Send to agent</button>
 <button id="approve" class="primary">Approve & merge</button>
 </div>
 </header>
@@ -61,6 +62,7 @@
 <div id="notice" role="status" hidden>
 </div>
 <div id="merge-request-status" role="status" hidden></div>
+<div id="review-handoff-status" role="status" hidden></div>
 <section id="merge-progress" aria-label="Merge agent progress" hidden>
 <details open>
 <summary>Agent output <span id="merge-log-note"></span></summary>
@@ -172,6 +174,15 @@
 <button type="button" data-close>Cancel</button>
 <button class="primary">Ask agent to merge</button>
 </div>
+</form>
+</dialog>
+<dialog id="send-dialog" aria-labelledby="send-heading">
+<form id="send-form">
+<div class="dialog-heading"><h2 id="send-heading">Send review to agent</h2><button type="button" data-close aria-label="Close">×</button></div>
+<p id="send-summary"></p>
+<label>Note for the agent <small>Optional. Sent with the comments.</small><textarea name="note" rows="4" maxlength="10000" placeholder="Anything that applies to the whole review…"></textarea></label>
+<p class="muted" id="send-agent-note"></p>
+<div class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary">Send to agent</button></div>
 </form>
 </dialog>
 <dialog id="markdown-dialog" aria-labelledby="markdown-name">

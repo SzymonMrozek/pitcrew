@@ -678,7 +678,10 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
   gap:12px;
   flex-wrap:wrap;
 }
-#merge-request-status[hidden] {display:none}
+#merge-request-status[hidden], #review-handoff-status[hidden] {display:none}
+#review-handoff-status {background:#202530; border-bottom:1px solid var(--border); padding:12px 25px; display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+#review-handoff-status > span {flex:1; white-space:pre-wrap; max-height:160px; overflow:auto}
+.comment .sent {color:var(--muted)}
 #merge-request-status > span {flex:1;white-space:pre-wrap;max-height:120px;overflow:auto}
 #merge-request-status details {width:100%}
 #merge-request-status textarea {width:100%;margin-top:8px}

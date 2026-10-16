@@ -178,6 +178,36 @@ test('marking a file viewed jumps to the next unreviewed file and wraps to the t
   assert.deepEqual(notices, ['Every shown file is reviewed.']);
 });
 
+test('send to agent reflects blockers, unsent comments and the last delivery', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const render = source.slice(source.indexOf('function agentName('), source.indexOf('async function updateMergeProgress('));
+  const node = () => ({hidden: false, disabled: false, textContent: '', title: '', children: [], replaceChildren() {this.children = [];}, append(...items) {this.children.push(...items);}});
+  const send = node(), box = node(), stored = new Map();
+  const context = vm.createContext({
+    $: selector => selector === '#send-review' ? send : box, watchedMerge: null,
+    el: (tag, className, text) => ({tag, className, textContent: text}), button: text => ({tag: 'button', textContent: text}),
+    sessionStorage: {getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value)},
+    state: {agent: {provider: 'claude'}, handoff: {unsent: 2, blocker: null, last: null}},
+  });
+  vm.runInContext(render, context);
+  context.renderHandoff();
+  assert.deepEqual([send.hidden, send.disabled, send.textContent, box.hidden], [false, false, 'Send to agent · 2', true]);
+  assert.match(send.title, /2 new unresolved comments to the Claude conversation/);
+  context.state.handoff = {unsent: 0, blocker: 'The agent is still handling the previous review.', last: {id: 'h1', status: 'running', comments: ['a', 'b'], note: '', agent: {provider: 'claude'}}};
+  context.renderHandoff();
+  assert.deepEqual([send.disabled, send.textContent, send.title, box.hidden], [true, 'Agent working…', 'The agent is still handling the previous review.', false]);
+  assert.equal(box.children[0].textContent, 'Claude is working on your review');
+  context.state.handoff = {unsent: 0, blocker: null, last: {id: 'h1', status: 'finished', comments: ['a'], summary: '[a] Renamed.', agent: {provider: 'codex'}}};
+  context.renderHandoff();
+  assert.deepEqual(box.children.map(child => child.textContent), ['Codex finished your review', '[a] Renamed.', 'Refresh', 'Dismiss']);
+  stored.set('review-handoff-dismissed', 'h1');
+  context.renderHandoff();
+  assert.equal(box.hidden, true);
+  context.state.handoff = null;
+  context.renderHandoff();
+  assert.deepEqual([send.hidden, send.disabled], [true, true], 'Saved merge views cannot send');
+});
+
 test('filtered files explain matching defaults and custom exclusions', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const filter = source.slice(source.indexOf('function filterReason('), source.indexOf('function viewed('));

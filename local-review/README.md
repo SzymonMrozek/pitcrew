@@ -159,6 +159,20 @@ depends on it. `files.model` matches `models/`, `entities/` and `dto/`
 directories, and files named like `*Model`, `*Content`, `*State`, `*Entity` or
 `*DTO`. Views, tests and generated code are never data models.
 
+## Send a review to the agent
+
+**Send to agent** hands your review back without approving it. It resumes the
+Codex or Claude conversation that wrote the change, in the background and in
+the same worktree, with every new unresolved comment from all review scopes and
+an optional note. The agent treats it as a new request: it records an
+interaction, makes the changes and replies to each comment. It never merges.
+When it finishes, the page shows its reply. Refresh to review what changed.
+
+Each comment is sent once and marked **sent to agent**. Resolve or add comments
+and send again for the next round. The button stays disabled while the agent is
+mid-request (an interaction is recorded as begun but not finished), while it
+handles the previous review, and once a merge is requested.
+
 ## Approve and merge
 
 **Approve & merge** shows a summary of the full branch. **Ask agent to merge**

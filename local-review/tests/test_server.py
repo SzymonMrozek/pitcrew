@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
+import secrets
 import shlex
 import socket
 import time
@@ -19,7 +20,7 @@ from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOL))
-from agent import deliver  # noqa: E402
+from agent import deliver, deliver_review  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('review_server', TOOL / 'server.py')
 m = importlib.util.module_from_spec(spec)
@@ -1173,6 +1174,97 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
             deliver(request['path'])
         self.assertEqual(self.review.merge_request()['status'], 'merged')
         self.assertEqual(self.review.merge_request()['summary'], 'Done')
+
+    def comment(self, text, resolved=False):
+        file = self.review.files[0]
+        comment = {'id': secrets.token_hex(8), 'file': file['id'], 'path': file['path'], 'side': 'new', 'line': 1, 'endLine': 1,
+                   'text': text, 'resolved': resolved, 'fingerprint': file['fingerprint'], 'scope': 'full'}
+        self.review.session['comments'].append(comment)
+        self.review.save_session()
+        return comment
+
+    def send_review(self, note=''):
+        with patch.object(m.Review, 'launch_review_worker', return_value=os.getpid()) as launch:
+            handoff = self.review.send_review(note)
+        launch.assert_called_once_with(Path(handoff['path']), handoff['id'])
+        return handoff
+
+    def test_send_review_hands_new_comments_to_the_originating_conversation(self):
+        with self.assertRaisesRegex(ValueError, 'No new unresolved comments'):
+            self.send_review()
+        first = self.comment('Rename value to total.\nIt reads better.')
+        self.comment('Already handled', resolved=True)
+        self.assertEqual(self.review.state()['handoff']['unsent'], 1)
+        handoff = self.send_review('Focus on naming.')
+        self.assertEqual((handoff['status'], handoff['comments'], handoff['agent']['sessionId']), ('running', [first['id']], 'original-codex-chat'))
+        self.assertIn(f"- [{first['id']}] Interactor.swift (new side, line 1)\n  Rename value to total.\n  It reads better.", handoff['prompt'])
+        self.assertIn('Reviewer note:\nFocus on naming.', handoff['prompt'])
+        self.assertIn(' --base main --begin-iteration', handoff['prompt'], 'The agent records into this review, whatever its target')
+        self.assertNotIn('Already handled', handoff['prompt'])
+        state = self.review.state()['handoff']
+        self.assertEqual((state['unsent'], state['last']['id']), (0, handoff['id']))
+        self.assertNotIn('prompt', state['last'])
+        self.assertEqual(state['blocker'], 'The agent is still handling the previous review.')
+        self.assertTrue(all(c.get('handoff') == handoff['id'] for c in m.read_json(self.review.store / f'{self.review.session_id}.json', {})['comments'] if not c['resolved']))
+        with self.assertRaisesRegex(ValueError, 'still handling'):
+            self.send_review('Again')
+        m.write_json(Path(handoff['path']), {**handoff, 'workerPid': 2 ** 22 + 12345})
+        self.assertEqual(self.review.review_handoff()['status'], 'failed', 'A dead worker cannot stay running')
+
+    def test_send_review_waits_for_the_agent_turn_and_a_known_conversation(self):
+        self.comment('Please add a test.')
+        self.review.begin_iteration('turn-1', 'Change the value')
+        with self.assertRaisesRegex(ValueError, 'still working on its current request'):
+            self.send_review()
+        self.review.finish_iteration('turn-1', 'Changed', 'feat(test): change value', 'Change the value.')
+        self.review.session['agent'] = None
+        self.review.session['threadId'] = None
+        self.review.save_session('agent', 'threadId')
+        with self.assertRaisesRegex(ValueError, 'No originating agent conversation'):
+            self.send_review()
+
+    def test_review_delivery_resumes_the_original_codex_and_claude_sessions(self):
+        self.comment('Rename value.')
+        handoff = self.send_review()
+        def codex(command, **kwargs):
+            self.assertEqual(command[:3], ['/fake/codex', 'exec', 'resume'])
+            self.assertEqual(command[-2:], ['original-codex-chat', '-'])
+            self.assertIn('approval_policy="never"', command)
+            self.assertEqual((kwargs['cwd'], kwargs['input']), (str(self.review.repo), handoff['prompt']))
+            self.assertNotIn('CODEX_THREAD_ID', kwargs['env'])
+            self.assertNotIn('LOCAL_REVIEW_HANDOFF', kwargs['env'], 'The original conversation keeps recording interactions')
+            Path(command[command.index('--output-last-message') + 1]).write_text('[abc] Renamed.\n')
+            return subprocess.CompletedProcess(command, 0)
+        with patch('agent.subprocess.run', side_effect=codex):
+            deliver_review(handoff['path'])
+        result = self.review.review_handoff()
+        self.assertEqual((result['status'], result['summary']), ('finished', '[abc] Renamed.'))
+        self.assertIsNone(self.review.handoff_blocker())
+        self.comment('Another one.')
+        self.review.session['agent'] = {'provider': 'claude', 'sessionId': 'claude-session-1', 'cli': '/fake/claude'}
+        self.review.save_session('agent')
+        handoff = self.send_review()
+        def claude(command, **kwargs):
+            self.assertEqual(command[:3], ['/fake/claude', '--resume', 'claude-session-1'])
+            kwargs['stdout'].write(json.dumps({'type': 'result', 'result': 'Added it.'}) + '\n')
+            return subprocess.CompletedProcess(command, 1)
+        with patch('agent.subprocess.run', side_effect=claude):
+            deliver_review(handoff['path'])
+        self.assertEqual((self.review.review_handoff()['status'], self.review.review_handoff()['summary']), ('failed', 'Added it.'))
+
+    def test_review_delivery_process_runs_the_agent_cli(self):
+        self.comment('Rename value.')
+        handoff = self.send_review()
+        cli = self.root / '.git' / 'fake-codex'
+        cli.write_text('#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nassert sys.argv[1:3] == ["exec", "resume"]\n'
+                       'assert "Rename value." in sys.stdin.read()\n'
+                       'Path(sys.argv[sys.argv.index("--output-last-message") + 1]).write_text("Renamed it.")\n')
+        cli.chmod(0o755)
+        m.write_json(Path(handoff['path']), {**handoff, 'agent': {**handoff['agent'], 'cli': str(cli)}})
+        result = subprocess.run([m.sys.executable, str(m.ASSETS / 'agent.py'), '--review', handoff['path']],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.review.review_handoff()['status'], self.review.review_handoff()['summary']), ('finished', 'Renamed it.'))
 
     def test_cancelled_approval_never_starts_worker_and_failure_is_visible(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')

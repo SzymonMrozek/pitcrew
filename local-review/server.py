@@ -656,6 +656,7 @@ class Review:
                     'agent': agent,
                     'threadTitle': thread_title(agent) or self.session['mergeDraft'].get('title') or None,
                     'mergeRequest': self.merge_request(merge_id),
+                    'handoff': None if merge_id else self.handoff_state(),
                     'merge': {'revision': self.approval_revision(), 'fileCount': len(self.files), 'unresolved': sum(not c['resolved'] for c in self.session['comments']), 'draft': self.session['mergeDraft']},
                     'dirty': not clean, 'jevAvailable': bool(os.environ.get('JEV_API_KEY')),
                     'tool': self.tool_info(),
@@ -1337,6 +1338,89 @@ class Review:
             request.update(status='cancelled', summary='Approval withdrawn. The agent must not merge this request.')
             write_json(Path(request['path']), request)
 
+    def review_handoff(self):
+        handoff = read_json(self.store / f'{self.session_id}-review-handoff.json', None)
+        if handoff and handoff['status'] == 'running' and handoff.get('workerPid') and not process_alive(handoff['workerPid']):
+            handoff.update(status='failed', summary=handoff.get('summary') or 'The agent stopped before reporting back. Copy the request into its chat.')
+        return handoff
+
+    def handoff_blocker(self):
+        """Why the reviewer cannot send review comments to the agent right now, if anything stops it."""
+        if not self.worktree_available():
+            return 'Only the live worktree review can be sent to its agent.'
+        agent = self.origin_agent()
+        if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
+            return f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.'
+        if read_json(self.store / f'{self.session_id}.json', self.session).get('pendingIteration'):
+            return 'The agent is still working on its current request. Send the review after it finishes its turn.'
+        request = self.merge_request()
+        if request and request['status'] in ('pending', 'working'):
+            return 'A merge is requested; the merge agent receives every comment.'
+        handoff = self.review_handoff()
+        if handoff and handoff['status'] == 'running':
+            return 'The agent is still handling the previous review.'
+        return None
+
+    def handoff_state(self):
+        comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
+        handoff = self.review_handoff()
+        return {'last': {k: v for k, v in handoff.items() if k != 'prompt'} if handoff else None, 'blocker': self.handoff_blocker(),
+                'unsent': sum(not c['resolved'] and not c.get('sentAt') for c in comments)}
+
+    def send_review(self, note):
+        """Resume the conversation that wrote the change with the reviewer's new comments."""
+        if not isinstance(note, str) or len(note) > 10000:
+            raise ValueError('The note for the agent must be at most 10000 characters')
+        if blocker := self.handoff_blocker():
+            raise ValueError(blocker)
+        comments = [c for c in self.session['comments'] if not c['resolved'] and not c.get('sentAt')]
+        if not comments and not note.strip():
+            raise ValueError('No new unresolved comments to send. Add a comment or a note for the agent.')
+        current = {f['path']: f['fingerprint'] for f in self.files}
+        def location(comment):
+            where = 'whole file' if comment['side'] == 'file' else f"{comment['side']} side, line {comment['line']}" + (
+                f"–{comment['endLine']}" if comment.get('endLine', comment['line']) != comment['line'] else '')
+            if comment.get('scope', 'full') != 'full':
+                where += ', reviewed in ' + ('this thread' if comment['scope'] == 'thread' else f"interaction {comment['scope']}")
+            if current.get(comment['path']) != comment['fingerprint']:
+                where += ', written against an earlier version of the file'
+            return f"- [{comment['id']}] {comment['path']} ({where})\n" + '\n'.join('  ' + line for line in comment['text'].splitlines())
+        cli = launcher(self.config)
+        agent = self.origin_agent()
+        handoff = {'id': secrets.token_hex(12), 'status': 'running', 'sentAt': datetime.now(timezone.utc).isoformat(),
+                   'agent': agent, 'repo': str(self.repo), 'branch': self.branch, 'target': self.target,
+                   'comments': [c['id'] for c in comments], 'note': note.strip(), 'summary': ''}
+        handoff['prompt'] = (f'The user finished a review pass of branch {self.branch} (merging into {self.target}) in {self.repo} '
+            'and sent you their review feedback. Handle it as if they had typed it in this conversation: address each actionable comment '
+            'in this worktree. Treat this as one new user interaction and follow the repository agent instructions, including '
+            f'{cli} --base {self.target} --begin-iteration <new id> --request "<summary>" before changing files, the usual validation, and '
+            f'{cli} --base {self.target} --finish-iteration <same id> with an updated title and description afterwards. '
+            'Line numbers refer to the old or new side of the reviewed diff. If a comment asks a question or you disagree with it, '
+            'answer it instead of changing code. Do not merge, approve or request a merge, and do not open review or queue pages '
+            'in any browser; the user opens them. End with a short reply to each comment, by its ID.\n\n'
+            + (f'Reviewer note:\n{note.strip()}\n\n' if note.strip() else '')
+            + ('Review comments:\n' + '\n'.join(location(c) for c in comments) if comments else 'No line comments.') + '\n')
+        path = self.store / f'{self.session_id}-review-handoff.json'
+        handoff['path'] = str(path)
+        with path.with_suffix('.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            write_json(path, handoff)
+            try:
+                handoff['workerPid'] = self.launch_review_worker(path, handoff['id'])
+            except OSError as error:
+                handoff.update(status='failed', summary=f'Could not start the agent: {error}. Copy the request into its chat.')
+            write_json(path, handoff)
+        if handoff['status'] == 'running':
+            for comment in comments:
+                comment.update(sentAt=handoff['sentAt'], handoff=handoff['id'])
+            self.save_session('comments')
+        return handoff
+
+    def launch_review_worker(self, path, handoff_id):
+        with (self.store / f'{handoff_id}-review-delivery.log').open('a') as log:
+            return subprocess.Popen([sys.executable, str(AGENT_RUNTIME / 'agent.py'), '--review', str(path)],
+                                    stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True).pid
+
     def recover_interrupted_merge(self, request):
         """Return a working approval to pending when the process running its attempt has exited."""
         if request and request['status'] == 'working' and not process_alive(request.get('mergePid')):
@@ -1635,6 +1719,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if route == '/api/simulator':
                     self.send(200, {'simulator': review.open_simulator()})
+                    return
+                if route == '/api/review/send':
+                    if parse_qs(url.query).get('merge'):
+                        raise ValueError('Saved merge views are read-only')
+                    review.send_review(body.get('note', ''))
+                    self.send(200, review.state(iteration))
                     return
                 if route == '/api/merge-conversation':
                     self.send(200, review.open_claude_conversation(parse_qs(url.query).get('merge', [None])[0]))

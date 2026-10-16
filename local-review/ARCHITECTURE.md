@@ -109,7 +109,9 @@ Each of these cost real debugging time.
   identity now includes when the linked worktree was created, which comes from
   the `commondir` file's mtime.
 - **Resuming a running headless Claude session interrupts it.** The resume
-  controls stay disabled until the worker exits.
+  controls stay disabled until the worker exits. **Send to agent** resumes the
+  originating conversation itself, so it waits until no interaction is pending
+  and no previous review is still being handled.
 - **Tool upgrades must not break posted links.** A changed tool restarts an
   idle server on the same port and token. A merge in progress finishes on the old
   server first. The health endpoint reports both the original and the current
