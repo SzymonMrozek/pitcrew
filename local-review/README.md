@@ -99,6 +99,11 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   ![The Snapshots feed for the same mock app: the order history screen before and after a Reorder button was added, with changed pixels highlighted in the third column.](images/snapshots.png)
  Click an image to inspect it. Missing Git LFS
   objects are reported; the tool never downloads them.
+- **Stats.** The **Stats** tab totals changed files and added, removed and net
+  lines for the selected scope, with a breakdown by kind (code, views, tests,
+  generated code and so on) and by file extension. Filtered files count only
+  while **Show filtered files** is on. The header shows the unfiltered totals.
+  Binary and oversized files count as files without lines.
 - **Context.** Gap rows reveal 20 more lines at a time, or the whole gap.
   **Show full file** expands every gap. Expanded lines take comments too.
 - **Comments.** Click a line number to comment on it, or drag across line

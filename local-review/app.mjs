@@ -6,6 +6,7 @@ import {CONTEXT_STEP, contextGaps, expandGap, expandAll, fullyExpanded, withCont
 import {rankDefinitions} from './definitions.mjs';
 import {mountQueue} from './queue.mjs';
 import {isMarkdown, renderMarkdown} from './markdown.mjs';
+import {diffStats, signed} from './stats.mjs';
 const $ = selector => document.querySelector(selector);
 const token = location.hash.slice(1) || sessionStorage.getItem('review-token');
 if (token) sessionStorage.setItem('review-token', token);
@@ -73,8 +74,8 @@ function updateChrome() {
   configureModules(state.tool?.modules);
   moduleColorMap = moduleColors(state.files.map(file => moduleFor(file.path)?.name).filter(Boolean));
   $('#branch').textContent = `${state.branch || 'Detached HEAD'} → ${state.target}`;
-  const current = state.iterations.find(i => i.id === iteration);
-  $('#revision').textContent = `${state.head.slice(0, 8)} · ${current ? `iteration ${current.number}` : iteration === 'thread' ? 'this thread' : 'full diff'} · ${state.files.length} changed files${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
+  const current = state.iterations.find(i => i.id === iteration), lines = diffStats(state.files);
+  $('#revision').textContent = `${state.head.slice(0, 8)} · ${current ? `iteration ${current.number}` : iteration === 'thread' ? 'this thread' : 'full diff'} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
   const selector = $('#iteration');
   const full = el('option', '', 'Full diff'); full.value = '';
   const thread = el('option', '', 'This thread'); thread.value = 'thread'; thread.disabled = !state.threadScopeAvailable;
@@ -118,11 +119,11 @@ function updateChrome() {
   const excluded = state.files.filter(hidden);
   $('#filtered-summary').textContent = `Filtered out · ${excluded.length}`;
   $('#filtered-list').replaceChildren(...excluded.map(file => {
-    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (tab === 'comments' || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
+    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (tab === 'comments' || tab === 'stats' || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
     const name = el('span', 'file-name'); name.append(el('strong', '', file.path), el('small', '', filterReason(file))); node.append(name); return node;
   }));
   $('#filtered-files').hidden = !excluded.length;
-  $('#mode').hidden = tab === 'snapshot' || tab === 'comments';
+  $('#mode').hidden = ['snapshot', 'comments', 'stats'].includes(tab);
   for (const card of document.querySelectorAll('.review-file')) {
     const file = state.files.find(f => f.id === card.dataset.file);
     if (file) card.querySelector('.viewed-check').checked = viewed(file);
@@ -143,6 +144,7 @@ async function load(refresh = false) {
   updateChrome();
   if (state.job.status === 'running' || state.job.status === 'merged' || state.job.status === 'failed') {renderJob(); return;}
   if (tab === 'comments') {renderComments(); return;}
+  if (tab === 'stats') {renderStats(); return;}
   feedObserver?.disconnect();
   if (!visibleFiles().some(f => f.id === active)) active = visibleFiles()[0]?.id;
   if (active) {renderFeed(); await selectFile(active);} else $('#content').replaceChildren(el('div', 'empty', state.files.length ? 'No files match these filters. Enable “Show filtered files” to see all changes.' : 'No changes to review.'));
@@ -237,7 +239,7 @@ function updateSelection(id) {
   }
 }
 function syncSelection() {
-  if (tab === 'comments') return;
+  if (tab === 'comments' || tab === 'stats') return;
   const cards = [...document.querySelectorAll('.review-file')];
   const top = $('#content').getBoundingClientRect().top + 64;
   const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 2;
@@ -500,6 +502,35 @@ function commentNode(comment) {
   node.append(el('small', '', `${comment.path} · ${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}`), el('p', '', comment.text)); return node;
 }
 function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
+function statsTable(heading, rows, max) {
+  const table = el('table', 'stats-table'), head = el('tr');
+  head.append(...[heading, 'Files', 'Added', 'Removed', 'Net', ''].map(text => el('th', '', text)));
+  table.append(el('thead'), el('tbody')); table.tHead.append(head);
+  table.tBodies[0].append(...rows.map(row => {
+    const line = el('tr'), bar = el('span', 'stats-bar');
+    bar.style.width = `${max ? 100 * (row.added + row.deleted) / max : 0}%`;
+    bar.style.setProperty('--added', `${row.added + row.deleted ? 100 * row.added / (row.added + row.deleted) : 0}%`);
+    const share = el('td', 'stats-share'); share.append(bar);
+    line.append(el('th', '', row.label), el('td', '', row.files.toLocaleString()), el('td', row.added ? 'added' : '', signed(row.added)), el('td', row.deleted ? 'removed' : '', signed(-row.deleted)), el('td', '', signed(row.added - row.deleted)), share);
+    return line;
+  }));
+  return table;
+}
+function renderStats() {
+  feedObserver?.disconnect(); ++renderVersion;
+  // Filtered files count only while “Show filtered files” is on, matching the Changes feed.
+  const filtered = state.files.filter(hidden).length, included = $('#show-hidden').checked ? state.files : state.files.filter(file => !hidden(file));
+  const stats = diffStats(included), main = $('#content'), summary = el('div', 'stats-summary');
+  const tile = (label, value, className = '') => {const node = el('div', 'stats-tile'); node.append(el('strong', className, value), el('span', '', label)); return node;};
+  summary.append(tile('changed files', stats.files.toLocaleString()), tile('lines added', signed(stats.added), 'added'), tile('lines removed', signed(-stats.deleted), 'removed'), tile('net lines', signed(stats.added - stats.deleted)));
+  const notes = [`${stats.created} added · ${stats.modified} modified · ${stats.removed} deleted`];
+  if (stats.uncounted) notes.push(`${stats.uncounted} binary or oversized file${stats.uncounted === 1 ? ' has' : 's have'} no line counts`);
+  if (filtered) notes.push($('#show-hidden').checked ? `includes ${filtered} filtered file${filtered === 1 ? '' : 's'}` : `${filtered} filtered file${filtered === 1 ? '' : 's'} excluded; turn on Show filtered files to count ${filtered === 1 ? 'it' : 'them'}`);
+  const max = Math.max(0, ...stats.byKind.map(row => row.added + row.deleted)), maxType = Math.max(0, ...stats.byType.map(row => row.added + row.deleted));
+  main.replaceChildren(el('h1', '', 'Diff stats'), summary, el('p', 'muted', notes.join(' · ')));
+  if (!stats.files) {main.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to count them.' : 'No changes to review.')); return;}
+  main.append(el('h2', 'comments-title', 'By kind'), statsTable('Kind', stats.byKind, max), el('h2', 'comments-title', 'By file type'), statsTable('Type', stats.byType, maxType));
+}
 function renderJob() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 100; const log = el('pre', 'log', state.job.log); main.replaceChildren(el('div', 'merge-status', state.job.status === 'merged' ? `Merged into ${state.target}. Worktrunk cleanup has been requested.` : state.job.status === 'failed' ? 'Merge stopped. Your changes are available; inspect the log.' : 'Validating and merging…'), log); if (state.job.status === 'failed') main.append(button('Return to review', () => load(true))); if (atEnd) main.scrollTop = main.scrollHeight;}
 // The next unreviewed file below, wrapping around to the top of the shown list.
 function nextUnviewed(files, id) {

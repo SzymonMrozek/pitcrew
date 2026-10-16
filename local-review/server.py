@@ -30,7 +30,7 @@ from urllib.parse import urlparse, parse_qs
 
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
-WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
+WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
 DEFAULTS = {
     "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
     "exclude": [], "imageScale": 70, "diffMode": "split",
