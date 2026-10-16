@@ -90,8 +90,9 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   match across slashes). Expand **Filtered out** in the sidebar to see what's
   hidden and why. Snapshot images stay visible, even when they live next to tests.
 - **Feeds.** **Changes** and **Snapshots** are continuous scrolling feeds. `J`/`K`
-  move between files, `V` marks one viewed and moves on, and `S` toggles snapshots.
-  Marking a file viewed is always explicit, never automatic on scroll.
+  move between files and `S` toggles snapshots. Marking a file viewed, with its
+  checkbox, **Viewed → next** or `V`, jumps to the next unreviewed file, wrapping
+  to the top. It's always explicit, never automatic on scroll.
 - **Snapshots** show old, new and a highlighted pixel diff (exact RGBA,
   including size changes).
 

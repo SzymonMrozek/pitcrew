@@ -157,6 +157,27 @@ test('line range highlighting stays inside the selected file in a continuous fee
   assert.deepEqual(highlighted, [true, false, false]);
 });
 
+test('marking a file viewed jumps to the next unreviewed file and wraps to the top', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const mark = source.slice(source.indexOf('// The next unreviewed file below'), source.indexOf("$('#iteration').onchange"));
+  const files = ['a', 'b', 'c', 'd'].map(id => ({id, fingerprint: id + '1'}));
+  const selected = [], notices = [];
+  const context = vm.createContext({
+    state: {files, session: {viewed: {c: 'c1'}}}, active: 'b', visibleFiles: () => files, updateChrome() {}, notice: message => notices.push(message),
+    viewed: file => context.state.session.viewed[file.id] === file.fingerprint,
+    api: async (path, body) => ({...context.state, session: {viewed: {...context.state.session.viewed, [body.file]: body.fingerprint}}}),
+    $: () => ({checked: false}), selectFile: async id => selected.push(id), load: async () => {},
+  });
+  vm.runInContext(mark, context);
+  await context.markAndNext('b');
+  assert.deepEqual(selected, ['d'], 'Skips the already reviewed file below');
+  await context.markAndNext('d');
+  assert.deepEqual(selected, ['d', 'a'], 'Wraps to the first unreviewed file');
+  await context.markAndNext('a');
+  assert.deepEqual(selected, ['d', 'a']);
+  assert.deepEqual(notices, ['Every shown file is reviewed.']);
+});
+
 test('filtered files explain matching defaults and custom exclusions', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const filter = source.slice(source.indexOf('function filterReason('), source.indexOf('function viewed('));

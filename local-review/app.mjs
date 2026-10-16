@@ -278,7 +278,10 @@ function renderFeed() {
     actions.append(button('Comment', () => openComment(file, 'file', 0)));
     if (!file.binary && !file.limited && isMarkdown(file.path)) actions.append(button('Preview Markdown', () => openMarkdown(file)));
     const label = el('label'), check = el('input', 'viewed-check'); check.type = 'checkbox'; check.checked = viewed(file);
-    check.onchange = () => run(async () => {state = await api('viewed', {file: file.id, fingerprint: file.fingerprint, viewed: check.checked}); updateChrome(); if ($('#only-unviewed').checked) await load();});
+    check.onchange = () => run(async () => {
+      if (check.checked) {await markAndNext(file.id); return;}
+      state = await api('viewed', {file: file.id, fingerprint: file.fingerprint, viewed: false}); updateChrome(); if ($('#only-unviewed').checked) await load();
+    });
     label.append(check, document.createTextNode('Viewed')); actions.append(label); header.append(title, actions);
     const body = el('div', 'file-body'); body.style.height = file.image ? '500px' : '300px';
     body.append(el('p', 'muted', 'Comparison loads as you scroll.'));
@@ -498,12 +501,18 @@ function commentNode(comment) {
 }
 function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
 function renderJob() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 100; const log = el('pre', 'log', state.job.log); main.replaceChildren(el('div', 'merge-status', state.job.status === 'merged' ? `Merged into ${state.target}. Worktrunk cleanup has been requested.` : state.job.status === 'failed' ? 'Merge stopped. Your changes are available; inspect the log.' : 'Validating and merging…'), log); if (state.job.status === 'failed') main.append(button('Return to review', () => load(true))); if (atEnd) main.scrollTop = main.scrollHeight;}
+// The next unreviewed file below, wrapping around to the top of the shown list.
+function nextUnviewed(files, id) {
+  const index = files.findIndex(f => f.id === id);
+  return [...files.slice(index + 1), ...files.slice(0, Math.max(index, 0))].find(f => f.id !== id && !viewed(f))?.id;
+}
 async function markAndNext(id = active) {
-  const files = visibleFiles(), index = files.findIndex(f => f.id === id);
+  const files = visibleFiles();
   state = await api('viewed', {file: id, fingerprint: state.files.find(f => f.id === id).fingerprint, viewed: true});
-  const next = files[index + 1]?.id || files[index - 1]?.id || id;
+  const next = nextUnviewed(files, id);
   updateChrome();
-  if ($('#only-unviewed').checked) {active = next; await load();} else await selectFile(next);
+  if (!next) notice('Every shown file is reviewed.');
+  if ($('#only-unviewed').checked) {active = next || id; await load();} else if (next) await selectFile(next);
 }
 $('#iteration').onchange = () => run(async () => {checkpointReviewTime(); iteration = $('#iteration').value || null; sampleReviewTime(); active = null; $('#content').replaceChildren(); const url = new URL(location.href); if (iteration) url.searchParams.set('iteration', iteration); else url.searchParams.delete('iteration'); history.replaceState(null, '', url); await load();});
 window.addEventListener('popstate', () => run(async () => {checkpointReviewTime(); iteration = new URLSearchParams(location.search).get('iteration'); sampleReviewTime(); active = null; await load();}));
