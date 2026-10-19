@@ -67,17 +67,40 @@ binary.chmod(0o755)
         extra = self.package / "Sources/Extra.swift"
         extra.write_text("new rule")
         self.run_launcher()
+        self.assertEqual(len(self.builds()), 3)
+        # Deleting the rule returns to an already built version.
         extra.unlink()
         self.run_launcher()
+        self.assertEqual(len(self.builds()), 3)
         (self.package / "Package.resolved").write_text("updated dependency")
         self.run_launcher()
-        self.assertEqual(len(self.builds()), 5)
+        self.assertEqual(len(self.builds()), 4)
+
+    def test_worktrees_share_the_cached_executable(self):
+        self.run_launcher()
+        git = ["git", "-C", str(self.root), "-c", "user.name=test", "-c", "user.email=test@example.com"]
+        subprocess.run([*git, "add", "tools"], check=True, env=self.environment)
+        subprocess.run([*git, "commit", "-qm", "tools"], check=True, env=self.environment)
+        worktree = self.root / "second worktree"
+        subprocess.run([*git, "worktree", "add", "-q", "--detach", str(worktree)], check=True, env=self.environment)
+        launcher = worktree / "tools/repository-lint/run.sh"
+        result = subprocess.run([str(launcher), "--all"], cwd=launcher.parent, env=self.environment,
+                                text=True, capture_output=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), [str(worktree), "--all"])
+        self.assertEqual(len(self.builds()), 1)
+
+    def test_old_versions_are_pruned(self):
+        for version in range(7):
+            (self.package / "Sources/Rule.swift").write_text(f"version {version}")
+            self.run_launcher()
+        executables = [path for path in (self.root / ".git/repository-lint/bin").iterdir()]
+        self.assertEqual(len(executables), 5)
 
     def test_failed_build_is_retried_and_lock_released(self):
         (self.root / "fail").touch()
         self.assertNotEqual(self.run_launcher(check=False).returncode, 0)
-        self.assertFalse((self.root / ".build-tools/repository-lint.lock").exists())
-        self.assertFalse((self.root / ".build-tools/repository-lint/inputs").exists())
+        self.assertFalse((self.root / ".git/repository-lint/build.lock").exists())
+        self.assertEqual(list((self.root / ".git/repository-lint/bin").iterdir()), [])
         (self.root / "fail").unlink()
         self.run_launcher()
         self.assertEqual(len(self.builds()), 2)

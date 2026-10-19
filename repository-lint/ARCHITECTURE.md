@@ -34,6 +34,10 @@ not a general-purpose lint plugin framework.
 
 - Compiler/toolchain changes and deleted files must invalidate cached executables.
   Content hashes also catch switching to an older release with preserved mtimes.
+- Keep the cache key free of absolute paths. Worktrees have different package
+  paths, and a path-dependent key rebuilds SwiftSyntax in every new worktree.
+- Copy resource bundles next to the cached executable. `Bundle.module` looks
+  beside the executable before the original build directory.
 - Don't rewrite token names in source to customize rules: that shifts diagnostic
   columns and UTF-8 offsets. Pass naming configuration into the visitor instead.
 - Standard SwiftLint checks whole changed files; only the custom checks use line

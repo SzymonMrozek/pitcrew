@@ -10,6 +10,8 @@ on:
 jobs:
   test:
     runs-on: macos-latest
+    env:
+      REPOSITORY_LINT_BUILD_DIR: ${{ github.workspace }}/.build-tools/repository-lint
     steps:
       - uses: actions/checkout@v4
       - name: Build and check bundled examples

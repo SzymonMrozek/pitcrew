@@ -58,7 +58,7 @@ color factory name, and generated paths excluded from nested-call formatting.
 # Stable IDs and exact diagnostic lines for 351 examples across 23 rules:
 ./repository-lint/run.sh --self-test
 # Build production first; tests run the CLI in temporary consumer Git repos:
-REPOSITORY_LINT_BINARY="$PWD/.build-tools/repository-lint/release/repository-lint" \
+REPOSITORY_LINT_BINARY="$(git rev-parse --path-format=absolute --git-common-dir)/repository-lint/build/release/repository-lint" \
 swift test --package-path repository-lint \
   --scratch-path .build-tools/repository-lint-tests -c release
 python3 repository-lint/Tests/test_launcher.py
@@ -74,11 +74,14 @@ check cache reuse/invalidation and failed-build recovery without compiling Swift
 
 ## Cache and metrics
 
-The release cache defaults to the consumer's `.build-tools/repository-lint`.
-`REPOSITORY_LINT_BUILD_DIR` selects a different absolute scratch path. Source and
-resource contents, added/deleted files, the manifest, lockfile, launcher and
-selected compiler invalidate it. Builds serialize through a recoverable PID lock;
-warm calls do not lock. Add `.build-tools/` to the consumer's `.gitignore`.
+The release cache lives in `repository-lint/` under the consumer's Git common
+directory, so every worktree reuses the same executables. Each version is copied
+with its resource bundles to `bin/<key>`, keyed by a hash of source and resource
+contents, the file list, the manifest, lockfile, launcher and selected compiler;
+switching back to an older release reuses its executable. The five most recently
+used versions are kept. `REPOSITORY_LINT_CACHE_DIR` moves the whole cache and
+`REPOSITORY_LINT_BUILD_DIR` selects a different absolute scratch path. Builds
+serialize through a recoverable PID lock; warm calls do not lock.
 
 Metrics default to `repository-lint/metrics.sqlite3` under the Git common directory,
 shared across worktrees. Set `SWIFTLINT_METRICS_DB` to retain a consumer's existing
