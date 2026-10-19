@@ -114,6 +114,11 @@ Each of these cost real debugging time.
   controls stay disabled until the worker exits. **Send to agent** resumes the
   originating conversation itself, so it waits until no interaction is pending
   and no previous review is still being handled.
+- **A desktop Codex chat already has a persistence writer.** Starting
+  `codex exec resume` from another process conflicts with that writer even
+  between turns. Send review feedback with `codex queue` instead. Successful
+  queueing confirms delivery, not completion; the reply stays in the original
+  chat. Failed deliveries make their comments retryable.
 - **Tool upgrades must not break posted links.** A changed tool restarts an
   idle server on the same port and token. A merge in progress finishes on the old
   server first. The health endpoint reports both the original and the current

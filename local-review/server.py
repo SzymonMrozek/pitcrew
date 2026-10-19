@@ -1350,6 +1350,15 @@ class Review:
         handoff = read_json(self.store / f'{self.session_id}-review-handoff.json', None)
         if handoff and handoff['status'] == 'running' and handoff.get('workerPid') and not process_alive(handoff['workerPid']):
             handoff.update(status='failed', summary=handoff.get('summary') or 'The agent stopped before reporting back. Copy the request into its chat.')
+        if handoff and handoff['status'] == 'failed':
+            comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
+            retry = [c for c in comments if c.get('handoff') == handoff['id'] and c.get('sentAt')]
+            if retry:
+                for comment in retry:
+                    comment.pop('sentAt', None)
+                    comment.pop('handoff', None)
+                self.session['comments'] = comments
+                self.save_session('comments')
         return handoff
 
     def handoff_blocker(self):
@@ -1370,13 +1379,13 @@ class Review:
         return None
 
     def handoff_state(self):
-        comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
         handoff = self.review_handoff()
+        comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
         return {'last': {k: v for k, v in handoff.items() if k != 'prompt'} if handoff else None, 'blocker': self.handoff_blocker(),
                 'unsent': sum(not c['resolved'] and not c.get('sentAt') for c in comments)}
 
     def send_review(self, note):
-        """Resume the conversation that wrote the change with the reviewer's new comments."""
+        """Send the reviewer's new comments to the conversation that wrote the change."""
         if not isinstance(note, str) or len(note) > 10000:
             raise ValueError('The note for the agent must be at most 10000 characters')
         if blocker := self.handoff_blocker():

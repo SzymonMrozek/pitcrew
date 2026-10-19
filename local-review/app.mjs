@@ -169,7 +169,7 @@ function renderHandoff() {
   const handoff = state.handoff, last = handoff?.last, send = $('#send-review'), box = $('#review-handoff-status');
   send.hidden = !handoff;
   send.disabled = !handoff || Boolean(handoff.blocker) || Boolean(watchedMerge);
-  send.textContent = last?.status === 'running' ? 'Agent working…' : `Send to agent${handoff?.unsent ? ` · ${handoff.unsent}` : ''}`;
+  send.textContent = last?.status === 'running' ? (last.agent?.provider === 'codex' ? 'Sending…' : 'Agent working…') : `Send to agent${handoff?.unsent ? ` · ${handoff.unsent}` : ''}`;
   send.title = handoff?.blocker || `Send ${handoff?.unsent || 'no'} new unresolved comment${handoff?.unsent === 1 ? '' : 's'} to the ${agentName(state.agent)} conversation that wrote this change`;
   let dismissed = null;
   try {dismissed = sessionStorage.getItem('review-handoff-dismissed');} catch {}
@@ -177,10 +177,10 @@ function renderHandoff() {
   box.replaceChildren();
   if (box.hidden) return;
   const name = agentName(last.agent), count = `${last.comments.length} comment${last.comments.length === 1 ? '' : 's'}`;
-  box.append(el('strong', '', last.status === 'running' ? `${name} is working on your review` : last.status === 'finished' ? `${name} finished your review` : 'Review not delivered'));
-  box.append(el('span', '', last.status === 'running' ? `Sent ${count}${last.note ? ' and a note' : ''} to the conversation that wrote this change. It continues in this worktree; refresh when it finishes.` : last.summary));
+  box.append(el('strong', '', last.status === 'running' ? (last.agent?.provider === 'codex' ? `Sending review to ${name}` : `${name} is working on your review`) : last.status === 'delivered' ? `Review sent to ${name}` : last.status === 'finished' ? `${name} finished your review` : 'Review not delivered'));
+  box.append(el('span', '', last.status === 'running' ? `Sending ${count}${last.note ? ' and a note' : ''} to the conversation that wrote this change. Follow its reply there, then refresh to review the changes.` : last.summary));
   if (last.status !== 'running') {
-    if (last.status === 'finished') box.append(button('Refresh', () => load(true)));
+    if (['delivered', 'finished'].includes(last.status)) box.append(button('Refresh', () => load(true)));
     box.append(button('Dismiss', () => {try {sessionStorage.setItem('review-handoff-dismissed', last.id);} catch {} renderHandoff();}));
   }
 }
@@ -817,14 +817,16 @@ $('#send-review').onclick = () => {
   const unsent = state.handoff.unsent;
   $('#send-heading').textContent = `Send review to ${agentName(state.agent)}`;
   $('#send-summary').textContent = unsent ? `Send ${unsent} new unresolved comment${unsent === 1 ? '' : 's'} from every review scope. Resolved comments and comments sent earlier stay here.` : 'No new comments. Write a note to send one anyway.';
-  $('#send-agent-note').textContent = `Resumes the ${agentName(state.agent)} conversation that wrote this change, in the background. It records its work as a new interaction; it never merges.`;
+  $('#send-agent-note').textContent = state.agent?.provider === 'codex'
+    ? 'Queues feedback in the Codex conversation that wrote this change, including when it is open in the desktop app. Follow its reply there. It never merges.'
+    : 'Resumes the Claude conversation that wrote this change, in the background. It records its work as a new interaction; it never merges.';
   $('#send-form').reset(); $('#send-dialog').showModal(); $('#send-form').elements.note.focus();
 };
 $('#send-form').onsubmit = event => {
   event.preventDefault();
   run(async () => {
     const submit = event.target.querySelector('.primary'); submit.disabled = true;
-    try {state = await api('review/send', {note: event.target.elements.note.value}); $('#send-dialog').close(); updateChrome(); notice(`Sent your review to ${agentName(state.agent)}.`);}
+    try {state = await api('review/send', {note: event.target.elements.note.value}); $('#send-dialog').close(); updateChrome(); notice(`Submitted your review to ${agentName(state.agent)}.`);}
     finally {submit.disabled = false;}
   });
 };

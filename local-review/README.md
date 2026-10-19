@@ -161,14 +161,18 @@ directories, and files named like `*Model`, `*Content`, `*State`, `*Entity` or
 
 ## Send a review to the agent
 
-**Send to agent** hands your review back without approving it. It resumes the
-Codex or Claude conversation that wrote the change, in the background and in
-the same worktree, with every new unresolved comment from all review scopes and
+**Send to agent** hands your review back without approving it. It sends to the
+Codex or Claude conversation that wrote the change, in the same worktree,
+with every new unresolved comment from all review scopes and
 an optional note. The agent treats it as a new request: it records an
 interaction, makes the changes and replies to each comment. It never merges.
-When it finishes, the page shows its reply. Refresh to review what changed.
+Codex uses `codex queue` so an open desktop chat keeps its existing writer.
+The page confirms delivery; follow the reply in the original chat and refresh
+to review what changed. Claude resumes in the background and its reply appears
+on the page when it finishes.
 
-Each comment is sent once and marked **sent to agent**. Resolve or add comments
+Each comment is sent once and marked **sent to agent**. Failed deliveries return
+their comments to the unsent list so you can retry. Resolve or add comments
 and send again for the next round. The button stays disabled while the agent is
 mid-request (an interaction is recorded as begun but not finished), while it
 handles the previous review, and once a merge is requested.

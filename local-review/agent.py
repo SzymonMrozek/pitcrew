@@ -119,7 +119,7 @@ def deliver_reserved(path):
 
 
 def deliver_review(path):
-    """Resume the conversation that wrote the change with the reviewer's comments."""
+    """Send feedback to the conversation that wrote the change."""
     path = Path(path)
     lock_path = path.with_suffix('.lock')
     handoff = read_json(path, None)
@@ -138,16 +138,20 @@ def deliver_review(path):
     try:
         provider, label, cli = agent_cli(handoff['agent'])
         session = handoff['agent']['sessionId']
-        # The original conversation continues, so it keeps recording its own interactions: no handoff marker.
+        # The original conversation keeps recording its own interactions: no handoff marker.
         if provider == 'claude':
             command = [cli, '--resume', session, '--print', '--output-format', 'stream-json', '--verbose',
                        '--permission-mode', 'dontAsk', '--allowedTools', *CLAUDE_TOOLS]
         else:
-            command = [cli, 'exec', 'resume', '-c', 'sandbox_mode="danger-full-access"', '-c', 'approval_policy="never"',
-                       '--output-last-message', str(output), session, '-']
+            # Queue into the existing writer; resuming from another process conflicts with the desktop app.
+            command = [cli, 'queue', '--thread', session, '--message', handoff['prompt']]
         with log_path.open('w') as log:
-            result = subprocess.run(command, cwd=handoff['repo'], input=handoff['prompt'],
+            result = subprocess.run(command, cwd=handoff['repo'], input=handoff['prompt'] if provider == 'claude' else None,
                                     stdout=log, stderr=subprocess.STDOUT, text=True, env=clean_env())
+        if provider == 'codex' and result.returncode == 0:
+            update(status='delivered', finishedAt=datetime.now(timezone.utc).isoformat(),
+                   summary='Review queued in the original Codex conversation. Follow its reply there, then refresh to review the changes.')
+            return
         response = final_response(provider, log_path, output).strip()
         update(status='finished' if result.returncode == 0 else 'failed', finishedAt=datetime.now(timezone.utc).isoformat(),
                summary=response or f'{label} stopped without replying. Open the conversation to continue.')

@@ -197,9 +197,17 @@ test('send to agent reflects blockers, unsent comments and the last delivery', (
   context.renderHandoff();
   assert.deepEqual([send.disabled, send.textContent, send.title, box.hidden], [true, 'Agent working…', 'The agent is still handling the previous review.', false]);
   assert.equal(box.children[0].textContent, 'Claude is working on your review');
+  context.state.handoff.last.agent.provider = 'codex';
+  context.renderHandoff();
+  assert.equal(box.children[0].textContent, 'Sending review to Codex');
+  assert.equal(send.textContent, 'Sending…');
   context.state.handoff = {unsent: 0, blocker: null, last: {id: 'h1', status: 'finished', comments: ['a'], summary: '[a] Renamed.', agent: {provider: 'codex'}}};
   context.renderHandoff();
   assert.deepEqual(box.children.map(child => child.textContent), ['Codex finished your review', '[a] Renamed.', 'Refresh', 'Dismiss']);
+  context.state.handoff.last.status = 'delivered';
+  context.state.handoff.last.summary = 'Review queued in the original conversation.';
+  context.renderHandoff();
+  assert.deepEqual(box.children.map(child => child.textContent), ['Review sent to Codex', 'Review queued in the original conversation.', 'Refresh', 'Dismiss']);
   stored.set('review-handoff-dismissed', 'h1');
   context.renderHandoff();
   assert.equal(box.hidden, true);
