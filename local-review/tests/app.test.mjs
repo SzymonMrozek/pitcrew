@@ -128,6 +128,11 @@ test('live merge output follows the tail without pulling readers away from older
   progress = {...progress, id: 'stale-request', log: 'Wrong request'};
   await context.updateMergeProgress();
   assert.equal(output.textContent, 'Next command completed');
+  context.state.mergeRequest.deliveryMode = 'conversation';
+  context.api = () => {throw new Error('Conversation merges must not request worker output');};
+  await context.updateMergeProgress();
+  assert.equal(nodes['#merge-progress'].hidden, true);
+  assert.equal(context.mergeLogRunning, false);
 });
 
 
@@ -267,7 +272,7 @@ test('merge confirmation keeps the reviewed diff identity across background stat
   const nodes = {'#approve': {}, '#merge-description': {}, '#merge-summary': {}, '#merge-agent-note': {}, '#merge-form': form, '#merge-dialog': {showModal() {}, close() {}}};
   let submitted, pending;
   const state = {branch: 'feature', target: 'main', agent: {provider: 'codex'}, merge: {revision: 'reviewed-diff', fileCount: 3, draft: {title: '', description: ''}}};
-  const context = vm.createContext({state, $: selector => nodes[selector], updateChrome() {}, notice() {},
+  const context = vm.createContext({state, agentName: () => "Codex", $: selector => nodes[selector], updateChrome() {}, notice() {},
     run: action => {pending = action();}, api: async (path, body) => {submitted = body; return state;},
   });
   vm.runInContext(merge, context); nodes['#approve'].onclick();
@@ -275,6 +280,7 @@ test('merge confirmation keeps the reviewed diff identity across background stat
   nodes['#merge-form'].onsubmit({preventDefault() {}, target: form}); await pending;
   assert.equal(submitted.revision, 'reviewed-diff');
   assert.match(nodes['#merge-summary'].textContent, /first update from the latest main/);
+  assert.match(nodes['#merge-agent-note'].textContent, /conversation that wrote this change, just like review comments/);
 });
 
 

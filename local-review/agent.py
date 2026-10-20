@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 from server import env_prefix, read_json, write_json, process_alive, queue_slot
@@ -64,7 +65,7 @@ def deliver(path):
         request.update(workerPid=os.getpid(), delivery='queued', summary='Waiting for its merge queue turn; no preparation or tests have started.')
         write_json(path, request)
     try:
-        with queue_slot(path.parent, request['id'], wait=True):
+        with queue_slot(path.parent, request['id'], wait=True, conversation=request.get('agent') if request.get('deliveryMode') == 'conversation' else None):
             deliver_reserved(path)
     except ValueError:
         return  # A withdrawn approval leaves the queue without launching an agent.
@@ -93,6 +94,9 @@ def deliver_reserved(path):
     try:
         origin = request.get('agent') or ({'provider': 'codex'} if request.get('threadId') else {})
         provider, label, cli = agent_cli(origin)
+        if request.get('deliveryMode') == 'conversation':
+            deliver_merge_conversation(path, request, provider, label, cli, update)
+            return
         session_id = str(uuid.uuid4()) if provider == 'claude' else None
         if not update(workerSessionId=session_id, delivery='started', summary=f'Sent to a local {label} agent. It is checking readiness and will handle the merge.'):
             return
@@ -118,6 +122,39 @@ def deliver_reserved(path):
         update(status='blocked', delivery='failed', summary=f'Agent delivery failed: {error}')
 
 
+def conversation_command(provider, cli, session, prompt):
+    if not session:
+        raise ValueError('No originating agent conversation. Start review from its chat first.')
+    if provider == 'claude':
+        return [cli, '--resume', session, '--print', '--output-format', 'stream-json', '--verbose',
+                '--permission-mode', 'dontAsk', '--allowedTools', *CLAUDE_TOOLS]
+    return [cli, 'queue', '--thread', session, '--message', prompt]
+
+
+def deliver_merge_conversation(path, request, provider, label, cli, update):
+    """Keep the queue reserved while the originating conversation handles its approval."""
+    command = conversation_command(provider, cli, request['agent'].get('sessionId'), request['prompt'])
+    if not update(delivery='started', summary=f'Sending the merge request to the original {label} conversation. Follow its reply there.'):
+        return
+    log_path = path.with_name(request['id'] + '-agent.log')
+    output = path.with_name(request['id'] + '-agent-response.txt')
+    with log_path.open('w') as log:
+        result = subprocess.run(command, cwd=request['repo'], input=request['prompt'] if provider == 'claude' else None,
+                                stdout=log, stderr=subprocess.STDOUT, text=True, env=clean_env())
+    if result.returncode:
+        response = final_response(provider, log_path, output).strip()
+        update(status='blocked', delivery='failed', summary=response or f'Could not send the merge request to {label}. Resume the saved request.')
+        return
+    if provider == 'claude':
+        response = final_response(provider, log_path, output).strip()
+        update(status='blocked', delivery='finished', summary=response or 'The agent stopped before merging. Resume the saved request in its conversation.')
+        return
+    update(delivery='delivered', summary='Merge request queued in the original Codex conversation. Follow its progress and reply there.')
+    # Queueing confirms delivery, not completion. The original chat executes the saved request.
+    while (current := read_json(path, None)) and current['status'] in ('pending', 'working'):
+        time.sleep(.5)
+
+
 def deliver_review(path):
     """Send feedback to the conversation that wrote the change."""
     path = Path(path)
@@ -137,14 +174,7 @@ def deliver_review(path):
     log_path = path.with_name(handoff['id'] + '-review.log')
     try:
         provider, label, cli = agent_cli(handoff['agent'])
-        session = handoff['agent']['sessionId']
-        # The original conversation keeps recording its own interactions: no handoff marker.
-        if provider == 'claude':
-            command = [cli, '--resume', session, '--print', '--output-format', 'stream-json', '--verbose',
-                       '--permission-mode', 'dontAsk', '--allowedTools', *CLAUDE_TOOLS]
-        else:
-            # Queue into the existing writer; resuming from another process conflicts with the desktop app.
-            command = [cli, 'queue', '--thread', session, '--message', handoff['prompt']]
+        command = conversation_command(provider, cli, handoff['agent'].get('sessionId'), handoff['prompt'])
         with log_path.open('w') as log:
             result = subprocess.run(command, cwd=handoff['repo'], input=handoff['prompt'] if provider == 'claude' else None,
                                     stdout=log, stderr=subprocess.STDOUT, text=True, env=clean_env())

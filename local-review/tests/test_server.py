@@ -1117,7 +1117,7 @@ class ReviewTests(unittest.TestCase):
         cli.write_text('''#!/usr/bin/env python3
 import fcntl, json, os, re, sys, time
 from pathlib import Path
-prompt = sys.stdin.read()
+prompt = sys.argv[sys.argv.index("--message") + 1] if sys.argv[1] == "queue" else sys.stdin.read()
 path = Path(re.search(r" at (.*?) and verify", prompt).group(1))
 request = json.loads(path.read_text())
 with (path.parent / 'queue.lock').open('a') as lock:
@@ -1137,7 +1137,8 @@ request.update(status='merged', summary='Validated once after preparation')
 temp = path.with_suffix('.tmp')
 temp.write_text(json.dumps(request))
 temp.replace(path)
-Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
+if '--output-last-message' in sys.argv:
+    Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
 ''')
         cli.chmod(0o755)
         for request in (first, second):
@@ -1184,6 +1185,8 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
 
     def test_agent_delivery_uses_saved_context_and_preserves_result(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
+        request.pop('deliveryMode')
+        m.write_json(Path(request['path']), request)
         def worker(command, **kwargs):
             self.assertIn('danger-full-access', command)
             self.assertIn('approval_policy="never"', command)
@@ -1306,6 +1309,74 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
             deliver_review(retry['path'])
         self.assertEqual((self.review.handoff_state()['last']['status'], self.review.handoff_state()['unsent']), ('delivered', 0))
 
+    def test_merge_delivery_queues_original_codex_chat_and_holds_its_turn(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.assertEqual(request['deliveryMode'], 'conversation')
+        observed = []
+        def queued(command, **kwargs):
+            self.assertEqual(command, ['/fake/codex', 'queue', '--thread', 'original-codex-chat', '--message', request['prompt']])
+            self.assertIsNone(kwargs['input'])
+            self.assertNotIn('CODEX_THREAD_ID', kwargs['env'])
+            self.assertNotIn('LOCAL_REVIEW_HANDOFF', kwargs['env'])
+            owner = m.read_json(self.review.store / 'queue-owner.json', {})
+            self.assertEqual(owner['conversation']['sessionId'], 'original-codex-chat')
+            return subprocess.CompletedProcess(command, 0)
+        def finish(_):
+            saved = self.review.merge_request()
+            observed.append(saved['delivery'])
+            self.assertEqual(saved['status'], 'pending', 'Successful queueing is not merge completion')
+            self.assertTrue((self.review.store / 'queue-owner.json').exists())
+            m.write_json(Path(request['path']), {**saved, 'status': 'merged'})
+        with patch('agent.subprocess.run', side_effect=queued), patch('agent.time.sleep', side_effect=finish):
+            deliver(request['path'])
+        self.assertEqual(observed, ['delivered'])
+        self.assertEqual(self.review.merge_request()['status'], 'merged')
+        self.assertFalse((self.review.store / 'queue-owner.json').exists())
+
+    def test_merge_delivery_resumes_original_claude_chat_and_releases_on_blocker(self):
+        with patch.dict(os.environ, {'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}), patch.object(m.shutil, 'which', return_value='/fake/claude'):
+            self.review.record_agent()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        def resumed(command, **kwargs):
+            self.assertEqual(command[:3], ['/fake/claude', '--resume', 'claude-chat'])
+            self.assertNotIn('--session-id', command)
+            self.assertNotIn('LOCAL_REVIEW_HANDOFF', kwargs['env'])
+            self.assertEqual(kwargs['input'], request['prompt'])
+            kwargs['stdout'].write(json.dumps({'type': 'result', 'result': 'A decision is required.'}) + '\n')
+            return subprocess.CompletedProcess(command, 0)
+        with patch('agent.subprocess.run', side_effect=resumed):
+            deliver(request['path'])
+        self.assertEqual(self.review.merge_request()['status'], 'blocked')
+        self.assertEqual(self.review.merge_request()['summary'], 'A decision is required.')
+        self.assertFalse((self.review.store / 'queue-owner.json').exists())
+
+    def test_original_conversation_can_execute_only_its_reserved_request(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        conversation = request['agent']
+        with m.queue_slot(self.review.store, request['id'], conversation=conversation):
+            with m.queue_slot(self.review.store, request['id']):
+                self.assertTrue((self.review.store / 'queue-owner.json').exists())
+            with patch.dict(os.environ, {'CODEX_THREAD_ID': 'another-chat'}):
+                with self.assertRaisesRegex(ValueError, 'ahead of this request'):
+                    with m.queue_slot(self.review.store, request['id']):
+                        self.fail('Another conversation must not inherit the reservation')
+            self.review.cancel_merge_request(request['id'])
+            with patch.object(self.review, 'start_merge') as merge:
+                with self.assertRaisesRegex(ValueError, 'pending approval'):
+                    self.review.execute_merge_request(request['id'], 'fix(test): change', 'Description')
+                merge.assert_not_called()
+
+    def test_merge_request_waits_for_current_interaction_and_review_handoff(self):
+        self.review.begin_iteration('active', 'Still working')
+        with self.assertRaisesRegex(ValueError, 'still working'):
+            self.review.request_merge(self.review.approval_revision(), '', '')
+        self.review.finish_iteration('active', 'Done', 'fix(test): finish work', 'Validation complete.')
+        self.send_review('Please inspect this.')
+        with self.assertRaisesRegex(ValueError, 'previous review'):
+            self.review.request_merge(self.review.approval_revision(), '', '')
+        self.assertIsNone(self.review.merge_request())
+        self.notify.assert_not_called()
+
     def test_cancelled_approval_never_starts_worker_and_failure_is_visible(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         self.review.cancel_merge_request(request['id'])
@@ -1320,6 +1391,8 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
 
     def test_detached_delivery_process_reports_worker_attention(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
+        request.pop('deliveryMode')
+        m.write_json(Path(request['path']), request)
         cli = self.root / '.git' / 'fake-codex'
         cli.write_text('#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nassert sys.argv[1] == "exec"\nassert "Handle release readiness" in sys.stdin.read()\nPath(sys.argv[sys.argv.index("--output-last-message") + 1]).write_text("A review comment needs your answer.")\n')
         cli.chmod(0o755)
@@ -1476,6 +1549,8 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Merged')
         with patch.dict(os.environ, {'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}), patch.object(m.shutil, 'which', return_value='/fake/claude'):
             self.review.record_agent()
         request = self.review.request_merge(self.review.approval_revision(), '', '')
+        request.pop('deliveryMode')
+        m.write_json(Path(request['path']), request)
         self.assertIsNone(request['threadId'], 'Claude sessions must never create a Codex chat link')
         self.review.record_agent()
         self.assertEqual(self.review.origin_agent()['provider'], 'codex')

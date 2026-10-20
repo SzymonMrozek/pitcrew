@@ -180,11 +180,14 @@ handles the previous review, and once a merge is requested.
 ## Approve and merge
 
 **Approve & merge** shows a summary of the full branch. **Ask agent to merge**
-saves a durable approval and starts a separate, non-interactive run of the
-agent that wrote the change. The button itself doesn't stage, commit or merge
+saves a durable approval and sends the request to the conversation that wrote
+the change, just like **Send to agent** for review comments. The button itself doesn't stage, commit or merge
 anything.
 
-The worker waits for its turn in the [queue](#merge-queue). Then it:
+The delivery process waits for its turn in the [queue](#merge-queue), reserves
+it through cleanup, then queues the request into the original Codex chat or
+resumes the original Claude conversation. Follow the progress and reply there.
+The agent then:
 
 1. fetches the target's upstream, if it has one, and rebases onto the latest target
 2. reads the full diff and your comments, then fixes what's needed: failing
@@ -209,11 +212,12 @@ Execution:
 It never pushes. A failed attempt returns the same approval to pending, so the
 agent fixes the cause and retries.
 
-**Agent output** in the review page streams the worker's messages and commands.
-**Download full log** has the rest. When the worker finishes, you can open its
-actual conversation in Codex or Claude, or copy a `claude --resume` command.
-These controls stay disabled while the worker runs: resuming a live headless
-session can interrupt the merge.
+The review page shows delivery and merge status. The original conversation
+contains the agent's progress and reply. Successful Codex queueing means the
+request was delivered; the approval stays pending until the agent executes it.
+Delivery failures keep the same approval available for retry with
+`review --resume-merge-request <id>`. Older approvals retain their saved worker
+behavior and logs.
 
 You can withdraw an approval while it's pending. Any preparation the agent
 already did stays in the worktree.

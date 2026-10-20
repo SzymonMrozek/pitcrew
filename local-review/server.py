@@ -180,13 +180,15 @@ def queue_requests(store):
 
 
 @contextmanager
-def queue_slot(store, request_id, wait=False):
+def queue_slot(store, request_id, wait=False, conversation=None):
     """Reserve preparation through cleanup, before launching any expensive work."""
     owner_path = store / 'queue-owner.json'
     owner = read_json(owner_path, {})
-    # The execution CLI is a child of the worker already holding this reservation.
-    if (owner.get('id') == request_id and owner.get('pid') == int(os.environ.get(env_prefix(store.name) + '_QUEUE_PID', '0'))
-            and process_alive(owner.get('pid'))):
+    # A reservation belongs to its legacy child or the conversation receiving the approval.
+    agent = detect_agent(store.name) if owner.get('conversation') else None
+    same_conversation = agent and all(agent.get(key) == owner['conversation'].get(key) for key in ('provider', 'sessionId'))
+    inherited = owner.get('pid') == int(os.environ.get(env_prefix(store.name) + '_QUEUE_PID', '0'))
+    if owner.get('id') == request_id and process_alive(owner.get('pid')) and (inherited or same_conversation):
         yield
         return
     with (store / 'queue.lock').open('a') as lock:
@@ -209,7 +211,7 @@ def queue_slot(store, request_id, wait=False):
             if not wait:
                 raise ValueError('Another merge is ahead of this request. Wait for its queue turn before rebasing or validating.')
             time.sleep(.5)
-        write_json(owner_path, {'id': request_id, 'pid': os.getpid()})
+        write_json(owner_path, {'id': request_id, 'pid': os.getpid(), 'conversation': conversation})
         try:
             yield
         finally:
@@ -1264,11 +1266,13 @@ class Review:
                 raise ValueError('Withdraw the previous approval before approving a different diff')
             return previous
         agent = self.origin_agent()
-        if not agent or agent.get('provider') not in ('codex', 'claude'):
-            raise ValueError(f'No originating agent detected. Start {launcher(self.config)} from your Codex or Claude session first.')
+        if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
+            raise ValueError(f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.')
+        if blocker := self.handoff_blocker():
+            raise ValueError(blocker)
         if previous:
             write_json(self.store / 'queue-history' / (previous['id'] + '.json'), previous)
-        request = {'id': secrets.token_hex(12), 'status': 'pending', 'delivery': 'not_sent',
+        request = {'id': secrets.token_hex(12), 'status': 'pending', 'delivery': 'not_sent', 'deliveryMode': 'conversation',
                    'requestedAt': datetime.now(timezone.utc).isoformat(), 'revision': self.revision, 'reviewedRevision': revision,
                    'branch': self.branch, 'target': self.target, 'head': self.head, 'targetHead': self.target_head,
                    'repo': str(self.repo), 'mergeRoot': str(self.common.parent), 'sessionId': self.session_id,
@@ -1294,7 +1298,10 @@ class Review:
         cli = launcher(self.config)
         request['prompt'] = (f'The user approved the full local review and delegated completing the local merge. '
             f'Read merge request {request["id"]} at {path} and verify it is still pending. '
-            'Your worker has reserved the repository merge queue before starting this agent. Keep that reservation through preparation, validation and cleanup. '
+            'This request was sent to the conversation that wrote the change, just like review comments. '
+            'The delivery process has reserved the repository merge queue. Inspect the request and queue to confirm that reservation is still alive and belongs to this request before any preparation. '
+            'If its delivery process has stopped, resume the SAME request with --resume-merge-request and wait for redelivery; do not prepare without a reservation. '
+            'Keep the reservation through preparation, validation and cleanup. '
             'First fetch the merge target’s configured upstream if it has one. Integrate its latest commits into the local target '
             'without dropping local commits or disturbing unrelated working changes, then rebase this worktree branch onto that latest target. '
             'If the target has no configured upstream, use its latest local commit. Do not run git pull on the feature branch. '
@@ -1323,7 +1330,8 @@ class Review:
             f'Record this approval as one user interaction named merge-{request["id"]}; finish/update its snapshot after corrections '
             'and before merging removes the worktree. Internal retries are not new user interactions. '
             'Only report a blocker if completion truly requires unavailable credentials, an external service, or a decision outside this task. '
-            'Report success only after the saved request status is merged.'
+            'If completion requires an external decision, mark the saved request blocked with a clear summary so the queue can continue. '
+            'Report success only after the saved request status is merged, and reply in this conversation.'
             + (' ' + self.config['merge']['instructions'].strip() if self.config['merge']['instructions'].strip() else ''))
         write_json(path, request)
         self.notify_merge_request(request)

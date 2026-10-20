@@ -95,7 +95,8 @@ function updateChrome() {
   $('#rank').title = state.jevAvailable ? 'Evaluate uncached changes with Jev' : 'Set JEV_API_KEY in the review server environment to evaluate with Jev';
   const requested = state.mergeRequest && ['pending', 'working'].includes(state.mergeRequest.status);
   $('#approve').textContent = requested ? 'Merge requested' : 'Approve & merge';
-  $('#approve').disabled = requested || !state.canMerge || state.job.status === 'running' || state.job.status === 'merged';
+  $('#approve').disabled = requested || !state.canMerge || Boolean(state.handoff?.blocker) || state.job.status === 'running' || state.job.status === 'merged';
+  $('#approve').title = state.handoff?.blocker || 'Send the full branch approval to the conversation that wrote this change';
   renderMergeRequest();
   renderHandoff();
   run(updateMergeProgress);
@@ -156,7 +157,7 @@ function renderMergeRequest() {
   box.hidden = !request; box.replaceChildren();
   if (!request) return;
   box.append(el('strong', '', request.status === 'merged' ? 'Merged' : (request.status === 'working' || request.status === 'pending' && request.delivery === 'started') ? 'Agent is handling the merge' : request.status === 'blocked' ? 'Merge needs attention' : request.status === 'cancelled' ? 'Approval withdrawn' : 'Merge requested'));
-  box.append(el('span', '', request.status === 'merged' ? `${request.branch} merged into ${request.target}. Open agent output for the complete log.` : request.summary));
+  box.append(el('span', '', request.status === 'merged' ? `${request.branch} merged into ${request.target}. Follow the result in the agent conversation.` : request.summary));
   if (!watchedMerge && ['pending', 'blocked'].includes(request.status)) {
     if (request.threadId && (!request.agent || request.agent.provider === 'codex')) {const link = el('a', '', 'Open agent chat'); link.href = 'codex://threads/' + encodeURIComponent(request.threadId); box.append(link);}
     box.append(button('Copy request', async () => {await navigator.clipboard.writeText(request.prompt); notice('Copied request. Paste it in the agent chat.');}));
@@ -186,8 +187,8 @@ function renderHandoff() {
 }
 async function updateMergeProgress() {
   const request = state.mergeRequest, panel = $('#merge-progress');
-  panel.hidden = !request;
-  if (!request) {mergeLogId = null; mergeLogRunning = false; return;}
+  panel.hidden = !request || request.deliveryMode === 'conversation';
+  if (!request || request.deliveryMode === 'conversation') {mergeLogId = null; mergeLogRunning = false; return;}
   if (mergeLogLoading) return;
   mergeLogLoading = true;
   try {
@@ -835,7 +836,7 @@ $('#approve').onclick = () => {
   mergeRevision = state.merge.revision;
   $('#merge-description').textContent = `Ask the agent to merge the full ${state.branch} branch into ${state.target}?`;
   $('#merge-summary').textContent = `Approve all ${state.merge.fileCount} files in the full diff, including filtered files. The agent will first update from the latest ${state.target}, then handle comments, fix failing checks and resolve conflicts, then merge with one final commit. These corrections are covered by your approval; you do not need to resolve comment flags or approve again.`;
-  $('#merge-agent-note').textContent = state.agent ? `Saves your approval and starts a local ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'} agent to carry the local merge through to completion. The page will show its result. Commit notes are optional; the agent will finalize them.` : 'Start review from your Codex or Claude session so the merge can be handed to the correct agent.';
+  $('#merge-agent-note').textContent = state.agent ? `Saves your approval and sends the merge request to the ${agentName(state.agent)} conversation that wrote this change, just like review comments. Follow its progress and reply there. Commit notes are optional; the agent will finalize them.` : 'Start review from your Codex or Claude session so the merge can be handed to the correct agent.';
   const form = $('#merge-form');
   form.elements.title.value = state.merge.draft.title;
   form.elements.description.value = state.merge.draft.description;
@@ -847,7 +848,7 @@ $('#merge-form').onsubmit = event => {
     const form = event.target, submit = form.querySelector('.primary'); submit.disabled = true;
     try {
       state = await api('merge', {revision: mergeRevision, title: form.elements.title.value, description: form.elements.description.value});
-      $('#merge-dialog').close(); updateChrome(); notice('Approval saved. The agent will handle validation and merging.');
+      $('#merge-dialog').close(); updateChrome(); notice('Approval saved. The merge request will be sent to the original agent conversation when its queue turn begins.');
     } finally {submit.disabled = false;}
   });
 };

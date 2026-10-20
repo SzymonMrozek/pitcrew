@@ -81,7 +81,7 @@ Replace these freely:
 - **Swift for code navigation.** Definitions and callers come from `git grep`
   and regular expressions. Another language needs its own patterns.
 - **Codex and Claude.** Supporting another agent means detecting its session,
-  launching it headless with the prompt, and parsing its log.
+  delivering the prompt to its originating conversation.
 
 ## Pitfalls
 
@@ -127,3 +127,9 @@ Each of these cost real debugging time.
   present locally. Report missing ones; never fetch them.
 - **The browser can't tell a script-driven scroll from a real one.**
   Programmatic scrolling and zero-distance pointer events don't count as input.
+
+- **Queued delivery is not a completed merge.** Merge requests use the same
+  original-conversation delivery as comments. A separate delivery process holds
+  the repository queue reservation until the approval finishes or is withdrawn.
+  Only that saved conversation may reuse its reservation for execution; legacy
+  workers still pass their reservation through the worker PID environment.
