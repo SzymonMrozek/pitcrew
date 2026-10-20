@@ -31,6 +31,7 @@ originating agent. A single repository-wide queue serializes merges.
 | Interaction snapshots | Git trees under `refs/<name>/…` | Immutable, cheap, readable after the worktree is gone |
 | Pending approval snapshots | Private commits under `refs/<name>/queue/…` | Other agents can diff or merge them |
 | Server port and token | `shared-server.json` | Links posted in chats keep working across restarts |
+| Demo recordings | `<git-common-dir>/<name>/demos/<review>/` | Large binaries stay out of the diff, the approval and Git objects, and outlive the worktree |
 
 ## Invariants
 
@@ -125,6 +126,12 @@ Each of these cost real debugging time.
   version, so older launchers reuse a newer server instead of downgrading it.
 - **Git LFS pointers aren't images.** Compare the LFS objects when they're
   present locally. Report missing ones; never fetch them.
+- **A simulator recording is only a movie once it's interrupted.**
+  `simctl io recordVideo` writes the movie header when it receives SIGINT; a
+  killed recorder leaves a file QuickTime can't open. The recorder runs in its
+  own session so it outlives the agent's command, its PID is checked against
+  its command line before it's signalled, and a demo is kept only after its
+  movie header parses.
 - **The browser can't tell a script-driven scroll from a real one.**
   Programmatic scrolling and zero-distance pointer events don't count as input.
 

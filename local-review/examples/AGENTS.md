@@ -37,6 +37,28 @@ merge checks and Worktrunk hooks; don't repeat them immediately beforehand on
 unchanged content. Resume a stopped worker with
 `review --resume-merge-request <id>` from its existing worktree.
 
+## Demo recordings
+
+When a change affects what people see or do in the app, attach demo
+recordings that show it working, before finishing the interaction. Record one
+demo per scenario and cover every pragmatically reasonable one: the main flow,
+plus the states and edge cases the change touches, such as empty, loading,
+error, long content or a permission prompt. Launch the app on the worktree's
+simulator, then:
+
+```bash
+review --record-demo "<scenario, e.g. Reorder from order history>"
+# drive the app through the scenario
+review --stop-demo
+```
+
+Start each recording on a stable screen, then pause briefly at the end so the
+result is visible. If later changes alter what a demo shows, record it again
+and delete the outdated one with `review --remove-demo <id>`. When files on the
+configured UI paths change without any visible effect, run
+`review --skip-demo "<reason>"` instead. List the recorded scenarios in your
+reply.
+
 ## Review links and interaction history
 
 For every user interaction that involves repository work, record one review

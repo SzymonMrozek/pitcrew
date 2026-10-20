@@ -16,6 +16,8 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -37,6 +39,9 @@ DEFAULTS = {
     "rubric": "Score review importance from 0 to 1. Prioritize changes affecting business logic, correctness, security, data integrity, concurrency, and application performance. Significant UI changes affecting interactions, accessibility, or user behavior need attention. Pure view styling and navigation changes usually have low importance because lint covers much of them. Do not penalize a performance or business-logic fix just because it is in a view. Localization and unit tests have low review importance. Snapshot changes deserve visual review. Evaluate the actual diff, not only the filename.",
 }
 MAX_TEXT = 2_000_000
+# QuickTime Player opens these containers; a demo must also carry a finished movie header.
+DEMO_TYPES = ('.mov', '.mp4', '.m4v')
+MAX_DEMO = 4_000_000_000
 MAX_SEARCH_RESULTS = 500
 # Priority paths (for example module interfaces) sort near the top regardless of evaluation.
 PRIORITY_SCORE = 95
@@ -81,6 +86,8 @@ CONFIG = {
         # Project rules appended to the merge agent's instructions.
         'instructions': '',
     },
+    # Changes on these paths alter what people see in the app, so the review expects a demo recording.
+    'demos': {'paths': []},
 }
 
 
@@ -116,6 +123,8 @@ def load_config(root):
             raise ValueError(f'Each merge check in {path} needs a command list')
         for pattern in check.get('paths', []):
             re.compile(pattern)
+    for pattern in config['demos']['paths']:
+        re.compile(pattern)
     return config
 
 
@@ -161,6 +170,38 @@ def write_json(path, value):
         temp.replace(path)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def movie_duration(path):
+    """Seconds in a finished QuickTime or MPEG-4 movie header, or None when recording never finalized the file."""
+    def atoms(file, start, end):
+        offset = start
+        while offset + 8 <= end:
+            file.seek(offset)
+            size, kind = struct.unpack('>I4s', file.read(8))
+            header = 8
+            if size == 1:
+                size, header = struct.unpack('>Q', file.read(8))[0], 16
+            elif size == 0:
+                size = end - offset
+            if size < header or offset + size > end:
+                return
+            yield kind, offset + header, offset + size
+            offset += size
+    with path.open('rb') as file:
+        end = file.seek(0, os.SEEK_END)
+        for kind, start, stop in atoms(file, 0, end):
+            if kind != b'moov':
+                continue
+            for child, body, child_end in atoms(file, start, stop):
+                if child != b'mvhd' or child_end - body < 32:
+                    continue
+                file.seek(body)
+                long = file.read(1) == b'\1'
+                file.seek(body + (20 if long else 12))
+                timescale, duration = struct.unpack('>IQ' if long else '>II', file.read(12 if long else 8))
+                return duration / timescale if timescale else None
+    return None
 
 
 def queue_requests(store):
@@ -671,6 +712,7 @@ class Review:
                     'dirty': not clean, 'jevAvailable': bool(os.environ.get('JEV_API_KEY')),
                     'tool': self.tool_info(),
                     'simulator': self.simulator() if live else None,
+                    'demos': self.demo_state(iteration),
                     'canMerge': live and not merge_id and bool(self.files) and bool(self.branch) and self.branch != self.target
                                 and not any(file['submoduleDirty'] for file in self.files)}
 
@@ -726,32 +768,226 @@ class Review:
         except ValueError:
             return None
 
-    def open_simulator(self):
+    def simctl(self, *args):
+        result = subprocess.run(['xcrun', 'simctl', *args], cwd=self.repo, capture_output=True, text=True, timeout=90)
+        if result.returncode:
+            raise ValueError('simctl failed: ' + (result.stderr.strip() or result.stdout.strip())[-2000:])
+        return result.stdout
+
+    def simulator_device(self):
+        """The worktree's assigned simulator and its simctl device entry; never another device."""
         simulator = self.simulator()
         if not simulator:
             raise ValueError('This worktree has no assigned macOS simulator')
-
-        def simctl(*args):
-            result = subprocess.run(['xcrun', 'simctl', *args], cwd=self.repo, capture_output=True, text=True, timeout=90)
-            if result.returncode:
-                raise ValueError('simctl failed: ' + (result.stderr.strip() or result.stdout.strip())[-2000:])
-            return result.stdout
-
         try:
-            groups = json.loads(simctl('list', 'devices', '--json'))['devices'].values()
+            groups = json.loads(self.simctl('list', 'devices', '--json'))['devices'].values()
         except (ValueError, KeyError, AttributeError):
             raise ValueError('simctl returned an unreadable device list')
         device = next((d for devices in groups for d in devices
                        if d.get('udid', '').lower() == simulator['id'].lower() and d.get('isAvailable', True)), None)
         if device is None:
             raise ValueError('The assigned simulator is unavailable or was removed. Recreate it with the worktree.')
+        return simulator, device
+
+    def open_simulator(self):
+        simulator, device = self.simulator_device()
         if device.get('state') != 'Booted':
-            simctl('boot', simulator['id'])
+            self.simctl('boot', simulator['id'])
         # Simulator.app has no per-device argument; Xcode's Devices window selects the exact device.
         result = subprocess.run(['/usr/bin/open', simulator['url']], capture_output=True, text=True, timeout=15)
         if result.returncode:
             raise ValueError('Could not open Xcode Devices: ' + result.stderr.strip()[-2000:])
         return simulator
+
+    def demo_directory(self):
+        # The Git common directory keeps recordings outside the diff and after the worktree is removed.
+        return self.store / 'demos' / self.session_id
+
+    def saved_demos(self):
+        return read_json(self.store / f'{self.session_id}.json', self.session).get('demos', [])
+
+    def edit_session(self, change):
+        """Apply change to the latest saved session under its lock, so concurrent CLI calls never drop an entry."""
+        path = self.store / f'{self.session_id}.json'
+        with (self.store / f'{self.session_id}.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            latest = read_json(path, dict(self.session))
+            result = change(latest)
+            write_json(path, latest)
+            self.session = latest
+        return result
+
+    @staticmethod
+    def validate_demo_title(title):
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200 or '\n' in title or '\r' in title:
+            raise ValueError('Name the demo scenario in 1–200 characters on one line')
+        return title.strip()
+
+    def add_demo(self, title, source, recording=None):
+        """Keep a finished movie as a demo of this review; a recording's temporary file is moved, any other file copied."""
+        title = self.validate_demo_title(title)
+        source = Path(source).expanduser().resolve()
+        if not source.is_file() or source.suffix.lower() not in DEMO_TYPES:
+            raise ValueError('Attach a .mov, .mp4 or .m4v movie file')
+        size = source.stat().st_size
+        if not 0 < size <= MAX_DEMO:
+            raise ValueError('Demo movies must be between 1 byte and 4 GB')
+        try:
+            duration = movie_duration(source)
+        except (OSError, struct.error):
+            duration = None
+        if duration is None:
+            raise ValueError(f'{source.name} is not a finished QuickTime or MPEG-4 movie')
+        demo_id = (recording or {}).get('id') or secrets.token_hex(8)
+        directory = self.demo_directory()
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / (demo_id + source.suffix.lower())
+        if recording:
+            source.replace(target)
+        else:
+            shutil.copyfile(source, target)
+        pending = (self.session.get('pendingIteration') or {}).get('id')
+        demo = {'id': demo_id, 'title': title, 'file': target.name, 'bytes': size, 'durationSeconds': round(duration, 2),
+                'recordedAt': (recording or {}).get('startedAt') or datetime.now(timezone.utc).isoformat(),
+                # Interaction boundaries are recorded, never inferred: a demo outside one belongs to none.
+                'iteration': (recording or {}).get('iteration', pending),
+                'source': 'simulator' if recording else 'file', 'device': (recording or {}).get('device')}
+        self.edit_session(lambda session: session.setdefault('demos', []).append(demo))
+        return demo
+
+    def remove_demo(self, demo_id):
+        def remove(session):
+            demo = next((d for d in session.get('demos', []) if d['id'] == demo_id), None)
+            if demo is None:
+                raise ValueError('Unknown demo')
+            session['demos'].remove(demo)
+            return demo
+        demo = self.edit_session(remove)
+        (self.demo_directory() / demo['file']).unlink(missing_ok=True)
+        return demo
+
+    def skip_demo(self, reason):
+        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 2000:
+            raise ValueError('Explain in at most 2000 characters why this change needs no demo')
+        skipped = {'reason': reason.strip(), 'iteration': (self.session.get('pendingIteration') or {}).get('id'),
+                   'at': datetime.now(timezone.utc).isoformat()}
+        self.edit_session(lambda session: session.update(demoSkipped=skipped))
+        return skipped
+
+    def demo_recording(self):
+        """The running simulator recording, or None. A reused PID never counts as the recorder."""
+        recording = read_json(self.demo_directory() / 'recording.json', None)
+        if not recording or not process_alive(recording.get('pid')):
+            return recording and {**recording, 'running': False}
+        try:
+            command = subprocess.run(['ps', '-ww', '-o', 'command=', '-p', str(recording['pid'])],
+                                     capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            command = ''
+        return {**recording, 'running': 'recordVideo' in command and recording['path'] in command}
+
+    def start_demo_recording(self, title):
+        title = self.validate_demo_title(title)
+        if sys.platform != 'darwin':
+            raise ValueError('Simulator recording requires macOS. Attach a movie with --add-demo instead.')
+        current = self.demo_recording()
+        if current and current['running']:
+            raise ValueError(f'Demo "{current["title"]}" is still recording. Stop it first.')
+        simulator, device = self.simulator_device()
+        if device.get('state') != 'Booted':
+            raise ValueError(f'{simulator["name"]} is not booted. Launch the app on it before recording.')
+        directory = self.demo_directory()
+        directory.mkdir(parents=True, exist_ok=True)
+        demo_id = secrets.token_hex(8)
+        path, log_path = directory / f'recording-{demo_id}.mov', directory / f'recording-{demo_id}.log'
+        with log_path.open('w') as log:
+            # A separate session keeps recording after this command returns; --stop-demo sends SIGINT to finalize the movie.
+            process = subprocess.Popen(['xcrun', 'simctl', 'io', simulator['id'], 'recordVideo', '--codec=h264', '--force', str(path)],
+                                       cwd=self.repo, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.monotonic() + 15
+        while 'Recording started' not in log_path.read_text(errors='replace'):
+            if process.poll() is not None or time.monotonic() > deadline:
+                if process.poll() is None:
+                    process.kill()
+                raise ValueError('Simulator recording did not start: ' + log_path.read_text(errors='replace').strip()[-2000:])
+            time.sleep(.1)
+        recording = {'id': demo_id, 'title': title, 'pid': process.pid, 'path': str(path), 'log': str(log_path),
+                     'device': simulator['name'], 'udid': simulator['id'],
+                     'iteration': (self.session.get('pendingIteration') or {}).get('id'),
+                     'startedAt': datetime.now(timezone.utc).isoformat()}
+        write_json(directory / 'recording.json', recording)
+        return recording
+
+    def stop_demo_recording(self):
+        recording = self.demo_recording()
+        if not recording:
+            raise ValueError('No demo is recording for this review')
+        if recording['running']:
+            os.kill(recording['pid'], signal.SIGINT)
+            def exited():
+                try:
+                    if os.waitpid(recording['pid'], os.WNOHANG)[0]:
+                        return True  # Reaped: the recorder was started by this process.
+                except ChildProcessError:
+                    pass
+                return not process_alive(recording['pid'])
+            deadline = time.monotonic() + 60
+            while not exited():
+                if time.monotonic() > deadline:
+                    raise ValueError('The simulator recorder is still writing the movie. Run the stop command again.')
+                time.sleep(.1)
+        directory, path, log = self.demo_directory(), Path(recording['path']), Path(recording['log'])
+        try:
+            if not path.is_file():
+                raise ValueError('The recording stopped without a movie: ' + (log.read_text(errors='replace').strip()[-2000:] if log.is_file() else 'no recorder output'))
+            return self.add_demo(recording['title'], path, recording)
+        finally:
+            for leftover in (directory / 'recording.json', path, log):
+                leftover.unlink(missing_ok=True)
+
+    def demo_state(self, iteration=None):
+        demos = self.saved_demos()
+        if iteration == 'thread':
+            ids = {item['id'] for item in self.thread_iterations()}
+            demos = [d for d in demos if d.get('iteration') in ids]
+        elif iteration:
+            demos = [d for d in demos if d.get('iteration') == iteration]
+        patterns = self.config['demos']['paths']
+        ui_paths = [f['path'] for f in self.files if f['kind'] not in ('test', 'generated', 'manifest')
+                    and any(re.search(pattern, f['path']) for pattern in patterns)]
+        recording = self.demo_recording() if self.worktree_available() else None
+        return {'items': [{**d, 'available': (self.demo_directory() / d['file']).is_file()} for d in demos],
+                'total': len(self.saved_demos()), 'uiPaths': ui_paths,
+                'skipped': read_json(self.store / f'{self.session_id}.json', self.session).get('demoSkipped'),
+                'recording': {key: recording[key] for key in ('title', 'startedAt', 'device')} if recording and recording['running'] else None,
+                'canOpen': sys.platform == 'darwin'}
+
+    def demo_reminder(self):
+        """What an agent finishing an interaction still owes the reviewer about demos, if anything."""
+        demos = self.demo_state()
+        if demos['recording']:
+            return f'Demo "{demos["recording"]["title"]}" is still recording. Stop it so the reviewer can play it.'
+        if demos['uiPaths'] and not demos['total'] and not demos['skipped']:
+            count = len(demos['uiPaths'])
+            return (('1 changed file affects' if count == 1 else f'{count} changed files affect') + ' the app UI, but this review has no demo recording. '
+                    'Record each reasonable scenario, or explain why no demo is needed.')
+        return None
+
+    def open_demos(self, ids):
+        if sys.platform != 'darwin':
+            raise ValueError('Opening demos in QuickTime Player requires macOS')
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+            raise ValueError('Choose a demo to open')
+        demos = {d['id']: d for d in self.saved_demos()}
+        if any(i not in demos for i in ids):
+            raise ValueError('Unknown demo')
+        paths = [self.demo_directory() / demos[i]['file'] for i in dict.fromkeys(ids)]
+        if missing := [p.name for p in paths if not p.is_file()]:
+            raise ValueError('Demo file is missing: ' + ', '.join(missing))
+        result = subprocess.run(['/usr/bin/open', '-a', 'QuickTime Player', *map(str, paths)], capture_output=True, text=True, timeout=15)
+        if result.returncode:
+            raise ValueError('Could not open QuickTime Player: ' + result.stderr.strip()[-2000:])
+        return {'opened': len(paths)}
 
     def tool_info(self):
         return {'title': self.config['title'], 'launcher': launcher(self.config),
@@ -1736,6 +1972,9 @@ class Handler(BaseHTTPRequestHandler):
                 if route == '/api/feedback/status':
                     self.send(200, review.set_feedback_status(body.get('id'), body.get('implemented')))
                     return
+                if route == '/api/demos/open':
+                    self.send(200, review.open_demos(body.get('ids')))
+                    return
                 if review.job['status'] == 'running':
                     raise ValueError('Wait for the merge to finish')
                 if route == '/api/shutdown':
@@ -1827,10 +2066,17 @@ def main():
     iterations.add_argument('--resume-merge-request', metavar='ID', help='Resume an interrupted or blocked approval in its existing worktree')
     iterations.add_argument('--implement-feedback', metavar='ID', action='append', help='Mark review tool feedback implemented (repeatable)')
     iterations.add_argument('--reopen-feedback', metavar='ID', action='append', help='Return review tool feedback to the open inbox (repeatable)')
+    iterations.add_argument('--record-demo', metavar='SCENARIO', help="Start recording a demo of SCENARIO on the worktree's simulator")
+    iterations.add_argument('--stop-demo', action='store_true', help='Stop the running demo recording and attach it to the review')
+    iterations.add_argument('--add-demo', metavar='SCENARIO', help='Attach an existing movie (--file) as a demo of SCENARIO')
+    iterations.add_argument('--remove-demo', metavar='ID', help='Delete a demo recording from the review')
+    iterations.add_argument('--skip-demo', metavar='REASON', help='Explain why changes to UI paths need no demo recording')
+    iterations.add_argument('--demos', action='store_true', help="Print this review's demo recordings as JSON")
     parser.add_argument('--request', default='')
     parser.add_argument('--summary', default='')
     parser.add_argument('--title', default='')
     parser.add_argument('--description-file', type=Path)
+    parser.add_argument('--file', type=Path, help='Movie for --add-demo')
     args = parser.parse_args()
     if args.base.startswith('-') or not re.fullmatch(r'[A-Za-z0-9_./-]+', args.base):
         parser.error('Use a local branch name for --base')
@@ -1868,6 +2114,23 @@ def main():
             for entry in (e for e in review.feedback()['entries'] if e['id'] in changed or (args.feedback and e['status'] == 'open')):
                 print(f"{entry['id']}  {entry['status']:<11}  {entry['createdAt'][:10]}  {entry.get('path') or '-'}\n    {entry['text']}")
             return
+        if args.record_demo or args.stop_demo or args.add_demo or args.remove_demo or args.skip_demo or args.demos:
+            if args.record_demo:
+                recording = review.start_demo_recording(args.record_demo)
+                print(f'Recording "{recording["title"]}" on {recording["device"]}. Run the scenario, then stop with: {launcher(config)} --base {args.base} --stop-demo')
+            elif args.stop_demo or args.add_demo:
+                if args.add_demo and not args.file:
+                    parser.error('--add-demo needs --file PATH')
+                demo = review.stop_demo_recording() if args.stop_demo else review.add_demo(args.add_demo, args.file)
+                print(f'Attached demo {demo["id"]} "{demo["title"]}" ({demo["durationSeconds"]:.1f} s) to this review.')
+            elif args.remove_demo:
+                print(f'Removed demo {review.remove_demo(args.remove_demo)["id"]}.')
+            elif args.skip_demo:
+                review.skip_demo(args.skip_demo)
+                print('Recorded why this review has no demo.')
+            else:
+                print(json.dumps(review.demo_state(), indent=2))
+            return
         if not args.merge_request and not args.execute_merge_request:
             review.record_agent()
     if args.begin_iteration or args.finish_iteration or args.merge_request or args.execute_merge_request:
@@ -1890,6 +2153,8 @@ def main():
             return
         description = args.description_file.read_text() if args.description_file else ''
         review.finish_iteration(args.finish_iteration, args.summary, args.title, description)
+        if reminder := review.demo_reminder():
+            print(f'Demo reminder: {reminder} See {launcher(config)} --help for --record-demo, --stop-demo and --skip-demo.', file=sys.stderr)
     def show_url(url):
         page = 'queue.html' if args.queue_page else ''
         url = url.replace('/#', '/' + page + '?review=' + review.session_id + '#')

@@ -272,7 +272,9 @@ test('merge confirmation keeps the reviewed diff identity across background stat
   const nodes = {'#approve': {}, '#merge-description': {}, '#merge-summary': {}, '#merge-agent-note': {}, '#merge-form': form, '#merge-dialog': {showModal() {}, close() {}}};
   let submitted, pending;
   const state = {branch: 'feature', target: 'main', agent: {provider: 'codex'}, merge: {revision: 'reviewed-diff', fileCount: 3, draft: {title: '', description: ''}}};
-  const context = vm.createContext({state, agentName: () => "Codex", $: selector => nodes[selector], updateChrome() {}, notice() {},
+  const demoMissing = demos => Boolean(demos?.uiPaths.length && !demos.total && !demos.skipped);
+  const uiChanges = demos => `${demos.uiPaths.length} changed files affect`;
+  const context = vm.createContext({state, agentName: () => "Codex", $: selector => nodes[selector], updateChrome() {}, notice() {}, demoMissing, uiChanges,
     run: action => {pending = action();}, api: async (path, body) => {submitted = body; return state;},
   });
   vm.runInContext(merge, context); nodes['#approve'].onclick();
@@ -280,7 +282,11 @@ test('merge confirmation keeps the reviewed diff identity across background stat
   nodes['#merge-form'].onsubmit({preventDefault() {}, target: form}); await pending;
   assert.equal(submitted.revision, 'reviewed-diff');
   assert.match(nodes['#merge-summary'].textContent, /first update from the latest main/);
+  assert.doesNotMatch(nodes['#merge-summary'].textContent, /demo/);
   assert.match(nodes['#merge-agent-note'].textContent, /conversation that wrote this change, just like review comments/);
+  state.demos = {uiPaths: ['App/Screen.swift', 'App/Row.swift'], total: 0, skipped: null};
+  nodes['#approve'].onclick();
+  assert.match(nodes['#merge-summary'].textContent, /No demo recording is attached, although 2 changed files affect the app UI\.$/);
 });
 
 
@@ -349,4 +355,45 @@ test('only Swift method declarations become caller links', () => {
   context.markCallerLinks({querySelectorAll: () => [declaration, call, first]});
   assert.deepEqual([declaration, call, first].map(node => node.classList.contains('caller-link')), [true, false, false]);
   assert.equal(declaration.title, 'Click to show callers');
+});
+
+test('demos tab lists recordings for QuickTime and flags UI changes without one', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const demos = source.slice(source.indexOf('// Changed UI paths with neither'), source.indexOf('function renderJob('));
+  const node = (tag, className = '', text) => ({tag, className, textContent: text, disabled: false, children: [], append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;}});
+  const main = node('main'), requests = [], notices = [];
+  const context = vm.createContext({
+    $: () => main, el: node, button: (text, action) => ({...node('button', '', text), action}), feedObserver: null, renderVersion: 0,
+    api: async (path, body) => {requests.push([path, body]); return {opened: body.ids.length};}, notice: text => notices.push(text),
+    state: {iterations: [{id: 'one', number: 1}], pendingIteration: {id: 'two'}, demos: {uiPaths: ['App/Screen.swift'], total: 0, skipped: null, recording: null, canOpen: true, items: []}},
+  });
+  vm.runInContext(demos, context);
+  const texts = () => main.children.map(child => child.textContent);
+  assert.equal(context.demoMissing(context.state.demos), true);
+  context.renderDemos();
+  assert.match(texts()[2], /^1 changed file affects the app UI, but no demo is attached/);
+  assert.equal(texts().at(-1), 'No demo recordings yet.');
+  context.state.demos.skipped = {reason: 'Only renames a type.'};
+  assert.equal(context.demoMissing(context.state.demos), false);
+  context.renderDemos();
+  assert.match(texts()[2], /The agent's reason: Only renames a type\./);
+  const demo = (id, iteration, available = true) => ({id, iteration, available, title: `Demo ${id}`, durationSeconds: 75.4, bytes: 2_400_000, device: 'App feature', recordedAt: '2026-10-20T10:00:00Z'});
+  context.state.demos = {...context.state.demos, total: 3, recording: {title: 'Error state', device: 'App feature'}, items: [demo('a', 'one'), demo('b', 'two'), demo('c', null, false)]};
+  context.renderDemos();
+  assert.equal(texts()[2], 'Recording “Error state” on App feature…');
+  const all = main.children[3], rows = main.children.slice(4);
+  assert.equal(all.textContent, 'Open all 3 in QuickTime Player');
+  assert.deepEqual(rows.map(row => row.children[0].children[0].textContent), ['Demo a', 'Demo b', 'Demo c']);
+  assert.match(rows[0].children[0].children[1].textContent, /^1:15 · 2\.4 MB · Iteration 1 · App feature · /);
+  assert.match(rows[1].children[0].children[1].textContent, /Current interaction/);
+  assert.match(rows[2].children[0].children[1].textContent, /Outside recorded interactions/);
+  assert.deepEqual(rows.map(row => row.children[1].disabled), [false, false, true]);
+  await all.action();
+  await rows[1].children[1].action();
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [['demos/open', {ids: ['a', 'b']}], ['demos/open', {ids: ['b']}]]);
+  assert.deepEqual(notices, ['Opened 2 demos in QuickTime Player.', 'Opened the demo in QuickTime Player.']);
+  context.state.demos = {...context.state.demos, canOpen: false, items: [demo('a', 'one')]};
+  context.renderDemos();
+  assert.equal(main.children.at(-1).children[1].disabled, true);
+  assert.equal(main.children.at(-1).children[1].title, 'QuickTime Player requires macOS');
 });

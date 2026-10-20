@@ -54,3 +54,8 @@ instructions = "The Worktrunk pre-merge hook runs the affected tests; don't run 
 [[merge.checks]]
 paths = ['^(App|Modules)/', '^Project\.swift$']
 command = ["mise", "run", "app:run:worktree"]
+
+# Changes on these paths alter what people see in the app, so the review asks for a demo recording
+# when none is attached. Tests, generated code and manifests never count.
+[demos]
+paths = ['^(App|Modules)/']

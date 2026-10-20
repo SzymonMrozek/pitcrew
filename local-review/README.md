@@ -21,6 +21,8 @@ build step, no dependency to install, and no hosting.
   as one feed.
 - **Per-interaction history:** each user request to an agent is saved as an
   immutable before/after snapshot you can review on its own.
+- **Demo recordings:** agents record the running app on the worktree's
+  simulator, one movie per scenario, and you play them in QuickTime Player.
 - **Code navigation:** search, jump to definition and callers, for Swift.
 - **A merge queue** with private snapshots of pending approvals. Agents starting
   new work can see what's about to land and build on it.
@@ -277,6 +279,47 @@ metadata file, for example one written by
 [worktree-simulator](../worktree-simulator). It never falls back to another
 device.
 
+## Demo recordings
+
+A diff can't show that a screen works. For changes people will see, the agent
+attaches demo recordings: one movie per scenario, such as the happy path, the
+empty state or a failure. The **Demos** tab lists them with their length, size,
+device and the interaction that recorded them. **Open in QuickTime Player**
+plays one; **Open all** opens each in its own window.
+
+Agents record on the worktree's simulator, the same device **Open Simulator**
+selects:
+
+```bash
+review --record-demo "Reorder from order history"
+# ... the agent drives the app through the scenario ...
+review --stop-demo
+```
+
+`--record-demo` starts `simctl io recordVideo` (H.264) in the background and
+returns once recording has started. `--stop-demo` interrupts it so it finishes
+the movie, checks the file has a complete movie header, and attaches it. Other
+commands:
+
+- `review --add-demo "<scenario>" --file /absolute/path/movie.mov` attaches a
+  `.mov`, `.mp4` or `.m4v` recorded another way.
+- `review --remove-demo <id>` deletes an outdated demo; `review --demos` lists
+  them as JSON.
+- `review --skip-demo "<reason>"` records why changes on UI paths need no demo,
+  such as a refactor with no visible effect. The page shows the reason.
+
+A demo belongs to the interaction that was in progress when it was recorded.
+**Full diff** lists every demo, and an interaction or **This thread** lists the
+ones recorded during it. Movies live in `<git-common-dir>/<name>/demos/`,
+outside the diff and the approval, and survive worktree removal; delete that
+directory to reclaim space.
+
+Set `[demos] paths` to the paths whose changes people see. When such a file
+changes (tests, generated code and manifests don't count) and the review has
+neither a demo nor a reason, the **Demos** tab is flagged, **Approve & merge**
+mentions it, and `--finish-iteration` prints a reminder. It never blocks a
+merge: you decide whether the review needs one.
+
 ## Active review time
 
 The header shows time spent actively reviewing. Time counts only when all of
@@ -306,10 +349,11 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |
 | `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
+| `[demos]` | none | `paths` whose changes should come with a demo recording |
 
 ## Storage and security
 
-Settings, scores, comments, approvals, logs and server metadata live in
+Settings, scores, comments, approvals, demo recordings, logs and server metadata live in
 `<git-common-dir>/<name>/`, outside version control. They're shared by all
 worktrees and survive worktree removal. To stop the server, use the PID in
 `shared-server.json` there.

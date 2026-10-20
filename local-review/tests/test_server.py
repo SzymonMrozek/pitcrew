@@ -11,6 +11,7 @@ import shutil
 import secrets
 import shlex
 import socket
+import struct
 import time
 import threading
 import unittest
@@ -52,6 +53,32 @@ def run_launcher(args, store, timeout=30):
                              f'metadata: {read_json_safely(store / "shared-server.json")}\nprocesses:\n'
                              + '\n'.join(line for line in ps.splitlines() if 'python' in line or 'git' in line))
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def movie(seconds, long=False, timescale=600):
+    """A minimal finished QuickTime file: ftyp, media data and a movie header with the given duration."""
+    if long:
+        header = b'\1\0\0\0' + bytes(16) + struct.pack('>IQ', timescale, round(seconds * timescale))
+    else:
+        header = bytes(12) + struct.pack('>II', timescale, round(seconds * timescale))
+    mvhd = struct.pack('>I4s', 8 + len(header) + 80, b'mvhd') + header + bytes(80)
+    return (struct.pack('>I4s', 16, b'ftyp') + b'qt  ' + bytes(4) + struct.pack('>I4s', 12, b'mdat') + bytes(4)
+            + struct.pack('>I4s', 8 + len(mvhd), b'moov') + mvhd)
+
+
+# Stands in for `simctl io recordVideo`: announces the recording and writes the movie only when interrupted.
+FAKE_RECORDER = '''
+import signal, sys, time
+def stop(*_):
+    sys.stderr.write('Recording completed. Writing to disk.\\n')
+    open(sys.argv[-1], 'wb').write(MOVIE)
+    sys.exit(0)
+signal.signal(signal.SIGINT, stop)
+sys.stderr.write('Recording started\\n')
+sys.stderr.flush()
+while True:
+    time.sleep(.05)
+'''.replace('MOVIE', repr(movie(4.25)))
 
 
 def read_json_safely(path):
@@ -273,7 +300,9 @@ class ReviewTests(unittest.TestCase):
         with patch.dict(os.environ, {'LOCAL_REVIEW_CONFIG': str(TOOL / 'examples/local-review.toml')}):
             example = m.load_config(self.root)
         self.assertEqual((example['title'], example['merge']['checks'][0]['command']), ('MyApp', ['mise', 'run', 'app:run:worktree']))
-        for invalid in ("unknown = 1\n", "[merge]\nunknown = 1\n", "name = 'Bad Name'\n", "[files]\nview = ['(']\n", "name = \n"):
+        self.assertEqual(example['demos']['paths'], ['^(App|Modules)/'])
+        for invalid in ("unknown = 1\n", "[merge]\nunknown = 1\n", "name = 'Bad Name'\n", "[files]\nview = ['(']\n", "name = \n",
+                        "[demos]\npaths = ['(']\n", "[demos]\nunknown = 1\n"):
             self.write('.config/local-review.toml', invalid)
             with self.assertRaises((ValueError, m.re.error)):
                 m.load_config(self.root)
@@ -834,6 +863,166 @@ class ReviewTests(unittest.TestCase):
         with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[result(listed), subprocess.CompletedProcess([], 1, '', 'No URL handler')]):
             with self.assertRaisesRegex(ValueError, 'No URL handler'):
                 self.review.open_simulator()
+
+    def write_movie(self, name, seconds=2, **options):
+        path = self.homes / name
+        path.write_bytes(movie(seconds, **options))
+        return path
+
+    def test_movie_duration_reads_finished_headers_and_rejects_unfinished_recordings(self):
+        self.assertEqual(m.movie_duration(self.write_movie('short.mov', 12.5)), 12.5)
+        self.assertEqual(m.movie_duration(self.write_movie('long.mp4', 3, long=True, timescale=90000)), 3)
+        complete = movie(5)
+        for name, data in [('unfinished.mov', complete[:28]), ('truncated.mov', complete[:-20]), ('text.mov', b'not a movie at all')]:
+            (self.homes / name).write_bytes(data)
+            self.assertIsNone(m.movie_duration(self.homes / name), name)
+
+    def test_demos_attach_to_the_current_interaction_and_follow_review_scopes(self):
+        self.review.begin_iteration('one', 'Add a reorder button')
+        source = self.write_movie('reorder.mov', 7.5)
+        first = self.review.add_demo('  Reorder from history  ', source)
+        self.assertEqual((first['title'], first['iteration'], first['source'], first['durationSeconds']), ('Reorder from history', 'one', 'file', 7.5))
+        stored = self.review.store / 'demos' / self.review.session_id / first['file']
+        self.assertEqual(stored.read_bytes(), source.read_bytes())
+        self.assertTrue(source.exists(), 'Attaching a file copies it')
+        self.assertTrue(stored.is_relative_to(Path(self.git('rev-parse', '--path-format=absolute', '--git-common-dir'))), 'Demos stay outside the diff')
+        self.review.finish_iteration('one', 'Added', 'feat(test): reorder', 'Reorder')
+        self.review.begin_iteration('two', 'Handle a failed reorder')
+        second = self.review.add_demo('Reorder fails offline', self.write_movie('failure.mp4', 3))
+        self.review.finish_iteration('two', 'Handled', 'feat(test): reorder', 'Reorder')
+        outside = self.review.add_demo('Outside an interaction', self.write_movie('outside.m4v'))
+        self.assertIsNone(outside['iteration'], 'A demo outside an interaction is never attributed to one')
+        titles = lambda scope: [d['title'] for d in self.review.state(scope)['demos']['items']]
+        self.assertEqual(titles(None), ['Reorder from history', 'Reorder fails offline', 'Outside an interaction'])
+        self.assertEqual(titles('one'), ['Reorder from history'])
+        self.assertEqual(titles('two'), ['Reorder fails offline'])
+        self.assertEqual(titles('thread'), ['Reorder from history', 'Reorder fails offline'])
+        self.assertEqual(self.review.state('two')['demos']['total'], 3)
+        restarted = m.Review(self.root, 'main')
+        self.assertEqual([d['id'] for d in restarted.saved_demos()], [first['id'], second['id'], outside['id']])
+        self.assertTrue(all(d['available'] for d in restarted.state()['demos']['items']))
+        for title, path in [('Notes', self.homes / 'notes.txt'), ('', source), ('Two\nlines', source),
+                            ('Unfinished', self.homes / 'unfinished.mov'), ('Missing', self.homes / 'missing.mov')]:
+            if path.name in ('notes.txt', 'unfinished.mov'):
+                path.write_bytes(movie(1)[:28])
+            with self.assertRaises(ValueError, msg=title):
+                restarted.add_demo(title, path)
+        self.assertEqual(len(restarted.saved_demos()), 3, 'Rejected movies are never kept')
+        restarted.remove_demo(first['id'])
+        self.assertFalse(stored.exists())
+        self.assertEqual([d['id'] for d in restarted.saved_demos()], [second['id'], outside['id']])
+        with self.assertRaisesRegex(ValueError, 'Unknown demo'):
+            restarted.remove_demo(first['id'])
+
+    def test_demo_reminder_follows_configured_ui_paths_and_the_agents_reason(self):
+        self.write('App/Screen.swift', 'struct Screen {}\n')
+        self.write('App/ScreenTests.swift', 'final class ScreenTests {}\n')
+        self.review.refresh()
+        self.assertEqual(self.review.demo_state()['uiPaths'], [], 'Without configured paths no demo is expected')
+        self.assertIsNone(self.review.demo_reminder())
+        self.write('.config/local-review.toml', "[demos]\npaths = ['^App/']\n")
+        self.review.refresh()
+        self.assertEqual(self.review.demo_state()['uiPaths'], ['App/Screen.swift'], 'Tests never require a demo')
+        self.assertRegex(self.review.demo_reminder(), r'^1 changed file affects the app UI')
+        self.review.skip_demo('Renames a private type; nothing on screen changes.')
+        self.assertIsNone(self.review.demo_reminder())
+        self.assertEqual(self.review.state()['demos']['skipped']['reason'], 'Renames a private type; nothing on screen changes.')
+        with self.assertRaises(ValueError):
+            self.review.skip_demo('   ')
+        self.review.edit_session(lambda session: session.pop('demoSkipped'))
+        self.review.add_demo('Screen appears', self.write_movie('screen.mov'))
+        self.assertIsNone(self.review.demo_reminder())
+        recording = {'title': 'Error state', 'startedAt': 'now', 'device': 'App feature', 'running': True}
+        with patch.object(m.Review, 'demo_recording', return_value=recording):
+            self.assertRegex(self.review.demo_reminder(), 'Error state" is still recording')
+
+    def test_open_demos_plays_stored_files_in_quicktime_only(self):
+        first = self.review.add_demo('Happy path', self.write_movie('happy.mov'))
+        second = self.review.add_demo('Empty state', self.write_movie('empty.mp4'))
+        directory = self.review.store / 'demos' / self.review.session_id
+        real_run, opened = subprocess.run, []
+        def run(args, **options):
+            if args[0] != '/usr/bin/open':
+                return real_run(args, **options)
+            opened.append(args)
+            return subprocess.CompletedProcess(args, 0, '', '')
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=run):
+            self.assertEqual(self.review.open_demos([first['id'], second['id'], first['id']]), {'opened': 2})
+            self.assertEqual(opened, [['/usr/bin/open', '-a', 'QuickTime Player', str(directory / first['file']), str(directory / second['file'])]])
+            for ids in [[], 'all', ['../outside'], [first['id'], 'unknown']]:
+                with self.assertRaises(ValueError):
+                    self.review.open_demos(ids)
+            (directory / second['file']).unlink()
+            with self.assertRaisesRegex(ValueError, 'missing'):
+                self.review.open_demos([second['id']])
+            self.assertFalse(self.review.state()['demos']['items'][1]['available'])
+            self.assertEqual(len(opened), 1, 'Invalid requests never open anything')
+            m.register_review(self.review)
+            server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
+            server.registry = m.ReviewRegistry(self.review.store)
+            server.token, server.version, server.assets = 'demo-token', 'test-version', {}
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            url = f'http://127.0.0.1:{server.server_port}/api/demos/open?review={self.review.session_id}'
+            request = urllib.request.Request(url, data=json.dumps({'ids': [first['id']]}).encode(),
+                                             headers={'X-Review-Token': 'demo-token', 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(json.load(response), {'opened': 1})
+            self.assertEqual(opened[-1][-1], str(directory / first['file']))
+        with patch.object(m.sys, 'platform', 'linux'), self.assertRaisesRegex(ValueError, 'macOS'):
+            self.review.open_demos([first['id']])
+
+    def test_simulator_recording_starts_on_the_worktree_device_and_attaches_on_stop(self):
+        udid = self.simulator_metadata()
+        simulator = {'id': udid, 'name': 'App feature', 'url': ''}
+        real_popen, launched = subprocess.Popen, []
+        def recorder(args, **options):
+            if args[0] != 'xcrun':
+                return real_popen(args, **options)  # subprocess.run uses Popen too
+            launched.append(args)
+            return real_popen([sys.executable, '-c', FAKE_RECORDER, *args[1:]], **options)
+        self.review.begin_iteration('demo', 'Show the new screen')
+        directory = self.review.store / 'demos' / self.review.session_id
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'Popen', side_effect=recorder), \
+                patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Shutdown'})):
+            with self.assertRaisesRegex(ValueError, 'not booted'):
+                self.review.start_demo_recording('Open the screen')
+            self.assertEqual(launched, [])
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'Popen', side_effect=recorder), \
+                patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Booted'})):
+            recording = self.review.start_demo_recording('Open the screen')
+            self.assertEqual(launched[0][:6], ['xcrun', 'simctl', 'io', udid, 'recordVideo', '--codec=h264'])
+            self.addCleanup(lambda: m.process_alive(recording['pid']) and os.kill(recording['pid'], 9))
+            self.assertEqual(self.review.state()['demos']['recording']['title'], 'Open the screen')
+            with self.assertRaisesRegex(ValueError, 'still recording'):
+                self.review.start_demo_recording('Another scenario')
+            self.assertRegex(self.review.demo_reminder(), 'still recording')
+            demo = m.Review(self.root, 'main').stop_demo_recording()
+            self.assertFalse(m.process_alive(recording['pid']))
+            self.assertEqual((demo['title'], demo['iteration'], demo['source'], demo['device'], demo['durationSeconds']),
+                             ('Open the screen', 'demo', 'simulator', 'App feature', 4.25))
+            self.assertEqual(sorted(p.name for p in directory.iterdir()), [demo['file']], 'Recorder files are cleaned up')
+            self.assertIsNone(self.review.state()['demos']['recording'])
+            with self.assertRaisesRegex(ValueError, 'No demo is recording'):
+                self.review.stop_demo_recording()
+        def failing(args, **options):
+            if args[0] != 'xcrun':
+                return real_popen(args, **options)
+            return real_popen([sys.executable, '-c', 'import sys; sys.stderr.write("Invalid device state"); sys.exit(1)'], **options)
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'Popen', side_effect=failing), \
+                patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Booted'})):
+            with self.assertRaisesRegex(ValueError, 'Invalid device state'):
+                self.review.start_demo_recording('Broken recorder')
+            self.assertFalse((directory / 'recording.json').exists())
+        # A reused PID is never signalled, and a recording that never produced a movie is discarded.
+        m.write_json(directory / 'recording.json', {'id': 'f' * 16, 'title': 'Lost', 'pid': os.getpid(),
+                     'path': str(directory / 'recording-lost.mov'), 'log': str(directory / 'recording-lost.log'), 'iteration': None})
+        self.assertFalse(self.review.demo_recording()['running'])
+        with self.assertRaisesRegex(ValueError, 'without a movie'):
+            self.review.stop_demo_recording()
+        self.assertFalse((directory / 'recording.json').exists())
+        self.assertEqual([d['title'] for d in self.review.saved_demos()], ['Open the screen'])
 
     def test_browser_merge_saves_durable_approval_without_git_mutations(self):
         head, index = self.git('rev-parse', 'HEAD'), self.git('diff', '--cached')

@@ -821,3 +821,11 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
 .search-match code {flex:1;min-width:0;padding:0 10px;white-space:pre-wrap;overflow-wrap:anywhere}
 .search-match.removed-line .source-number {color:#e3a0a0}
 .search-match mark {color:inherit;background:#f4c67a40;border-radius:2px}
+.demo {display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 16px; margin:10px 0; border:1px solid var(--border); border-radius:8px; background:#202024}
+.demo-info {display:flex; flex-direction:column; gap:4px; min-width:0}
+.demo-info strong {overflow-wrap:anywhere}
+.demo-info small {color:var(--muted)}
+.demo-note {padding:10px 14px; margin:12px 0; border:1px solid var(--border); border-radius:8px; background:#202024}
+.demo-note.attention {border-color:#a78a3c; background:#2b2618}
+[data-tab].attention span {color:#e9c46a}
+[data-tab].attention span::after {content:" !"}

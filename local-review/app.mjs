@@ -88,6 +88,8 @@ function updateChrome() {
   if (iteration === 'thread') context.append(el('strong', '', 'This thread'), el('p', 'muted', 'Changes from recorded interactions in this chat. Imported changes remain visible in Full diff. Approval always covers the full diff.'));
   $('#progress').textContent = `${state.files.filter(viewed).length} / ${state.files.length} reviewed`;
   $('#snapshot-count').textContent = state.files.filter(f => f.image).length;
+  $('#demo-count').textContent = state.demos.items.length;
+  $('[data-tab="demos"]').classList.toggle('attention', demoMissing(state.demos));
   $('#comment-count').textContent = state.session.comments.filter(c => !c.resolved).length;
   const ranked = state.files.filter(f => f.scorer === 'Jev').length;
   $('#ranking').textContent = state.ranking?.status === 'running' ? `Jev evaluating · ${ranked}/${state.files.length}` : `Jev · ${ranked}/${state.files.length} scored`;
@@ -121,11 +123,11 @@ function updateChrome() {
   const excluded = state.files.filter(hidden);
   $('#filtered-summary').textContent = `Filtered out · ${excluded.length}`;
   $('#filtered-list').replaceChildren(...excluded.map(file => {
-    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (tab === 'comments' || tab === 'stats' || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
+    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (['comments', 'stats', 'demos'].includes(tab) || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
     const name = el('span', 'file-name'); name.append(el('strong', '', file.path), el('small', '', filterReason(file))); node.append(name); return node;
   }));
   $('#filtered-files').hidden = !excluded.length;
-  $('#mode').hidden = ['snapshot', 'comments', 'stats'].includes(tab);
+  $('#mode').hidden = ['snapshot', 'comments', 'stats', 'demos'].includes(tab);
   for (const card of document.querySelectorAll('.review-file')) {
     const file = state.files.find(f => f.id === card.dataset.file);
     if (file) card.querySelector('.viewed-check').checked = viewed(file);
@@ -147,6 +149,7 @@ async function load(refresh = false) {
   if (state.job.status === 'running' || state.job.status === 'merged' || state.job.status === 'failed') {renderJob(); return;}
   if (tab === 'comments') {renderComments(); return;}
   if (tab === 'stats') {renderStats(); return;}
+  if (tab === 'demos') {renderDemos(); return;}
   feedObserver?.disconnect();
   if (!visibleFiles().some(f => f.id === active)) active = visibleFiles()[0]?.id;
   if (active) {renderFeed(); await selectFile(active);} else $('#content').replaceChildren(el('div', 'empty', state.files.length ? 'No files match these filters. Enable “Show filtered files” to see all changes.' : 'No changes to review.'));
@@ -261,7 +264,7 @@ function updateSelection(id) {
   }
 }
 function syncSelection() {
-  if (tab === 'comments' || tab === 'stats') return;
+  if (tab === 'comments' || tab === 'stats' || tab === 'demos') return;
   const cards = [...document.querySelectorAll('.review-file')];
   const top = $('#content').getBoundingClientRect().top + 64;
   const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 2;
@@ -553,6 +556,38 @@ function renderStats() {
   if (!stats.files) {main.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to count them.' : 'No changes to review.')); return;}
   main.append(el('h2', 'comments-title', 'By kind'), statsTable('Kind', stats.byKind, max), el('h2', 'comments-title', 'By file type'), statsTable('Type', stats.byType, maxType));
 }
+// Changed UI paths with neither a recording nor the agent's reason for skipping one.
+function demoMissing(demos) {return Boolean(demos?.uiPaths.length && !demos.total && !demos.skipped);}
+function uiChanges(demos) {const count = demos.uiPaths.length; return count === 1 ? '1 changed file affects' : `${count} changed files affect`;}
+function formatDuration(seconds) {const total = Math.round(seconds); return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;}
+function formatBytes(bytes) {return bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`;}
+function demoInteraction(demo) {
+  const item = state.iterations.find(i => i.id === demo.iteration);
+  return item ? `Iteration ${item.number}` : demo.iteration && demo.iteration === state.pendingIteration?.id ? 'Current interaction' : 'Outside recorded interactions';
+}
+async function openDemos(ids) {
+  const result = await api('demos/open', {ids});
+  notice(`Opened ${result.opened === 1 ? 'the demo' : `${result.opened} demos`} in QuickTime Player.`);
+}
+function renderDemos() {
+  feedObserver?.disconnect(); ++renderVersion;
+  const demos = state.demos, items = demos.items, main = $('#content');
+  main.replaceChildren(el('h1', '', 'Demo recordings'), el('p', 'muted', 'Recordings of the running app that show this change working. They open in QuickTime Player and are kept outside the diff, after the worktree is removed too.'));
+  if (demos.recording) main.append(el('div', 'demo-note', `Recording “${demos.recording.title}” on ${demos.recording.device}…`));
+  if (demoMissing(demos)) main.append(el('div', 'demo-note attention', `${uiChanges(demos)} the app UI, but no demo is attached. Ask the agent to record each scenario before you approve.`));
+  else if (demos.skipped && !demos.total) main.append(el('div', 'demo-note', `No demo recorded. The agent's reason: ${demos.skipped.reason}`));
+  if (!items.length) {main.append(el('div', 'empty', demos.total ? 'No demos were recorded during this scope. Full diff lists every demo.' : 'No demo recordings yet.')); return;}
+  if (items.length > 1) {const all = button(`Open all ${items.length} in QuickTime Player`, () => openDemos(items.filter(d => d.available).map(d => d.id))); all.disabled = !demos.canOpen || !items.some(d => d.available); main.append(all);}
+  main.append(...items.map(demo => {
+    const row = el('section', 'demo'), info = el('div', 'demo-info');
+    info.append(el('strong', '', demo.title), el('small', '', [formatDuration(demo.durationSeconds), formatBytes(demo.bytes), demoInteraction(demo), demo.device, new Date(demo.recordedAt).toLocaleString()].filter(Boolean).join(' · ')));
+    const play = button('Open in QuickTime Player', () => openDemos([demo.id]));
+    play.disabled = !demos.canOpen || !demo.available;
+    play.title = !demo.available ? 'The recording file is missing from the review store' : demos.canOpen ? `Play ${demo.title}` : 'QuickTime Player requires macOS';
+    row.append(info, play);
+    return row;
+  }));
+}
 function renderJob() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 100; const log = el('pre', 'log', state.job.log); main.replaceChildren(el('div', 'merge-status', state.job.status === 'merged' ? `Merged into ${state.target}. Worktrunk cleanup has been requested.` : state.job.status === 'failed' ? 'Merge stopped. Your changes are available; inspect the log.' : 'Validating and merging…'), log); if (state.job.status === 'failed') main.append(button('Return to review', () => load(true))); if (atEnd) main.scrollTop = main.scrollHeight;}
 // The next unreviewed file below, wrapping around to the top of the shown list.
 function nextUnviewed(files, id) {
@@ -836,6 +871,7 @@ $('#approve').onclick = () => {
   mergeRevision = state.merge.revision;
   $('#merge-description').textContent = `Ask the agent to merge the full ${state.branch} branch into ${state.target}?`;
   $('#merge-summary').textContent = `Approve all ${state.merge.fileCount} files in the full diff, including filtered files. The agent will first update from the latest ${state.target}, then handle comments, fix failing checks and resolve conflicts, then merge with one final commit. These corrections are covered by your approval; you do not need to resolve comment flags or approve again.`;
+  if (demoMissing(state.demos)) $('#merge-summary').textContent += ` No demo recording is attached, although ${uiChanges(state.demos)} the app UI.`;
   $('#merge-agent-note').textContent = state.agent ? `Saves your approval and sends the merge request to the ${agentName(state.agent)} conversation that wrote this change, just like review comments. Follow its progress and reply there. Commit notes are optional; the agent will finalize them.` : 'Start review from your Codex or Claude session so the merge can be handed to the correct agent.';
   const form = $('#merge-form');
   form.elements.title.value = state.merge.draft.title;
@@ -853,7 +889,7 @@ $('#merge-form').onsubmit = event => {
   });
 };
 document.addEventListener('keydown', event => {if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || event.metaKey || event.ctrlKey || event.altKey) return; run(async () => {const files = visibleFiles(), index = files.findIndex(f => f.id === active); if (event.key.toLowerCase() === 'j' && files[index + 1]) await selectFile(files[index + 1].id); if (event.key.toLowerCase() === 'k' && files[index - 1]) await selectFile(files[index - 1].id); if (event.key.toLowerCase() === 'v' && active) await markAndNext(); if (event.key.toLowerCase() === 's') {tab = tab === 'snapshot' ? 'all' : 'snapshot'; await load();}});});
-setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running')) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; state = nextState; updateChrome(); if (state.job.status !== 'idle') renderJob();});}, 1500);
+setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running' || state.demos?.recording)) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; const demos = JSON.stringify(state.demos); state = nextState; updateChrome(); if (state.job.status !== 'idle') renderJob(); else if (tab === 'demos' && JSON.stringify(state.demos) !== demos) renderDemos();});}, 1500);
 run(loadFeedback);
 run(async () => {await load(); if (!state.jevAvailable) notice('Jev is unavailable without JEV_API_KEY in the review server environment. Files use clearly labeled fallback scores.');});
 
