@@ -973,6 +973,21 @@ class ReviewTests(unittest.TestCase):
         with patch.object(m.sys, 'platform', 'linux'), self.assertRaisesRegex(ValueError, 'macOS'):
             self.review.open_demos([first['id']])
 
+    def fake_appearance(self, value):
+        """Stands in for `simctl ui <udid> appearance [dark|light]` and records every change."""
+        device = {'value': value, 'set': []}
+        def simctl(review, *args):
+            if args[0] != 'ui':
+                raise AssertionError(f'Unexpected simctl call {args}')
+            if len(args) == 4:
+                device['set'].append(args[3])
+                device['value'] = args[3]
+            return device['value'] + '\n'
+        stub = patch.object(m.Review, 'simctl', autospec=True, side_effect=simctl)
+        stub.start()
+        self.addCleanup(stub.stop)
+        return device
+
     def test_simulator_recording_starts_on_the_worktree_device_and_attaches_on_stop(self):
         udid = self.simulator_metadata()
         simulator = {'id': udid, 'name': 'App feature', 'url': ''}
@@ -984,6 +999,7 @@ class ReviewTests(unittest.TestCase):
             return real_popen([sys.executable, '-c', FAKE_RECORDER, *args[1:]], **options)
         self.review.begin_iteration('demo', 'Show the new screen')
         directory = self.review.store / 'demos' / self.review.session_id
+        appearance = self.fake_appearance('light')
         with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'Popen', side_effect=recorder), \
                 patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Shutdown'})):
             with self.assertRaisesRegex(ValueError, 'not booted'):
@@ -1000,8 +1016,9 @@ class ReviewTests(unittest.TestCase):
             self.assertRegex(self.review.demo_reminder(), 'still recording')
             demo = m.Review(self.root, 'main').stop_demo_recording()
             self.assertFalse(m.process_alive(recording['pid']))
-            self.assertEqual((demo['title'], demo['iteration'], demo['source'], demo['device'], demo['durationSeconds']),
-                             ('Open the screen', 'demo', 'simulator', 'App feature', 4.25))
+            self.assertEqual((demo['title'], demo['iteration'], demo['source'], demo['device'], demo['durationSeconds'], demo['appearance']),
+                             ('Open the screen', 'demo', 'simulator', 'App feature', 4.25, 'dark'))
+            self.assertEqual(appearance, {'value': 'light', 'set': ['dark', 'light']}, 'Recording defaults to dark and restores the device afterwards')
             self.assertEqual(sorted(p.name for p in directory.iterdir()), [demo['file']], 'Recorder files are cleaned up')
             self.assertIsNone(self.review.state()['demos']['recording'])
             with self.assertRaisesRegex(ValueError, 'No demo is recording'):
@@ -1023,6 +1040,174 @@ class ReviewTests(unittest.TestCase):
             self.review.stop_demo_recording()
         self.assertFalse((directory / 'recording.json').exists())
         self.assertEqual([d['title'] for d in self.review.saved_demos()], ['Open the screen'])
+
+    def test_recording_appearance_follows_the_flag_then_config_and_rejects_others(self):
+        simulator = {'id': self.simulator_metadata(), 'name': 'App feature', 'url': ''}
+        self.assertEqual(self.review.config['demos']['appearance'], 'dark')
+        self.write('.config/local-review.toml', "[demos]\nappearance = 'light'\n")
+        self.assertEqual(m.load_config(self.root)['demos']['appearance'], 'light')
+        for invalid in ["[demos]\nappearance = 'sepia'\n", "[demos]\nappearance = 1\n"]:
+            self.write('.config/local-review.toml', invalid)
+            with self.assertRaisesRegex(ValueError, 'dark or light'):
+                m.load_config(self.root)
+        self.write('.config/local-review.toml', "[demos]\nappearance = 'light'\n")
+        review = m.Review(self.root, 'main')
+        device = self.fake_appearance('light')
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Booted'})), \
+                patch.object(m.subprocess, 'Popen', side_effect=OSError('recorder not started')):
+            for flag in [None, 'dark']:
+                with self.assertRaisesRegex(OSError, 'recorder not started'):
+                    review.start_demo_recording('Scenario', flag)
+            with self.assertRaisesRegex(ValueError, 'dark or light'):
+                review.start_demo_recording('Scenario', 'sepia')
+        self.assertEqual(device, {'value': 'light', 'set': ['dark', 'light']},
+                         'The configured appearance leaves a matching device alone, the flag overrides it, and a failed start restores it')
+        device.update(value='unsupported', set=[])
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.Review, 'simulator_device', return_value=(simulator, {'state': 'Booted'})), \
+                patch.object(m.subprocess, 'Popen', side_effect=OSError('recorder not started')):
+            with self.assertRaisesRegex(OSError, 'recorder not started'):
+                review.start_demo_recording('Scenario', 'dark')
+        self.assertEqual(device['set'], [], 'Runtimes without an appearance setting still record')
+
+    def serve(self, review=None):
+        """A registry server on a free port for this test's review."""
+        review = review or self.review
+        m.register_review(review)
+        server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
+        server.registry = m.ReviewRegistry(review.store)
+        server.token, server.version, server.assets = 'test-token', 'test-version', {}
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def request(self, server, path, headers=None, data=None):
+        request = urllib.request.Request(f'http://127.0.0.1:{server.server_port}{path}', data=data, headers=headers or {})
+        try:
+            with urllib.request.urlopen(request) as response:
+                return response.status, dict(response.headers), response.read()
+        except urllib.error.HTTPError as error:
+            with error:
+                return error.code, dict(error.headers), error.read()
+
+    def test_demo_movies_stream_by_signed_url_with_byte_ranges(self):
+        self.review.add_demo('Happy path', self.write_movie('happy.mov'))
+        server = self.serve()
+        api = {'X-Review-Token': 'test-token'}
+        status, _, body = self.request(server, f'/api/state?review={self.review.session_id}', api)
+        demo = json.loads(body)['demos']['items'][0]
+        stored = (self.review.store / 'demos' / self.review.session_id / demo['file']).read_bytes()
+        self.assertRegex(demo['src'], rf'^/demo\?review={self.review.session_id}&id={demo["id"]}&key=[0-9a-f]{{32}}$')
+        self.assertNotIn('test-token', demo['src'], 'The page token never appears in a media URL')
+        status, headers, body = self.request(server, demo['src'])
+        self.assertEqual((status, headers['Content-Type'], headers['Accept-Ranges'], body), (200, 'video/mp4', 'bytes', stored))
+        for header, expected in [('bytes=0-9', stored[:10]), ('bytes=10-', stored[10:]), ('bytes=-8', stored[-8:]), (f'bytes=5-{len(stored) + 50}', stored[5:])]:
+            status, headers, body = self.request(server, demo['src'], {'Range': header})
+            self.assertEqual((status, body), (206, expected), header)
+            self.assertTrue(headers['Content-Range'].endswith(f'/{len(stored)}'), header)
+        for header in [f'bytes={len(stored)}-', 'bytes=9-2', 'bytes=-', 'items=0-1']:
+            status, headers, _ = self.request(server, demo['src'], {'Range': header})
+            self.assertEqual((status, headers['Content-Range']), (416, f'bytes */{len(stored)}'), header)
+        other = m.Review(self.root, 'main')
+        other.media_secret = b'another-server'
+        self.assertNotEqual(other.demo_source(demo['id']), demo['src'], 'Keys depend on the serving token')
+        forged = demo['src'][:-32] + '0' * 32
+        for path, expected in [(forged, 403), (demo['src'].replace('&key=', '&ignored='), 403),
+                               (demo['src'].replace(demo['id'], 'f' * 16), 403)]:
+            self.assertEqual(self.request(server, path)[0], expected, path)
+        unsigned = m.Review(self.root, 'main')
+        self.assertIsNone(unsigned.state()['demos']['items'][0]['src'], 'Without a server there is nothing to play')
+        (self.review.store / 'demos' / self.review.session_id / demo['file']).unlink()
+        self.assertEqual(self.request(server, demo['src'])[0], 404)
+
+    def configure_run(self, destinations, exit_code=0, sleep=0):
+        """Points [run] at small Python scripts: one prints destinations, the other records its argument."""
+        scripts = self.homes / 'run'
+        scripts.mkdir(exist_ok=True)
+        (scripts / 'list.py').write_text(f'import json; print(json.dumps({destinations!r}))\n')
+        (scripts / 'launch.py').write_text(f'import sys, time\nprint("building for", sys.argv[1], flush=True)\ntime.sleep({sleep})\nsys.exit({exit_code})\n')
+        self.write('.config/local-review.toml', '[run]\n' + f'destinations = ["{sys.executable}", "{scripts / "list.py"}"]\n'
+                   + f'command = ["{sys.executable}", "{scripts / "launch.py"}", "{{destination}}"]\n')
+        return m.Review(self.root, 'main')
+
+    def wait_for_run(self, review, status):
+        deadline = time.monotonic() + 10
+        while review.state()['run']['last']['status'] != status:
+            if time.monotonic() > deadline:
+                raise AssertionError(f'Run never became {status}: {review.state()["run"]}')
+            time.sleep(.05)
+        return review.state()['run']['last']
+
+    def test_run_is_off_until_configured_and_config_needs_both_commands(self):
+        self.assertIsNone(self.review.state()['run'])
+        with self.assertRaisesRegex(ValueError, 'not configured'):
+            self.review.run_destinations()
+        for invalid, message in [('[run]\ncommand = ["run", "{destination}"]\n', 'needs both'),
+                                 ('[run]\ndestinations = ["list"]\ncommand = ["run"]\n', 'needs both'),
+                                 ('[run]\ndestinations = "list"\ncommand = ["run", "{destination}"]\n', 'list of strings'),
+                                 ('[run]\nscheme = "App"\n', 'Unknown setting')]:
+            self.write('.config/local-review.toml', invalid)
+            with self.assertRaisesRegex(ValueError, message, msg=invalid):
+                m.load_config(self.root)
+
+    def test_run_lists_destinations_and_launches_only_a_listed_one(self):
+        phone = {'id': '00008120-PHONE', 'name': 'My iPhone', 'kind': 'device', 'detail': 'iPhone 17 · iOS 27.0'}
+        review = self.configure_run([phone, {'id': 'SIM-1', 'name': 'iPhone 17 Simulator', 'extra': True}])
+        self.assertEqual(review.state()['run'], {'available': True, 'last': None})
+        self.assertEqual(review.run_destinations(), [phone, {'id': 'SIM-1', 'name': 'iPhone 17 Simulator', 'kind': '', 'detail': ''}])
+        for destination in ['UNLISTED', None, ['00008120-PHONE']]:
+            with self.assertRaises(ValueError, msg=destination):
+                review.start_run(destination)
+        self.assertIsNone(review.state()['run']['last'], 'Rejected destinations never start anything')
+        review.start_run('00008120-PHONE')
+        last = self.wait_for_run(review, 'succeeded')
+        self.assertEqual((last['destination'], last['exitCode']), (phone, 0))
+        log = review.run_log().decode()
+        self.assertIn('launch.py 00008120-PHONE\n', log.splitlines()[0] + '\n', 'The log starts with the command')
+        self.assertIn('building for 00008120-PHONE', log)
+        self.assertEqual(m.Review(self.root, 'main').state()['run']['last']['status'], 'succeeded', 'Run results outlive the server')
+
+    def test_run_reports_failures_and_rejects_bad_destination_lists(self):
+        review = self.configure_run([{'id': 'SIM-1', 'name': 'Simulator'}], exit_code=65)
+        review.start_run('SIM-1')
+        self.assertEqual(self.wait_for_run(review, 'failed')['exitCode'], 65)
+        for listed in [{'id': 'SIM-1'}, [{'id': 'SIM-1'}], [{'id': '', 'name': 'Blank'}], 'not json']:
+            review = self.configure_run(listed)
+            if listed == 'not json':
+                (self.homes / 'run' / 'list.py').write_text('print("Simulators:")\n')
+            with self.assertRaises(ValueError, msg=listed):
+                review.run_destinations()
+        (self.homes / 'run' / 'list.py').write_text('import sys; sys.stderr.write("devicectl unavailable"); sys.exit(1)\n')
+        with self.assertRaisesRegex(ValueError, 'devicectl unavailable'):
+            review.run_destinations()
+
+    def test_run_allows_one_build_at_a_time_and_cancel_stops_it(self):
+        review = self.configure_run([{'id': 'SIM-1', 'name': 'Simulator'}], sleep=30)
+        server = self.serve(review)
+        api = {'X-Review-Token': 'test-token', 'Content-Type': 'application/json'}
+        path = f'/api/run?review={review.session_id}'
+        status, _, body = self.request(server, path, api, json.dumps({'destination': 'SIM-1'}).encode())
+        self.assertEqual((status, json.loads(body)['run']['last']['status']), (200, 'running'))
+        pid = m.read_json(review.run_paths()[0], {})['pid']
+        self.addCleanup(lambda: m.process_alive(pid) and os.killpg(pid, 9))
+        status, _, body = self.request(server, path, api, json.dumps({'destination': 'SIM-1'}).encode())
+        self.assertEqual(status, 400)
+        self.assertRegex(json.loads(body)['error'], 'still building for Simulator')
+        status, _, body = self.request(server, f'/api/run/cancel?review={review.session_id}', api, b'{}')
+        self.assertEqual(status, 200)
+        self.assertEqual(self.wait_for_run(review, 'cancelled')['exitCode'], -15)
+        self.assertFalse(m.process_alive(pid))
+        with self.assertRaisesRegex(ValueError, 'Nothing is running'):
+            review.cancel_run()
+        # A run whose server restarted has no recorded exit status, and a reused PID never counts as it.
+        m.write_json(review.run_paths()[0], {'id': 'lost', 'pid': os.getpid(), 'destination': {'id': 'SIM-1', 'name': 'Simulator'},
+                                             'status': 'running', 'startedAt': 'earlier'})
+        self.assertEqual(review.state()['run']['last']['status'], 'ended')
+        review.start_run('SIM-1')
+        self.addCleanup(lambda: m.process_alive(m.read_json(review.run_paths()[0], {})['pid']) and os.killpg(m.read_json(review.run_paths()[0], {})['pid'], 9))
+        self.assertEqual(review.state()['run']['last']['status'], 'running')
+        review.cancel_run()
+        self.wait_for_run(review, 'cancelled')
 
     def test_browser_merge_saves_durable_approval_without_git_mutations(self):
         head, index = self.git('rev-parse', 'HEAD'), self.git('diff', '--cached')

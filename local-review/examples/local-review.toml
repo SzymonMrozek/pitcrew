@@ -59,3 +59,11 @@ command = ["mise", "run", "app:run:worktree"]
 # when none is attached. Tests, generated code and manifests never count.
 [demos]
 paths = ['^(App|Modules)/']
+# Simulator recordings switch to this appearance, dark or light, and restore the device afterwards.
+appearance = "dark"
+
+# Run… on the review page builds and launches the app. destinations prints a JSON array of
+# {id, name, kind, detail}; command runs in the worktree with {destination} replaced by the chosen id.
+[run]
+destinations = ["scripts/run-app.py", "--list-destinations"]
+command = ["scripts/run-app.py", "--destination", "{destination}"]

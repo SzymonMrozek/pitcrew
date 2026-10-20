@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import fcntl
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import hmac
 import json
 import math
 import mimetypes
@@ -42,6 +43,13 @@ MAX_TEXT = 2_000_000
 # QuickTime Player opens these containers; a demo must also carry a finished movie header.
 DEMO_TYPES = ('.mov', '.mp4', '.m4v')
 MAX_DEMO = 4_000_000_000
+APPEARANCES = ('dark', 'light')
+# QuickTime and MPEG-4 share a container. Browsers report no QuickTime support, so H.264 movies are served as MPEG-4.
+DEMO_MEDIA_TYPE = 'video/mp4'
+MAX_RUN_DESTINATIONS = 100
+# The page shows the end of a run's log; build output can be far longer.
+MAX_RUN_LOG = 200_000
+RUN_LOCK = threading.Lock()
 MAX_SEARCH_RESULTS = 500
 # Priority paths (for example module interfaces) sort near the top regardless of evaluation.
 PRIORITY_SCORE = 95
@@ -87,7 +95,11 @@ CONFIG = {
         'instructions': '',
     },
     # Changes on these paths alter what people see in the app, so the review expects a demo recording.
-    'demos': {'paths': []},
+    # Simulator recordings switch the device to this appearance, dark or light, and restore it afterwards.
+    'demos': {'paths': [], 'appearance': 'dark'},
+    # Run builds and launches the app from the review page. destinations prints a JSON array of
+    # {id, name, kind, detail}; command runs in the worktree with {destination} replaced by the chosen id.
+    'run': {'destinations': [], 'command': []},
 }
 
 
@@ -125,6 +137,14 @@ def load_config(root):
             re.compile(pattern)
     for pattern in config['demos']['paths']:
         re.compile(pattern)
+    if config['demos']['appearance'] not in APPEARANCES:
+        raise ValueError(f'[demos] appearance in {path} must be dark or light')
+    run = config['run']
+    for key in ('destinations', 'command'):
+        if not isinstance(run[key], list) or not all(isinstance(arg, str) for arg in run[key]):
+            raise ValueError(f'[run] {key} in {path} must be a list of strings')
+    if bool(run['destinations']) != bool(run['command']) or (run['command'] and not any('{destination}' in arg for arg in run['command'])):
+        raise ValueError(f'[run] in {path} needs both destinations and a command that uses {{destination}}')
     return config
 
 
@@ -450,6 +470,8 @@ class Review:
         self.files = []
         self.blobs = {}
         self.job = {'status': 'idle', 'log': ''}
+        # The serving process's token; demo URLs are signed with it. None outside a server.
+        self.media_secret = None
         self.ranking = {'status': 'idle', 'fallbacks': 0}
         self.rank_again = False
         self.definitions = None
@@ -713,6 +735,7 @@ class Review:
                     'tool': self.tool_info(),
                     'simulator': self.simulator() if live else None,
                     'demos': self.demo_state(iteration),
+                    'run': self.run_state(live),
                     'canMerge': live and not merge_id and bool(self.files) and bool(self.branch) and self.branch != self.target
                                 and not any(file['submoduleDirty'] for file in self.files)}
 
@@ -851,7 +874,8 @@ class Review:
                 'recordedAt': (recording or {}).get('startedAt') or datetime.now(timezone.utc).isoformat(),
                 # Interaction boundaries are recorded, never inferred: a demo outside one belongs to none.
                 'iteration': (recording or {}).get('iteration', pending),
-                'source': 'simulator' if recording else 'file', 'device': (recording or {}).get('device')}
+                'source': 'simulator' if recording else 'file', 'device': (recording or {}).get('device'),
+                'appearance': (recording or {}).get('appearance')}
         self.edit_session(lambda session: session.setdefault('demos', []).append(demo))
         return demo
 
@@ -886,8 +910,18 @@ class Review:
             command = ''
         return {**recording, 'running': 'recordVideo' in command and recording['path'] in command}
 
-    def start_demo_recording(self, title):
+    def simulator_appearance(self, udid, appearance=None):
+        """The device's light or dark appearance, after setting it when appearance is given; None if unsupported."""
+        if appearance:
+            self.simctl('ui', udid, 'appearance', appearance)
+        current = self.simctl('ui', udid, 'appearance').strip()
+        return current if current in APPEARANCES else None
+
+    def start_demo_recording(self, title, appearance=None):
         title = self.validate_demo_title(title)
+        appearance = appearance or self.config['demos']['appearance']
+        if appearance not in APPEARANCES:
+            raise ValueError('Record demos in dark or light appearance')
         if sys.platform != 'darwin':
             raise ValueError('Simulator recording requires macOS. Attach a movie with --add-demo instead.')
         current = self.demo_recording()
@@ -896,26 +930,38 @@ class Review:
         simulator, device = self.simulator_device()
         if device.get('state') != 'Booted':
             raise ValueError(f'{simulator["name"]} is not booted. Launch the app on it before recording.')
-        directory = self.demo_directory()
-        directory.mkdir(parents=True, exist_ok=True)
-        demo_id = secrets.token_hex(8)
-        path, log_path = directory / f'recording-{demo_id}.mov', directory / f'recording-{demo_id}.log'
-        with log_path.open('w') as log:
-            # A separate session keeps recording after this command returns; --stop-demo sends SIGINT to finalize the movie.
-            process = subprocess.Popen(['xcrun', 'simctl', 'io', simulator['id'], 'recordVideo', '--codec=h264', '--force', str(path)],
-                                       cwd=self.repo, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
-        deadline = time.monotonic() + 15
-        while 'Recording started' not in log_path.read_text(errors='replace'):
-            if process.poll() is not None or time.monotonic() > deadline:
-                if process.poll() is None:
-                    process.kill()
-                raise ValueError('Simulator recording did not start: ' + log_path.read_text(errors='replace').strip()[-2000:])
-            time.sleep(.1)
-        recording = {'id': demo_id, 'title': title, 'pid': process.pid, 'path': str(path), 'log': str(log_path),
-                     'device': simulator['name'], 'udid': simulator['id'],
-                     'iteration': (self.session.get('pendingIteration') or {}).get('id'),
-                     'startedAt': datetime.now(timezone.utc).isoformat()}
-        write_json(directory / 'recording.json', recording)
+        previous = self.simulator_appearance(simulator['id'])
+        if previous is None:
+            appearance = None  # The runtime has no appearance setting; record it as it is.
+        elif previous != appearance:
+            if self.simulator_appearance(simulator['id'], appearance) != appearance:
+                raise ValueError(f'{simulator["name"]} cannot switch to {appearance} appearance')
+            time.sleep(.5)  # Lets the app finish its appearance transition before the first frame.
+        try:
+            directory = self.demo_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            demo_id = secrets.token_hex(8)
+            path, log_path = directory / f'recording-{demo_id}.mov', directory / f'recording-{demo_id}.log'
+            with log_path.open('w') as log:
+                # A separate session keeps recording after this command returns; --stop-demo sends SIGINT to finalize the movie.
+                process = subprocess.Popen(['xcrun', 'simctl', 'io', simulator['id'], 'recordVideo', '--codec=h264', '--force', str(path)],
+                                           cwd=self.repo, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+            deadline = time.monotonic() + 15
+            while 'Recording started' not in log_path.read_text(errors='replace'):
+                if process.poll() is not None or time.monotonic() > deadline:
+                    if process.poll() is None:
+                        process.kill()
+                    raise ValueError('Simulator recording did not start: ' + log_path.read_text(errors='replace').strip()[-2000:])
+                time.sleep(.1)
+            recording = {'id': demo_id, 'title': title, 'pid': process.pid, 'path': str(path), 'log': str(log_path),
+                         'device': simulator['name'], 'udid': simulator['id'],
+                         'appearance': appearance, 'previousAppearance': previous,
+                         'iteration': (self.session.get('pendingIteration') or {}).get('id'),
+                         'startedAt': datetime.now(timezone.utc).isoformat()}
+            write_json(directory / 'recording.json', recording)
+        except BaseException:
+            self.restore_appearance({'udid': simulator['id'], 'appearance': appearance, 'previousAppearance': previous})
+            raise
         return recording
 
     def stop_demo_recording(self):
@@ -937,6 +983,7 @@ class Review:
                     raise ValueError('The simulator recorder is still writing the movie. Run the stop command again.')
                 time.sleep(.1)
         directory, path, log = self.demo_directory(), Path(recording['path']), Path(recording['log'])
+        self.restore_appearance(recording)
         try:
             if not path.is_file():
                 raise ValueError('The recording stopped without a movie: ' + (log.read_text(errors='replace').strip()[-2000:] if log.is_file() else 'no recorder output'))
@@ -944,6 +991,15 @@ class Review:
         finally:
             for leftover in (directory / 'recording.json', path, log):
                 leftover.unlink(missing_ok=True)
+
+    def restore_appearance(self, recording):
+        """Best effort: put the worktree simulator back in the appearance it had before recording."""
+        previous = recording.get('previousAppearance')
+        if previous in APPEARANCES and previous != recording.get('appearance') and recording.get('udid'):
+            try:
+                self.simctl('ui', recording['udid'], 'appearance', previous)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                pass
 
     def demo_state(self, iteration=None):
         demos = self.saved_demos()
@@ -956,11 +1012,29 @@ class Review:
         ui_paths = [f['path'] for f in self.files if f['kind'] not in ('test', 'generated', 'manifest')
                     and any(re.search(pattern, f['path']) for pattern in patterns)]
         recording = self.demo_recording() if self.worktree_available() else None
-        return {'items': [{**d, 'available': (self.demo_directory() / d['file']).is_file()} for d in demos],
+        return {'items': [{**d, 'available': (self.demo_directory() / d['file']).is_file(), 'src': self.demo_source(d['id'])} for d in demos],
                 'total': len(self.saved_demos()), 'uiPaths': ui_paths,
                 'skipped': read_json(self.store / f'{self.session_id}.json', self.session).get('demoSkipped'),
-                'recording': {key: recording[key] for key in ('title', 'startedAt', 'device')} if recording and recording['running'] else None,
+                'recording': {key: recording.get(key) for key in ('title', 'startedAt', 'device', 'appearance')} if recording and recording['running'] else None,
                 'canOpen': sys.platform == 'darwin'}
+
+    def demo_key(self, demo_id):
+        return hmac.new(self.media_secret, f'{self.session_id}:{demo_id}'.encode(), hashlib.sha256).hexdigest()[:32]
+
+    def demo_source(self, demo_id):
+        """A playable URL for one demo. A <video> element can't send the review token, so the URL carries a key for that movie only."""
+        if not self.media_secret:
+            return None
+        return f'/demo?review={self.session_id}&id={demo_id}&key={self.demo_key(demo_id)}'
+
+    def demo_file(self, demo_id, key):
+        if not self.media_secret or not isinstance(key, str) or not hmac.compare_digest(key, self.demo_key(demo_id)):
+            raise PermissionError('Reload the review page to play this demo')
+        demo = next((d for d in self.saved_demos() if d['id'] == demo_id), None)
+        path = demo and self.demo_directory() / demo['file']
+        if not path or not path.is_file():
+            raise FileNotFoundError('Demo file is missing')
+        return path
 
     def demo_reminder(self):
         """What an agent finishing an interaction still owes the reviewer about demos, if anything."""
@@ -988,6 +1062,114 @@ class Review:
         if result.returncode:
             raise ValueError('Could not open QuickTime Player: ' + result.stderr.strip()[-2000:])
         return {'opened': len(paths)}
+
+    def run_paths(self):
+        directory = self.store / 'runs'
+        return directory / f'{self.session_id}.json', directory / f'{self.session_id}.log'
+
+    def run_destinations(self):
+        """Where Run can launch the app, as the repository's listing command prints them."""
+        command = self.config['run']['destinations']
+        if not command:
+            raise ValueError('Running the app is not configured. Add [run] to ' + CONFIG_PATH)
+        if not self.worktree_available():
+            raise ValueError('This worktree was removed or now belongs to another branch')
+        try:
+            result = subprocess.run(command, cwd=self.repo, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise ValueError('Listing run destinations took longer than a minute')
+        if result.returncode:
+            raise ValueError('Could not list run destinations: ' + (result.stderr.strip() or result.stdout.strip())[-2000:])
+        try:
+            listed = json.loads(result.stdout)
+        except ValueError:
+            listed = None
+        if not isinstance(listed, list):
+            raise ValueError('The [run] destinations command must print a JSON array')
+        destinations = []
+        for item in listed[:MAX_RUN_DESTINATIONS]:
+            if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key].strip() for key in ('id', 'name')):
+                raise ValueError('Each run destination needs a string id and name')
+            destinations.append({'id': item['id'], 'name': item['name'], 'kind': str(item.get('kind') or ''), 'detail': str(item.get('detail') or '')})
+        return destinations
+
+    @staticmethod
+    def run_process_alive(run):
+        """Whether the run's command still owns its PID; a reused PID never counts."""
+        if not process_alive(run.get('pid')):
+            return False
+        try:
+            command = subprocess.run(['ps', '-ww', '-o', 'command=', '-p', str(run['pid'])], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return run['destination']['id'] in command
+
+    def run_state(self, live):
+        if not self.config['run']['command']:
+            return None
+        run = read_json(self.run_paths()[0], None)
+        if run and run['status'] == 'running' and not self.run_process_alive(run):
+            # The server that waited for it restarted, so its exit status is unknown.
+            run = {**run, 'status': 'ended'}
+        return {'available': live, 'last': run and {key: run.get(key) for key in ('id', 'destination', 'status', 'startedAt', 'finishedAt', 'exitCode')}}
+
+    def start_run(self, destination_id):
+        """Build and launch the app on one listed destination in the background; one run per review at a time."""
+        if not isinstance(destination_id, str):
+            raise ValueError('Choose a destination')
+        path, log_path = self.run_paths()
+        with RUN_LOCK:
+            current = read_json(path, None)
+            if current and current['status'] == 'running' and self.run_process_alive(current):
+                raise ValueError(f'The app is still building for {current["destination"]["name"]}. Cancel that run first.')
+        destination = next((d for d in self.run_destinations() if d['id'] == destination_id), None)
+        if destination is None:
+            raise ValueError('That destination is no longer available. Reopen Run to refresh the list.')
+        command = [arg.replace('{destination}', destination['id']) for arg in self.config['run']['command']]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with RUN_LOCK:
+            with log_path.open('w') as log:
+                log.write(f'$ {shlex.join(command)}\n')
+                log.flush()
+                # Its own process group lets Cancel stop the build tools it starts too.
+                process = subprocess.Popen(command, cwd=self.repo, stdout=log, stderr=subprocess.STDOUT,
+                                           stdin=subprocess.DEVNULL, start_new_session=True)
+            run = {'id': secrets.token_hex(8), 'pid': process.pid, 'destination': destination, 'status': 'running',
+                   'startedAt': datetime.now(timezone.utc).isoformat()}
+            write_json(path, run)
+        threading.Thread(target=self.finish_run, args=(process, run['id']), daemon=True).start()
+        return run
+
+    def finish_run(self, process, run_id):
+        code = process.wait()
+        path = self.run_paths()[0]
+        with RUN_LOCK:
+            run = read_json(path, None)
+            if not run or run['id'] != run_id:
+                return
+            status = 'cancelled' if run.get('cancelled') else 'succeeded' if code == 0 else 'failed'
+            run.update(status=status, exitCode=code, finishedAt=datetime.now(timezone.utc).isoformat())
+            write_json(path, run)
+
+    def cancel_run(self):
+        path = self.run_paths()[0]
+        with RUN_LOCK:
+            run = read_json(path, None)
+            if not run or run['status'] != 'running' or not self.run_process_alive(run):
+                raise ValueError('Nothing is running for this review')
+            run['cancelled'] = True
+            write_json(path, run)
+            os.killpg(run['pid'], signal.SIGTERM)
+        return run
+
+    def run_log(self):
+        log = self.run_paths()[1]
+        if not log.is_file():
+            return b''
+        with log.open('rb') as file:
+            size = file.seek(0, os.SEEK_END)
+            file.seek(max(0, size - MAX_RUN_LOG))
+            return file.read()
 
     def tool_info(self):
         return {'title': self.config['title'], 'launcher': launcher(self.config),
@@ -1849,6 +2031,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def selected_review(self, url):
         if not hasattr(self.server, 'registry'):
+            self.server.review.media_secret = self.server.token.encode()
             return self.server.review  # Single-review test servers and older callers.
         query = parse_qs(url.query)
         session_id = query.get('review', [None])[0]
@@ -1856,6 +2039,7 @@ class Handler(BaseHTTPRequestHandler):
             request = next((r for r in queue_requests(self.server.registry.store) if r['id'] == merge_id), None)
             session_id = request.get('sessionId') if request else None
         review = self.server.registry.get(session_id)
+        review.media_secret = self.server.token.encode()
         with review.lock:
             latest = read_json(review.store / f'{review.session_id}.json', review.session)
             if (latest.get('iterations'), latest.get('pendingIteration'), latest.get('agent')) != (review.session.get('iterations'), review.session.get('pendingIteration'), review.session.get('agent')):
@@ -1863,11 +2047,61 @@ class Handler(BaseHTTPRequestHandler):
             review.session = latest
         return review
 
+    def send_movie(self, path):
+        """Stream a movie with byte ranges, which video elements need to seek and Safari needs to play at all."""
+        size = path.stat().st_size
+        start, end, status = 0, size - 1, 200
+        if requested := self.headers.get('Range'):
+            match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested.strip())
+            if match and match.group(1):
+                start, end = int(match.group(1)), min(int(match.group(2) or size - 1), size - 1)
+            elif match and match.group(2):
+                start = max(0, size - int(match.group(2)))
+            if not match or not any(match.groups()) or start > end:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            status = 206
+        self.send_response(status)
+        self.send_header('Content-Type', DEMO_MEDIA_TYPE)
+        self.send_header('Content-Length', str(end - start + 1))
+        self.send_header('Accept-Ranges', 'bytes')
+        if status == 206:
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        # A demo ID always names the same movie.
+        self.send_header('Cache-Control', 'private, max-age=86400')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.end_headers()
+        try:
+            with path.open('rb') as file:
+                file.seek(start)
+                remaining = end - start + 1
+                while remaining and (chunk := file.read(min(1 << 20, remaining))):
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Players abandon ranges whenever someone seeks.
+
     def do_GET(self):
         if not self.authorized():
             return
         try:
             url = urlparse(self.path)
+            if url.path == '/demo':
+                query = parse_qs(url.query)
+                try:
+                    movie = self.selected_review(url).demo_file(query.get('id', [''])[0], query.get('key', [''])[0])
+                except PermissionError as error:
+                    self.send(403, {'error': str(error)})
+                    return
+                except FileNotFoundError as error:
+                    self.send(404, {'error': str(error)})
+                    return
+                self.send_movie(movie)
+                return
             iteration = parse_qs(url.query).get('iteration', [None])[0]
             if url.path == '/' or url.path[1:] in WEB_ASSETS[1:]:
                 name = 'index.html' if url.path == '/' else url.path[1:]
@@ -1890,6 +2124,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, review.feedback())
             elif url.path == '/api/merge-progress':
                 self.send(200, review.merge_progress(parse_qs(url.query).get('merge', [None])[0]))
+            elif url.path == '/api/run/destinations':
+                self.send(200, {'destinations': review.run_destinations()})
+            elif url.path == '/api/run/log':
+                self.send(200, review.run_log(), 'text/plain; charset=utf-8')
             elif url.path == '/api/merge-log':
                 self.send(200, review.merge_log_path(parse_qs(url.query).get('merge', [None])[0]).read_bytes(), 'text/plain; charset=utf-8')
             elif url.path == '/api/file':
@@ -1965,6 +2203,18 @@ class Handler(BaseHTTPRequestHandler):
                     review.start_ranking()
                 self.send(200, review.state(iteration, parse_qs(url.query).get('merge', [None])[0]))
                 return
+            if route in ('/api/run', '/api/run/cancel'):
+                # Listing destinations can take seconds, so it runs outside the review lock.
+                if parse_qs(url.query).get('merge'):
+                    raise ValueError('Saved merge views are read-only')
+                if route == '/api/run':
+                    if review.job['status'] == 'running':
+                        raise ValueError('Wait for the merge to finish')
+                    review.start_run(body.get('destination'))
+                else:
+                    review.cancel_run()
+                self.send(200, review.state(iteration))
+                return
             with review.lock:
                 if route == '/api/feedback':
                     self.send(200, review.save_feedback(body.get('text'), body.get('file'), iteration))
@@ -1984,6 +2234,7 @@ class Handler(BaseHTTPRequestHandler):
                 if route == '/api/simulator':
                     self.send(200, {'simulator': review.open_simulator()})
                     return
+
                 if route == '/api/review/send':
                     if parse_qs(url.query).get('merge'):
                         raise ValueError('Saved merge views are read-only')
@@ -2077,10 +2328,13 @@ def main():
     parser.add_argument('--title', default='')
     parser.add_argument('--description-file', type=Path)
     parser.add_argument('--file', type=Path, help='Movie for --add-demo')
+    parser.add_argument('--appearance', choices=APPEARANCES, help='Appearance for --record-demo (default: [demos] appearance, dark)')
     args = parser.parse_args()
     if args.base.startswith('-') or not re.fullmatch(r'[A-Za-z0-9_./-]+', args.base):
         parser.error('Use a local branch name for --base')
-    root = subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=args.repo, capture_output=True, text=True, check=True).stdout.strip()
+    if args.appearance and not args.record_demo:
+        parser.error('--appearance applies to --record-demo')
+    root =subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=args.repo, capture_output=True, text=True, check=True).stdout.strip()
     common = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
     config = load_config(root)
     store = Path(common) / config['name']
@@ -2116,8 +2370,8 @@ def main():
             return
         if args.record_demo or args.stop_demo or args.add_demo or args.remove_demo or args.skip_demo or args.demos:
             if args.record_demo:
-                recording = review.start_demo_recording(args.record_demo)
-                print(f'Recording "{recording["title"]}" on {recording["device"]}. Run the scenario, then stop with: {launcher(config)} --base {args.base} --stop-demo')
+                recording = review.start_demo_recording(args.record_demo, args.appearance)
+                print(f'Recording "{recording["title"]}" on {recording["device"]} in {recording["appearance"]} appearance. Run the scenario, then stop with: {launcher(config)} --base {args.base} --stop-demo')
             elif args.stop_demo or args.add_demo:
                 if args.add_demo and not args.file:
                     parser.error('--add-demo needs --file PATH')

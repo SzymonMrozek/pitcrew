@@ -25,6 +25,7 @@
 <button id="feedback">Tool feedback</button>
 <button id="queue">Merge queue</button>
 <button id="simulator" disabled>Open Simulator</button>
+<button id="run" hidden>Run…</button>
 <button id="send-review" title="Send your new comments to the agent conversation that wrote this change">Send to agent</button>
 <button id="approve" class="primary">Approve & merge</button>
 </div>
@@ -107,6 +108,14 @@
 <div class="feedback-inbox-heading"><h3>Repository feedback inbox</h3><button id="feedback-export" type="button">Export all feedback</button></div>
 <div class="tabs feedback-tabs" role="tablist" aria-label="Feedback status"><button type="button" role="tab" data-feedback-tab="open" class="selected">Open <span id="feedback-open-count"></span></button><button type="button" role="tab" data-feedback-tab="implemented">Implemented <span id="feedback-implemented-count"></span></button></div>
 <p id="feedback-empty" class="muted">No open tool feedback.</p><div id="feedback-list"></div>
+</dialog>
+<dialog id="run-dialog" aria-labelledby="run-heading">
+<div class="dialog-heading"><h2 id="run-heading">Run the app</h2><button type="button" data-close aria-label="Close run">×</button></div>
+<p class="muted">Builds this worktree and launches it on the device or simulator you choose.</p>
+<div id="run-status" role="status" hidden><span id="run-summary"></span><button id="run-cancel" type="button" hidden>Cancel</button></div>
+<pre id="run-log" tabindex="0" aria-label="Run output" hidden></pre>
+<div class="run-heading"><h3>Destinations</h3><button id="run-reload" type="button">Refresh list</button></div>
+<div id="run-destinations" aria-live="polite"></div>
 </dialog>
 <dialog id="search-dialog" aria-labelledby="search-heading">
 <div class="dialog-heading"><h2 id="search-heading">Search code</h2><button type="button" data-close aria-label="Close search">×</button></div>

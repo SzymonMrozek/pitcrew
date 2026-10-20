@@ -32,6 +32,7 @@ originating agent. A single repository-wide queue serializes merges.
 | Pending approval snapshots | Private commits under `refs/<name>/queue/…` | Other agents can diff or merge them |
 | Server port and token | `shared-server.json` | Links posted in chats keep working across restarts |
 | Demo recordings | `<git-common-dir>/<name>/demos/<review>/` | Large binaries stay out of the diff, the approval and Git objects, and outlive the worktree |
+| Last **Run** status and output | `<git-common-dir>/<name>/runs/` | Survives a server restart, so the page can still explain what happened |
 
 ## Invariants
 
@@ -132,6 +133,14 @@ Each of these cost real debugging time.
   own session so it outlives the agent's command, its PID is checked against
   its command line before it's signalled, and a demo is kept only after its
   movie header parses.
+- **Video elements can't send headers.** The API token travels in a header,
+  so a `<video>` can't use it. Demo URLs carry an HMAC of the review and demo
+  IDs, keyed by the token; the token itself never enters a URL. The movie
+  endpoint must answer byte ranges: Safari won't play a video without them,
+  and no browser can seek.
+- **A run outlives the server that started it.** A build runs in its own process
+  group, so a restarted server can't learn its exit status. The page reports
+  it as ended with an unknown result instead of guessing.
 - **The browser can't tell a script-driven scroll from a real one.**
   Programmatic scrolling and zero-distance pointer events don't count as input.
 

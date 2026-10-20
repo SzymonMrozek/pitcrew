@@ -52,8 +52,10 @@ review --record-demo "<scenario, e.g. Reorder from order history>"
 review --stop-demo
 ```
 
-Start each recording on a stable screen, then pause briefly at the end so the
-result is visible. If later changes alter what a demo shows, record it again
+Recordings switch the simulator to dark appearance and restore it afterwards;
+add `--appearance light` when a scenario needs the light appearance. Start each
+recording on a stable screen, then pause briefly at the end so the result is
+visible. If later changes alter what a demo shows, record it again
 and delete the outdated one with `review --remove-demo <id>`. When files on the
 configured UI paths change without any visible effect, run
 `review --skip-demo "<reason>"` instead. List the recorded scenarios in your

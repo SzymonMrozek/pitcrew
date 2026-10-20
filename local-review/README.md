@@ -22,7 +22,10 @@ build step, no dependency to install, and no hosting.
 - **Per-interaction history:** each user request to an agent is saved as an
   immutable before/after snapshot you can review on its own.
 - **Demo recordings:** agents record the running app on the worktree's
-  simulator, one movie per scenario, and you play them in QuickTime Player.
+  simulator, one movie per scenario, and you play them on the page or in
+  QuickTime Player.
+- **Run:** build and launch the worktree's app on a device or simulator you
+  pick, without leaving the review.
 - **Code navigation:** search, jump to definition and callers, for Swift.
 - **A merge queue** with private snapshots of pending approvals. Agents starting
   new work can see what's about to land and build on it.
@@ -35,7 +38,7 @@ build step, no dependency to install, and no hosting.
 - [Worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) for merging, or
   another merge command you configure
 - Codex CLI or Claude Code, to hand approvals to
-- macOS with Xcode, only for **Open Simulator**
+- macOS with Xcode, only for **Open Simulator** and demo recording
 
 ## Run it
 
@@ -279,13 +282,35 @@ metadata file, for example one written by
 [worktree-simulator](../worktree-simulator). It never falls back to another
 device.
 
+## Run
+
+**Run…** builds the worktree and launches it on a device or simulator you
+choose, so you can try a change on your own phone before approving it. The
+repository supplies two commands in `[run]`:
+
+```toml
+[run]
+# Prints a JSON array of {id, name, kind, detail}.
+destinations = ["scripts/run-app.py", "--list-destinations"]
+# Runs in the worktree; {destination} becomes the chosen id.
+command = ["make", "run", "DESTINATION={destination}"]
+```
+
+The dialog lists what `destinations` prints each time it opens. Choosing one
+starts `command` in the background and shows its output. A run only accepts a
+destination the listing command returned, runs one at a time per review, and
+**Cancel** stops its whole process group. The last run's status and output are
+kept in `<git-common-dir>/<name>/runs/`. Without `[run]`, the button stays
+hidden.
+
 ## Demo recordings
 
 A diff can't show that a screen works. For changes people will see, the agent
 attaches demo recordings: one movie per scenario, such as the happy path, the
-empty state or a failure. The **Demos** tab lists them with their length, size,
-device and the interaction that recorded them. **Open in QuickTime Player**
-plays one; **Open all** opens each in its own window.
+empty state or a failure. The **Demos** tab plays each one in a small player
+on the page, with its length, size, device, appearance and the interaction that
+recorded it. **Open in QuickTime Player** plays one at full size; **Open all**
+opens each in its own window.
 
 Agents record on the worktree's simulator, the same device **Open Simulator**
 selects:
@@ -296,8 +321,11 @@ review --record-demo "Reorder from order history"
 review --stop-demo
 ```
 
-`--record-demo` starts `simctl io recordVideo` (H.264) in the background and
-returns once recording has started. `--stop-demo` interrupts it so it finishes
+`--record-demo` switches the simulator to dark appearance, starts
+`simctl io recordVideo` (H.264) in the background and returns once recording
+has started. Pass `--appearance light` for a light scenario, or set
+`[demos] appearance = "light"` to change the default. Stopping the recording
+puts the simulator back in the appearance it had. `--stop-demo` interrupts it so it finishes
 the movie, checks the file has a complete movie header, and attaches it. Other
 commands:
 
@@ -349,7 +377,8 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |
 | `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
-| `[demos]` | none | `paths` whose changes should come with a demo recording |
+| `[demos]` | dark, no paths | `paths` whose changes should come with a demo recording, and the recording `appearance` |
+| `[run]` | none | `destinations` and `command` for **Run…** |
 
 ## Storage and security
 
@@ -359,7 +388,9 @@ worktrees and survive worktree removal. To stop the server, use the PID in
 `shared-server.json` there.
 
 The server binds to `127.0.0.1` only and checks `Host` and `Origin`. It
-authenticates with a token kept in the URL fragment, sent as a header. Code and
+authenticates with a token kept in the URL fragment, sent as a header. A video
+element can't send that header, so each demo's URL carries its own key, derived
+from the token, that only plays that movie. Code and
 comments are rendered as text. Anyone with a review URL can use that review,
 so keep it local.
 

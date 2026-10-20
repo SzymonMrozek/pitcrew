@@ -104,6 +104,10 @@ function updateChrome() {
   run(updateMergeProgress);
   $('#simulator').disabled = simulatorOpening || !state.simulator || state.job.status === 'running' || state.job.status === 'merged';
   $('#simulator').title = state.simulator ? `Open ${state.simulator.name}` : 'No dedicated simulator is assigned to this worktree';
+  $('#run').hidden = !state.run;
+  $('#run').disabled = !state.run?.available || state.job.status === 'running' || state.job.status === 'merged';
+  $('#run').textContent = state.run?.last?.status === 'running' ? 'Running…' : 'Run…';
+  $('#run').title = state.run?.available ? "Build and launch this worktree's app on a device or simulator" : 'The worktree for this review is gone or belongs to another branch';
   $('#refresh').disabled = state.job.status === 'running' || state.job.status === 'merged';
   if (state.ranking?.status === 'done' && state.ranking.fallbacks) $('#ranking').textContent += ` · ${state.ranking.fallbacks} fallback`;
   const files = visibleFiles();
@@ -569,24 +573,46 @@ async function openDemos(ids) {
   const result = await api('demos/open', {ids});
   notice(`Opened ${result.opened === 1 ? 'the demo' : `${result.opened} demos`} in QuickTime Player.`);
 }
+// Players survive re-renders, so polling for a running recording never interrupts playback.
+const demoPlayers = new Map();
+function demoPlayer(demo) {
+  if (!demo.available || !demo.src) return el('div', 'demo-missing', demo.available ? 'Reload the page to play this demo here.' : 'The recording file is missing from the review store.');
+  let video = demoPlayers.get(demo.src);
+  if (!video) {
+    video = el('video');
+    video.controls = true; video.preload = 'metadata'; video.playsInline = true; video.src = demo.src;
+    demoPlayers.set(demo.src, video);
+  }
+  video.title = demo.title;
+  return video;
+}
 function renderDemos() {
   feedObserver?.disconnect(); ++renderVersion;
   const demos = state.demos, items = demos.items, main = $('#content');
-  main.replaceChildren(el('h1', '', 'Demo recordings'), el('p', 'muted', 'Recordings of the running app that show this change working. They open in QuickTime Player and are kept outside the diff, after the worktree is removed too.'));
+  main.replaceChildren(el('h1', '', 'Demo recordings'), el('p', 'muted', 'Recordings of the running app that show this change working. Play them here or in QuickTime Player. They are kept outside the diff, after the worktree is removed too.'));
   if (demos.recording) main.append(el('div', 'demo-note', `Recording “${demos.recording.title}” on ${demos.recording.device}…`));
   if (demoMissing(demos)) main.append(el('div', 'demo-note attention', `${uiChanges(demos)} the app UI, but no demo is attached. Ask the agent to record each scenario before you approve.`));
   else if (demos.skipped && !demos.total) main.append(el('div', 'demo-note', `No demo recorded. The agent's reason: ${demos.skipped.reason}`));
+  const shown = new Set(items.map(d => d.src));
+  for (const src of demoPlayers.keys()) if (!shown.has(src)) demoPlayers.delete(src);
   if (!items.length) {main.append(el('div', 'empty', demos.total ? 'No demos were recorded during this scope. Full diff lists every demo.' : 'No demo recordings yet.')); return;}
-  if (items.length > 1) {const all = button(`Open all ${items.length} in QuickTime Player`, () => openDemos(items.filter(d => d.available).map(d => d.id))); all.disabled = !demos.canOpen || !items.some(d => d.available); main.append(all);}
-  main.append(...items.map(demo => {
-    const row = el('section', 'demo'), info = el('div', 'demo-info');
-    info.append(el('strong', '', demo.title), el('small', '', [formatDuration(demo.durationSeconds), formatBytes(demo.bytes), demoInteraction(demo), demo.device, new Date(demo.recordedAt).toLocaleString()].filter(Boolean).join(' · ')));
-    const play = button('Open in QuickTime Player', () => openDemos([demo.id]));
-    play.disabled = !demos.canOpen || !demo.available;
-    play.title = !demo.available ? 'The recording file is missing from the review store' : demos.canOpen ? `Play ${demo.title}` : 'QuickTime Player requires macOS';
-    row.append(info, play);
-    return row;
+  if (items.length > 1) {
+    const actions = el('div', 'demo-actions'), all = button(`Open all ${items.length} in QuickTime Player`, () => openDemos(items.filter(d => d.available).map(d => d.id)));
+    all.disabled = !demos.canOpen || !items.some(d => d.available);
+    actions.append(all); main.append(actions);
+  }
+  const grid = el('div', 'demo-grid');
+  grid.append(...items.map(demo => {
+    const card = el('section', 'demo'), info = el('div', 'demo-info');
+    const appearance = demo.appearance && demo.appearance[0].toUpperCase() + demo.appearance.slice(1);
+    info.append(el('strong', '', demo.title), el('small', '', [formatDuration(demo.durationSeconds), formatBytes(demo.bytes), demoInteraction(demo), demo.device, appearance, new Date(demo.recordedAt).toLocaleString()].filter(Boolean).join(' · ')));
+    const quickTime = button('Open in QuickTime Player', () => openDemos([demo.id]), 'quicktime');
+    quickTime.disabled = !demos.canOpen || !demo.available;
+    quickTime.title = !demo.available ? 'The recording file is missing from the review store' : demos.canOpen ? `Play ${demo.title} in QuickTime Player` : 'QuickTime Player requires macOS';
+    card.append(demoPlayer(demo), info, quickTime);
+    return card;
   }));
+  main.append(grid);
 }
 function renderJob() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 100; const log = el('pre', 'log', state.job.log); main.replaceChildren(el('div', 'merge-status', state.job.status === 'merged' ? `Merged into ${state.target}. Worktrunk cleanup has been requested.` : state.job.status === 'failed' ? 'Merge stopped. Your changes are available; inspect the log.' : 'Validating and merging…'), log); if (state.job.status === 'failed') main.append(button('Return to review', () => load(true))); if (atEnd) main.scrollTop = main.scrollHeight;}
 // The next unreviewed file below, wrapping around to the top of the shown list.
@@ -610,6 +636,57 @@ $('#simulator').onclick = () => run(async () => {
   try {const result = await api('simulator', {}); notice(`Opened ${result.simulator.name}.`);}
   finally {simulatorOpening = false; updateChrome();}
 });
+let runDestinations;
+function runSummary(last) {
+  const name = last.destination.name;
+  return {running: `Building and launching on ${name}…`, succeeded: `Launched on ${name}.`, cancelled: `Cancelled the run on ${name}.`,
+          failed: `The run on ${name} failed with exit status ${last.exitCode}. The output below shows why.`,
+          ended: `The run on ${name} ended while the review server restarted, so its result is unknown.`}[last.status] || last.status;
+}
+function renderRunDestinations() {
+  const list = $('#run-destinations'), running = state.run?.last?.status === 'running';
+  if (!runDestinations) return;
+  if (!runDestinations.length) {list.replaceChildren(el('p', 'muted', 'No destinations are available. Connect a device or create a simulator, then refresh the list.')); return;}
+  list.replaceChildren(...runDestinations.map(destination => {
+    const node = button('', () => startRun(destination), 'run-destination'), text = el('span');
+    text.append(el('strong', '', destination.name));
+    if (destination.detail) text.append(el('small', '', destination.detail));
+    node.append(text);
+    if (destination.kind) node.append(el('em', '', destination.kind));
+    node.disabled = running || !state.run?.available;
+    node.title = running ? 'Wait for the current run to finish, or cancel it' : `Build and launch on ${destination.name}`;
+    return node;
+  }));
+}
+async function loadRunDestinations() {
+  runDestinations = null;
+  $('#run-destinations').replaceChildren(el('p', 'muted', 'Looking for devices and simulators…'));
+  try {runDestinations = (await api('run/destinations')).destinations; renderRunDestinations();}
+  catch (error) {$('#run-destinations').replaceChildren(el('p', 'muted', error.message));}
+}
+async function updateRunLog() {
+  const log = $('#run-log');
+  if (!state.run?.last) {log.hidden = true; return;}
+  const response = await fetch('/api/' + scopedPath('run/log'), {headers: {'X-Review-Token': token || ''}});
+  if (!response.ok) return;
+  const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40, text = await response.text();
+  log.hidden = false;
+  if (log.textContent !== text) {log.textContent = text; if (atEnd) log.scrollTop = log.scrollHeight;}
+}
+function renderRun() {
+  const last = state.run?.last, status = $('#run-status');
+  status.hidden = !last;
+  if (last) {status.className = last.status; $('#run-summary').textContent = runSummary(last); $('#run-cancel').hidden = last.status !== 'running';}
+  renderRunDestinations();
+  if ($('#run-dialog').open) run(updateRunLog);
+}
+async function startRun(destination) {
+  state = await api('run', {destination: destination.id});
+  updateChrome(); renderRun();
+}
+$('#run').onclick = () => {$('#run-dialog').showModal(); renderRun(); run(loadRunDestinations);};
+$('#run-reload').onclick = () => run(loadRunDestinations);
+$('#run-cancel').onclick = () => run(async () => {state = await api('run/cancel', {}); updateChrome(); renderRun();});
 $('#rank').onclick = () => run(async () => {state = await api('rank', {}); updateChrome();});
 for (const id of ['search', 'show-hidden', 'only-unviewed']) $('#' + id).addEventListener(id === 'search' ? 'input' : 'change', () => run(() => load()));
 $('#mode').onchange = () => run(async () => {state = await api('settings', {diffMode: $('#mode').value}); await load();});
@@ -889,7 +966,7 @@ $('#merge-form').onsubmit = event => {
   });
 };
 document.addEventListener('keydown', event => {if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || event.metaKey || event.ctrlKey || event.altKey) return; run(async () => {const files = visibleFiles(), index = files.findIndex(f => f.id === active); if (event.key.toLowerCase() === 'j' && files[index + 1]) await selectFile(files[index + 1].id); if (event.key.toLowerCase() === 'k' && files[index - 1]) await selectFile(files[index - 1].id); if (event.key.toLowerCase() === 'v' && active) await markAndNext(); if (event.key.toLowerCase() === 's') {tab = tab === 'snapshot' ? 'all' : 'snapshot'; await load();}});});
-setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running' || state.demos?.recording)) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; const demos = JSON.stringify(state.demos); state = nextState; updateChrome(); if (state.job.status !== 'idle') renderJob(); else if (tab === 'demos' && JSON.stringify(state.demos) !== demos) renderDemos();});}, 1500);
+setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running' || state.demos?.recording || state.run?.last?.status === 'running')) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; const demos = JSON.stringify(state.demos), runStatus = state.run?.last?.status; state = nextState; updateChrome(); if ($('#run-dialog').open || runStatus !== state.run?.last?.status) renderRun(); if (runStatus === 'running' && state.run?.last?.status !== 'running') notice(runSummary(state.run.last)); if (state.job.status !== 'idle') renderJob(); else if (tab === 'demos' && JSON.stringify(state.demos) !== demos) renderDemos();});}, 1500);
 run(loadFeedback);
 run(async () => {await load(); if (!state.jevAvailable) notice('Jev is unavailable without JEV_API_KEY in the review server environment. Files use clearly labeled fallback scores.');});
 

@@ -357,13 +357,13 @@ test('only Swift method declarations become caller links', () => {
   assert.equal(declaration.title, 'Click to show callers');
 });
 
-test('demos tab lists recordings for QuickTime and flags UI changes without one', async () => {
+test('demos tab plays recordings inline, keeps QuickTime as an option and flags UI changes without one', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const demos = source.slice(source.indexOf('// Changed UI paths with neither'), source.indexOf('function renderJob('));
   const node = (tag, className = '', text) => ({tag, className, textContent: text, disabled: false, children: [], append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;}});
   const main = node('main'), requests = [], notices = [];
   const context = vm.createContext({
-    $: () => main, el: node, button: (text, action) => ({...node('button', '', text), action}), feedObserver: null, renderVersion: 0,
+    $: () => main, el: node, button: (text, action, className) => ({...node('button', className, text), action}), feedObserver: null, renderVersion: 0,
     api: async (path, body) => {requests.push([path, body]); return {opened: body.ids.length};}, notice: text => notices.push(text),
     state: {iterations: [{id: 'one', number: 1}], pendingIteration: {id: 'two'}, demos: {uiPaths: ['App/Screen.swift'], total: 0, skipped: null, recording: null, canOpen: true, items: []}},
   });
@@ -377,23 +377,73 @@ test('demos tab lists recordings for QuickTime and flags UI changes without one'
   assert.equal(context.demoMissing(context.state.demos), false);
   context.renderDemos();
   assert.match(texts()[2], /The agent's reason: Only renames a type\./);
-  const demo = (id, iteration, available = true) => ({id, iteration, available, title: `Demo ${id}`, durationSeconds: 75.4, bytes: 2_400_000, device: 'App feature', recordedAt: '2026-10-20T10:00:00Z'});
+  const demo = (id, iteration, available = true) => ({id, iteration, available, src: `/demo?id=${id}`, title: `Demo ${id}`, durationSeconds: 75.4, bytes: 2_400_000, device: 'App feature', appearance: 'dark', recordedAt: '2026-10-20T10:00:00Z'});
   context.state.demos = {...context.state.demos, total: 3, recording: {title: 'Error state', device: 'App feature'}, items: [demo('a', 'one'), demo('b', 'two'), demo('c', null, false)]};
   context.renderDemos();
   assert.equal(texts()[2], 'Recording “Error state” on App feature…');
-  const all = main.children[3], rows = main.children.slice(4);
+  const all = main.children[3].children[0], cards = main.children[4].children;
   assert.equal(all.textContent, 'Open all 3 in QuickTime Player');
-  assert.deepEqual(rows.map(row => row.children[0].children[0].textContent), ['Demo a', 'Demo b', 'Demo c']);
-  assert.match(rows[0].children[0].children[1].textContent, /^1:15 · 2\.4 MB · Iteration 1 · App feature · /);
-  assert.match(rows[1].children[0].children[1].textContent, /Current interaction/);
-  assert.match(rows[2].children[0].children[1].textContent, /Outside recorded interactions/);
-  assert.deepEqual(rows.map(row => row.children[1].disabled), [false, false, true]);
+  const [player, info, quickTime] = [0, 1, 2].map(index => cards.map(card => card.children[index]));
+  assert.deepEqual(player.map(item => [item.tag, item.src]), [['video', '/demo?id=a'], ['video', '/demo?id=b'], ['div', undefined]]);
+  assert.equal(player[0].controls && player[0].preload, 'metadata');
+  assert.match(player[2].textContent, /missing from the review store/);
+  assert.deepEqual(info.map(item => item.children[0].textContent), ['Demo a', 'Demo b', 'Demo c']);
+  assert.match(info[0].children[1].textContent, /^1:15 · 2\.4 MB · Iteration 1 · App feature · Dark · /);
+  assert.match(info[1].children[1].textContent, /Current interaction/);
+  assert.match(info[2].children[1].textContent, /Outside recorded interactions/);
+  assert.deepEqual(quickTime.map(item => [item.textContent, item.disabled]), [['Open in QuickTime Player', false], ['Open in QuickTime Player', false], ['Open in QuickTime Player', true]]);
+  context.renderDemos();
+  assert.equal(main.children[4].children[0].children[0], player[0], 'Re-rendering keeps a playing video element');
   await all.action();
-  await rows[1].children[1].action();
+  await quickTime[1].action();
   assert.deepEqual(JSON.parse(JSON.stringify(requests)), [['demos/open', {ids: ['a', 'b']}], ['demos/open', {ids: ['b']}]]);
   assert.deepEqual(notices, ['Opened 2 demos in QuickTime Player.', 'Opened the demo in QuickTime Player.']);
   context.state.demos = {...context.state.demos, canOpen: false, items: [demo('a', 'one')]};
   context.renderDemos();
-  assert.equal(main.children.at(-1).children[1].disabled, true);
-  assert.equal(main.children.at(-1).children[1].title, 'QuickTime Player requires macOS');
+  const only = main.children.at(-1).children[0];
+  assert.equal(only.children[0], player[0]);
+  assert.equal(only.children[2].disabled, true);
+  assert.equal(only.children[2].title, 'QuickTime Player requires macOS');
+  context.state.demos = {...context.state.demos, items: [demo('b', 'two')]};
+  context.renderDemos();
+  context.state.demos = {...context.state.demos, items: [demo('a', 'one')]};
+  context.renderDemos();
+  assert.notEqual(main.children.at(-1).children[0].children[0], player[0], 'Players of removed demos are released');
+});
+
+test('run dialog lists destinations, starts one and summarizes the result', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const runCode = source.slice(source.indexOf('let runDestinations;'), source.indexOf("$('#run').onclick"));
+  const node = (tag, className = '', text) => ({tag, className, textContent: text, disabled: false, hidden: false, children: [], append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;}});
+  const nodes = {'#run-destinations': node('div'), '#run-status': node('div'), '#run-summary': node('span'), '#run-cancel': node('button'), '#run-dialog': {open: false}, '#run-log': node('pre')};
+  const requests = [];
+  const destinations = [{id: 'PHONE', name: 'My iPhone', kind: 'device', detail: 'iOS 27.0'}, {id: 'SIM', name: 'Simulator', kind: '', detail: ''}];
+  const context = vm.createContext({
+    $: selector => nodes[selector], el: node, button: (text, action, className) => ({...node('button', className, text), action}), run: action => action(), updateChrome() {},
+    api: async (path, body) => {requests.push([path, body]); if (path === 'run/destinations') return {destinations}; return {...context.state, run: {available: true, last: {destination: destinations[0], status: 'running'}}};},
+    state: {run: {available: true, last: null}},
+  });
+  vm.runInContext(runCode, context);
+  await context.loadRunDestinations();
+  const list = () => nodes['#run-destinations'].children;
+  assert.deepEqual(list().map(item => [item.children[0].children.map(child => child.textContent), item.children[1]?.textContent, item.disabled]),
+                   [[['My iPhone', 'iOS 27.0'], 'device', false], [['Simulator'], undefined, false]]);
+  await list()[0].action();
+  assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1))), ['run', {destination: 'PHONE'}]);
+  assert.equal(nodes['#run-summary'].textContent, 'Building and launching on My iPhone…');
+  assert.equal(nodes['#run-cancel'].hidden, false);
+  assert.deepEqual(list().map(item => item.disabled), [true, true], 'One run at a time');
+  const last = status => ({destination: destinations[0], status, exitCode: status === 'failed' ? 65 : 0});
+  assert.equal(context.runSummary(last('succeeded')), 'Launched on My iPhone.');
+  assert.match(context.runSummary(last('failed')), /failed with exit status 65/);
+  assert.match(context.runSummary(last('ended')), /result is unknown/);
+  context.state.run = {available: true, last: last('succeeded')};
+  context.renderRun();
+  assert.deepEqual([nodes['#run-status'].className, nodes['#run-cancel'].hidden, list()[0].disabled], ['succeeded', true, false]);
+  context.api = async () => ({destinations: []});
+  await context.loadRunDestinations();
+  assert.match(list()[0].textContent, /No destinations are available/);
+  context.api = async () => {throw new Error('Running the app is not configured.');};
+  await context.loadRunDestinations();
+  assert.equal(list()[0].textContent, 'Running the app is not configured.');
 });
