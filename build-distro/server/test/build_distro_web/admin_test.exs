@@ -2,12 +2,40 @@ defmodule BuildDistroWeb.AdminTest do
   use BuildDistroWeb.ConnCase
 
   setup %{conn: conn} do
-    %{conn: conn |> post(~p"/admin/login", %{"password" => "admin"}) |> recycle()}
+    %{conn: sign_in_admin(conn)}
   end
 
-  test "the admin password is required" do
+  test "admin pages need a signed-in admin" do
     assert {:error, {:redirect, %{to: "/admin/login"}}} = live(build_conn(), ~p"/admin")
-    assert build_conn() |> post(~p"/admin/login", %{"password" => "nope"}) |> html_response(401)
+  end
+
+  test "public links show once and can be revoked", %{conn: conn} do
+    %{project: project} = project_fixture()
+    {:ok, view, _} = live(conn, ~p"/admin/projects/#{project.slug}")
+
+    html = view |> element("button", "New Main link") |> render_click()
+    assert [_, path] = Regex.run(~r{http://[^/]+(/#{project.slug}/p/pub_[\w-]+)}, html)
+    assert {:ok, _, _} = live(build_conn(), path)
+
+    [link] = BuildDistro.Projects.list_public_links(project)
+    view |> element("button[phx-value-id='#{link.id}']", "Revoke") |> render_click()
+    assert {:error, {:redirect, %{to: "/"}}} = live(build_conn(), path)
+  end
+
+  test "settings hold the main branch and tooling rules", %{conn: conn} do
+    %{project: project} = project_fixture()
+    {:ok, view, _} = live(conn, ~p"/admin/projects/#{project.slug}")
+
+    view
+    |> form("#settings-form",
+      settings: %{main_branch: "trunk", tooling_types: "chore, ci", tooling_scopes: "infra"}
+    )
+    |> render_submit()
+
+    project = BuildDistro.Projects.get_project!(project.id)
+
+    assert {project.main_branch, project.tooling_types, project.tooling_scopes} ==
+             {"trunk", "chore, ci", "infra"}
   end
 
   test "creating a project shows its API key once", %{conn: conn} do

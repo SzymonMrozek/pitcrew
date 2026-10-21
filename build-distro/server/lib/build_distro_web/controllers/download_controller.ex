@@ -2,9 +2,11 @@ defmodule BuildDistroWeb.DownloadController do
   use BuildDistroWeb, :controller
 
   alias BuildDistro.{Builds, Storage}
+  alias BuildDistroWeb.Viewer
 
   def show(conn, %{"number" => number, "kind" => kind}) do
-    with %{state: "ready"} = build <- fetch(conn, number),
+    with true <- Viewer.downloads?(conn.assigns.viewer),
+         %{state: "ready"} = build <- fetch(conn, number),
          %{} = artifact <- Builds.artifact(build, kind) do
       redirect(conn,
         external: Storage.presigned_download_url(artifact.object_key, 600, artifact.filename)
@@ -27,9 +29,13 @@ defmodule BuildDistroWeb.DownloadController do
     end
   end
 
+  # Public links only reach builds of their own bucket.
   defp fetch(conn, number) do
-    case Integer.parse(number) do
-      {number, ""} -> Builds.get_build(conn.assigns.project, number)
+    with {number, ""} <- Integer.parse(number),
+         %{} = build <- Builds.get_build(conn.assigns.project, number),
+         true <- Viewer.can_see?(conn.assigns.viewer, build) do
+      build
+    else
       _ -> nil
     end
   end

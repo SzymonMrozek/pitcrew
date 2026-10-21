@@ -47,6 +47,11 @@ public struct Build: Decodable, Equatable, Sendable {
     public var id: Int
     public var number: Int
     public var state: String
+    public var bucket: String?
+    public var mainBranch: String?
+    /// For main builds: the commit of the previous ready main build, where
+    /// this build's changelog starts.
+    public var previousCommitSha: String?
     public var url: String
     public var failureReason: String?
     public var displayName: String?
@@ -84,6 +89,21 @@ struct StartRequest: Encodable {
         var kind: String
         var size: Int
         var filename: String
+    }
+}
+
+/// The commits a build adds, as the server stores them.
+public struct Changelog: Encodable, Equatable, Sendable {
+    public var kind: String
+    public var base: String?
+    public var head: String
+    public var commits: [Commit]
+    public var truncated: Bool
+
+    public struct Commit: Encodable, Equatable, Sendable {
+        public var sha: String
+        public var message: String
+        public var author: String?
     }
 }
 

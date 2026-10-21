@@ -3,7 +3,8 @@ defmodule BuildDistro.Projects do
 
   import Ecto.Query
 
-  alias BuildDistro.Projects.{ApiKey, Invite, Project}
+  alias BuildDistro.Builds.Build
+  alias BuildDistro.Projects.{ApiKey, Invite, Project, PublicLink}
   alias BuildDistro.{Repo, Secrets}
 
   def list_projects, do: Repo.all(from p in Project, order_by: p.name)
@@ -126,6 +127,60 @@ defmodule BuildDistro.Projects do
         true
     end
   end
+
+  ## Public links
+
+  def list_public_links(project) do
+    Repo.all(
+      from l in PublicLink,
+        where: l.project_id == ^project.id and is_nil(l.revoked_at),
+        order_by: [asc: l.bucket, desc: l.inserted_at]
+    )
+  end
+
+  @doc "Creates a link that shows one bucket to anyone who has it. The token is returned only here."
+  def create_public_link(project, bucket) do
+    if bucket in Build.buckets() do
+      token = Secrets.generate_token("pub")
+
+      %PublicLink{project_id: project.id, bucket: bucket, token_hash: Secrets.hash_token(token)}
+      |> Repo.insert()
+      |> case do
+        {:ok, link} -> {:ok, link, token}
+        error -> error
+      end
+    else
+      {:error, :invalid_bucket}
+    end
+  end
+
+  def revoke_public_link(project, link_id) do
+    from(l in PublicLink,
+      where: l.id == ^link_id and l.project_id == ^project.id and is_nil(l.revoked_at)
+    )
+    |> Repo.update_all(set: [revoked_at: DateTime.utc_now()])
+
+    :ok
+  end
+
+  def find_active_public_link(project, token) when is_binary(token) do
+    hash = Secrets.hash_token(token)
+
+    query =
+      from l in PublicLink,
+        where: l.project_id == ^project.id and l.token_hash == ^hash and is_nil(l.revoked_at)
+
+    case Repo.one(query) do
+      nil ->
+        nil
+
+      link ->
+        touch(link)
+        link
+    end
+  end
+
+  def find_active_public_link(_, _), do: nil
 
   defp insert_api_key(project) do
     token = Secrets.generate_token("bd_" <> project.slug)

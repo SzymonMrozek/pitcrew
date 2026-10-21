@@ -8,12 +8,13 @@ defmodule BuildDistroWeb.Layouts do
   attr :flash, :map, required: true
   attr :project, :map, default: nil
   attr :admin?, :boolean, default: false
+  attr :home, :string, default: nil, doc: "where the brand links; the project's builds by default"
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
     <header class="topbar">
-      <a href={if @project, do: ~p"/#{@project.slug}", else: ~p"/"} class="brand">
+      <a href={@home || if(@project, do: ~p"/#{@project.slug}", else: ~p"/")} class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
         <span>{if @project, do: @project.name, else: "build-distro"}</span>
       </a>

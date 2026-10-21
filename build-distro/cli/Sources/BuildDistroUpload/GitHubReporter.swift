@@ -11,12 +11,15 @@ public struct GitHubReporter: Sendable {
         public var repository: String
         public var commitSHA: String
         public var pullRequest: Int?
+        /// The branch a pull request merges into.
+        public var baseRef: String?
 
-        public init(apiURL: URL, repository: String, commitSHA: String, pullRequest: Int?) {
+        public init(apiURL: URL, repository: String, commitSHA: String, pullRequest: Int?, baseRef: String? = nil) {
             self.apiURL = apiURL
             self.repository = repository
             self.commitSHA = commitSHA
             self.pullRequest = pullRequest
+            self.baseRef = baseRef
         }
     }
 
@@ -64,6 +67,89 @@ public struct GitHubReporter: Sendable {
     /// Called when the upload itself failed after the build was created.
     public func uploadFailed(_ build: Build, error: any Error) async {
         await status("failure", String("Upload failed: \(error)".prefix(140)), build.url)
+    }
+
+    // MARK: - Changelog
+
+    private struct Comparison: Decodable {
+        var mergeBaseCommit: Parent
+        var commits: [Entry]
+
+        struct Parent: Decodable { var sha: String }
+
+        struct Entry: Decodable {
+            var sha: String
+            var commit: Details
+            var author: Account?
+            var parents: [Parent]
+
+            struct Details: Decodable {
+                var message: String
+                var author: Person?
+            }
+
+            struct Person: Decodable { var name: String? }
+            struct Account: Decodable { var login: String }
+            struct Parent: Decodable { var sha: String }
+        }
+    }
+
+    /// What the build adds, from GitHub's compare API: a pull request against
+    /// its base branch, a main build since the previous ready main build, any
+    /// other branch against main. Merge commits are left out, so merging main
+    /// into a branch doesn't list main's changes again. Nil when GitHub can't
+    /// be asked.
+    public func changelog(for build: Build) async -> Changelog? {
+        let head = target.commitSHA
+        let mainBranch = build.mainBranch ?? "main"
+
+        let (kind, base): (String, String?) = switch build.bucket {
+        case "pull_requests": ("pull_request", target.baseRef ?? mainBranch)
+        case "main": build.previousCommitSha.map { ("main", $0) } ?? ("first", nil)
+        default: ("branch", mainBranch)
+        }
+
+        guard let base else {
+            // A first main build has nothing to compare with; it lists its own commit.
+            guard let data = await send("GET", "repos/\(target.repository)/commits/\(head)", Optional<String>.none),
+                  let entry = try? decoder.decode(Comparison.Entry.self, from: data)
+            else { return nil }
+            return Changelog(kind: kind, base: nil, head: head, commits: [commit(entry)], truncated: false)
+        }
+
+        var commits: [Changelog.Commit] = []
+        var mergeBase: String?
+        var truncated = true
+        for page in 1 ... 10 {
+            let path = "repos/\(target.repository)/compare/\(escape(base))...\(head)?per_page=100&page=\(page)"
+            guard let data = await send("GET", path, Optional<String>.none),
+                  let comparison = try? decoder.decode(Comparison.self, from: data)
+            else { return nil }
+
+            // The commit the branch left main at; a compare link starts there.
+            mergeBase = comparison.mergeBaseCommit.sha
+            commits += comparison.commits.filter { $0.parents.count < 2 }.map(commit)
+            if comparison.commits.count < 100 {
+                truncated = false
+                break
+            }
+        }
+
+        return Changelog(kind: kind, base: mergeBase, head: head, commits: commits, truncated: truncated)
+    }
+
+    private func commit(_ entry: Comparison.Entry) -> Changelog.Commit {
+        Changelog.Commit(sha: entry.sha, message: entry.commit.message, author: entry.author?.login ?? entry.commit.author?.name)
+    }
+
+    private func escape(_ ref: String) -> String {
+        ref.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ref
+    }
+
+    private var decoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
     }
 
     // MARK: - Statuses

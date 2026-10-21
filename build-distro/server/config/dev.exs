@@ -22,7 +22,13 @@ config :build_distro, :storage,
   access_key_id: "build-distro",
   secret_access_key: "build-distro-secret"
 
-config :build_distro, :admin_password, "admin"
+# Sign in at /auth/dev?login=dev, or with a real OAuth App in GITHUB_CLIENT_ID
+# and GITHUB_CLIENT_SECRET.
+config :build_distro, :admin_github_logins, ["dev"]
+
+config :build_distro, :github_oauth,
+  client_id: System.get_env("GITHUB_CLIENT_ID"),
+  client_secret: System.get_env("GITHUB_CLIENT_SECRET")
 
 config :build_distro, dev_routes: true
 

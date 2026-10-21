@@ -25,7 +25,8 @@ defmodule BuildDistro.Fixtures do
     files =
       Keyword.get(opts, :files, [
         {"#{app}/Info.plist", File.read!(fixture_path("Info.plist"))},
-        {"#{app}/embedded.mobileprovision", File.read!(fixture_path("embedded.mobileprovision"))},
+        {"#{app}/embedded.mobileprovision",
+         Keyword.get(opts, :profile, File.read!(fixture_path("embedded.mobileprovision")))},
         {"#{app}/AppIcon60x60@2x.png", File.read!(fixture_path("AppIcon60x60@2x.png"))},
         {"#{app}/PlugIns/Widget.appex/Info.plist", "not the app's"},
         {"#{app}/MyApp", Keyword.get(opts, :binary, :crypto.strong_rand_bytes(2048))}
@@ -34,6 +35,21 @@ defmodule BuildDistro.Fixtures do
     entries = for {name, data} <- files, do: {String.to_charlist(name), data}
     {:ok, {_, zip}} = :zip.create(~c"app.ipa", entries, [:memory])
     zip
+  end
+
+  @doc "A provisioning profile wrapped like a signed one. `:enterprise` provisions all devices."
+  def profile_fixture(:enterprise) do
+    xml = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <plist version="1.0"><dict>
+      <key>Name</key><string>MyApp In House</string>
+      <key>TeamName</key><string>Example Corp</string>
+      <key>ExpirationDate</key><date>2027-10-21T12:00:00Z</date>
+      <key>ProvisionsAllDevices</key><true/>
+    </dict></plist>
+    """
+
+    <<0x30, 0x82, 0x0F, 0x00>> <> xml <> <<0xA0, 0x82>>
   end
 
   def start_attrs(artifacts, overrides \\ %{}) do

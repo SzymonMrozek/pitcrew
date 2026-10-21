@@ -9,6 +9,9 @@ defmodule BuildDistro.Projects.Project do
     field :slug, :string
     field :name, :string
     field :github_repo, :string
+    field :main_branch, :string, default: "main"
+    field :tooling_types, :string
+    field :tooling_scopes, :string
     field :passcode_hash, :string, redact: true
     field :passcode, :string, virtual: true, redact: true
 
@@ -30,8 +33,11 @@ defmodule BuildDistro.Projects.Project do
 
   def update_changeset(project, attrs) do
     project
-    |> cast(attrs, [:name, :github_repo])
-    |> validate_required([:name])
+    |> cast(attrs, [:name, :github_repo, :main_branch, :tooling_types, :tooling_scopes])
+    |> validate_required([:name, :main_branch])
+    |> validate_length(:main_branch, max: 255)
+    |> validate_length(:tooling_types, max: 500)
+    |> validate_length(:tooling_scopes, max: 500)
     |> validate_github_repo()
   end
 

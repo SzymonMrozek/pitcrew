@@ -291,3 +291,56 @@ div.secret { margin: 0 0 16px; }
 
 .empty { text-align: center; padding: 64px 16px; }
 .empty-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 6px; }
+
+/* Buckets */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 4px 0 16px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+.tab {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tab:hover { text-decoration: none; color: var(--text); }
+.tab[aria-current="page"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.tab-count { font-weight: 500; font-size: 0.8rem; color: var(--muted); }
+.bucket-title { font-size: 1.2rem; margin: 4px 0 14px; }
+
+.badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge-signing { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.badge-enterprise { color: var(--accent); border-color: var(--accent); }
+
+/* Changelog */
+.card-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.change { display: grid; gap: 2px; }
+.change-subject { overflow-wrap: anywhere; }
+.change-scope {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.change-breaking { color: var(--danger); font-size: 0.8rem; font-weight: 700; margin-right: 4px; }
+.change-meta { display: flex; gap: 8px; font-size: 0.82rem; }
+.tooling { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.tooling summary { cursor: pointer; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+.related { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.related li { display: flex; justify-content: space-between; gap: 12px; }

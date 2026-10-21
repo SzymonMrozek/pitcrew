@@ -39,6 +39,13 @@ defmodule BuildDistroWeb.Api.BuildController do
     end
   end
 
+  def changelog(conn, %{"id" => id} = params) do
+    with {:ok, build} <- fetch_build(conn, id),
+         {:ok, _build} <- Builds.put_changelog(build, Map.drop(params, ["id"])) do
+      send_resp(conn, :no_content, "")
+    end
+  end
+
   def complete(conn, %{"id" => id}) do
     with {:ok, build} <- fetch_build(conn, id),
          {:ok, build} <- Builds.complete(build) do
@@ -62,6 +69,10 @@ defmodule BuildDistroWeb.Api.BuildController do
       id: build.id,
       number: build.number,
       state: build.state,
+      bucket: build.bucket,
+      main_branch: project.main_branch,
+      # Where a main build's changelog starts; nil for a first build.
+      previous_commit_sha: Builds.previous_main_commit(build),
       url: BuildDistroWeb.Links.build_url(project, build),
       failure_reason: build.failure_reason,
       display_name: build.display_name,

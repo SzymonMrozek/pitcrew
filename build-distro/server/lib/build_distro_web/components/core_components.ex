@@ -26,16 +26,12 @@ defmodule BuildDistroWeb.CoreComponents do
   attr :project, :map, required: true
   attr :build, Build, default: nil
   attr :size, :integer, default: 48
+  attr :src, :string, required: true
 
   def app_icon(assigns) do
     ~H"""
     <span class="app-icon" style={"--icon-size: #{@size}px"}>
-      <img
-        :if={@build && @build.icon_key}
-        src={~p"/#{@project.slug}/builds/#{@build.number}/icon.png"}
-        alt=""
-        loading="lazy"
-      />
+      <img :if={@build && @build.icon_key} src={@src} alt="" loading="lazy" />
       <span :if={!(@build && @build.icon_key)} class="app-icon-fallback">
         {String.first((@build && @build.display_name) || @project.name)}
       </span>
@@ -62,6 +58,29 @@ defmodule BuildDistroWeb.CoreComponents do
       <% end %>
     </span>
     """
+  end
+
+  attr :build, Build, required: true
+
+  @doc "How the build is signed, which decides who can install it."
+  def signing_badge(assigns) do
+    ~H"""
+    <span :if={label = signing_label(@build)} class={"badge badge-signing badge-#{signing(@build)}"}>
+      {label}
+    </span>
+    """
+  end
+
+  def signing(%Build{profile: %{"kind" => kind}}), do: kind
+  def signing(_build), do: nil
+
+  def signing_label(build) do
+    case signing(build) do
+      "enterprise" -> "In-house"
+      "ad-hoc" -> "Ad hoc"
+      "development" -> "Development"
+      _ -> nil
+    end
   end
 
   attr :build, Build, required: true

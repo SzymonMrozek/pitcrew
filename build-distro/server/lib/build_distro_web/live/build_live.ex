@@ -1,20 +1,21 @@
 defmodule BuildDistroWeb.BuildLive do
   @moduledoc """
   One build. A link shared while CI is still uploading turns into an Install
-  button by itself.
+  button by itself. The changelog lists app changes first and tooling last.
   """
 
   use BuildDistroWeb, :live_view
 
-  alias BuildDistro.Builds
-  alias BuildDistroWeb.InstallLinks
+  alias BuildDistro.{Builds, Changelog}
+  alias BuildDistro.Builds.Build
+  alias BuildDistroWeb.{InstallLinks, Viewer}
 
   # Install links live for an hour; the page renews them well before that.
   @refresh_links_every :timer.minutes(10)
 
   @impl true
   def mount(%{"number" => number}, _session, socket) do
-    project = socket.assigns.project
+    %{project: project, viewer: viewer} = socket.assigns
 
     if connected?(socket) do
       Builds.subscribe(project)
@@ -22,17 +23,18 @@ defmodule BuildDistroWeb.BuildLive do
     end
 
     with {number, ""} <- Integer.parse(number),
-         %{} = build <- Builds.get_build(project, number) do
+         %{} = build <- Builds.get_build(project, number),
+         true <- Viewer.can_see?(viewer, build) do
       {:ok,
        socket
-       |> assign_build(build)
-       |> assign(:page_url, url(~p"/#{project.slug}/builds/#{number}"))}
+       |> assign(:page_url, BuildDistroWeb.Endpoint.url() <> Viewer.build_path(viewer, build))
+       |> assign_build(build)}
     else
       _ ->
         {:ok,
          socket
          |> put_flash(:error, "That build doesn't exist.")
-         |> push_navigate(to: ~p"/#{project.slug}")}
+         |> push_navigate(to: Viewer.home_path(viewer))}
     end
   end
 
@@ -40,16 +42,9 @@ defmodule BuildDistroWeb.BuildLive do
   def handle_info({:build, build_id}, socket) do
     build = socket.assigns.build
 
-    cond do
-      build_id == build.id ->
-        {:noreply, assign_build(socket, Builds.get_build!(build.id))}
-
-      build.branch ->
-        {:noreply, assign_newer(socket, build)}
-
-      true ->
-        {:noreply, socket}
-    end
+    if build_id == build.id,
+      do: {:noreply, assign_build(socket, Builds.get_build!(build.id))},
+      else: {:noreply, assign_related(socket, build)}
   end
 
   def handle_info(:refresh_links, socket), do: {:noreply, assign_links(socket)}
@@ -58,53 +53,64 @@ defmodule BuildDistroWeb.BuildLive do
     socket
     |> assign(
       build: build,
+      changelog: Changelog.grouped(build, socket.assigns.project),
       page_title: "#{version_label(build)} ##{build.number} · #{socket.assigns.project.name}"
     )
-    |> assign_newer(build)
+    |> assign_related(build)
     |> assign_links()
   end
 
-  defp assign_newer(socket, build) do
+  # A newer ready build of the same branch, and the PR's other builds.
+  defp assign_related(socket, build) do
     newer =
       with branch when is_binary(branch) <- build.branch,
            %{number: number} = latest when number > build.number <-
-             Builds.latest_ready(socket.assigns.project, branch) do
+             Builds.latest_ready(socket.assigns.project, branch),
+           true <- Viewer.can_see?(socket.assigns.viewer, latest) do
         latest
       else
         _ -> nil
       end
 
-    assign(socket, :newer, newer)
+    assign(socket, newer: newer, pr_builds: Builds.pull_request_builds(build))
   end
 
   defp assign_links(socket) do
     case socket.assigns.build do
-      %{state: "ready"} = build ->
-        assign(socket, :install_url, InstallLinks.install_url(build))
-
-      _ ->
-        assign(socket, :install_url, nil)
+      %{state: "ready"} = build -> assign(socket, :install_url, InstallLinks.install_url(build))
+      _ -> assign(socket, :install_url, nil)
     end
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} project={@project} admin?={@admin?}>
-      <.link navigate={~p"/#{@project.slug}"} class="back">All builds</.link>
+    <Layouts.app flash={@flash} project={@project} admin?={@admin?} home={Viewer.home_path(@viewer)}>
+      <.link navigate={Viewer.bucket_path(@viewer, @build.bucket)} class="back">
+        {Build.bucket_label(@build.bucket)}
+      </.link>
 
-      <.link :if={@newer} navigate={~p"/#{@project.slug}/builds/#{@newer.number}"} class="notice">
+      <.link :if={@newer} navigate={Viewer.build_path(@viewer, @newer)} class="notice">
         A newer build of {@build.branch} is ready: {version_label(@newer)} #{@newer.number}
       </.link>
 
       <section class="hero">
-        <.app_icon project={@project} build={@build} size={88} />
+        <.app_icon
+          project={@project}
+          build={@build}
+          size={88}
+          src={Viewer.icon_path(@viewer, @build)}
+        />
         <div>
           <h1>{@build.display_name || @project.name}</h1>
           <p class="hero-version">
             {version_label(@build)} <span class="muted">#{@build.number}</span>
+            <span :if={@build.pr_number}>· PR #{@build.pr_number}</span>
           </p>
-          <.state_badge build={@build} />
+          <div class="badges">
+            <.state_badge build={@build} />
+            <.signing_badge build={@build} />
+          </div>
         </div>
       </section>
 
@@ -128,6 +134,10 @@ defmodule BuildDistroWeb.BuildLive do
               <div class="install-main">
                 <a href={@install_url} class="button button-install">Install</a>
                 <p class="muted install-note">Open this page in Safari on your iPhone.</p>
+                <p :if={signing(@build) == "enterprise"} class="muted install-note">
+                  First install from this team? Open Settings → General → VPN &amp; Device Management,
+                  tap {@build.profile["team"] || "the developer"} and trust it.
+                </p>
               </div>
               <div class="qr" aria-label="QR code for this page">
                 {Phoenix.HTML.raw(
@@ -149,9 +159,28 @@ defmodule BuildDistroWeb.BuildLive do
 
       <.profile_warning :if={@build.state == "ready"} build={@build} />
 
-      <section :if={@build.release_notes || @build.commit_message} class="card">
+      <section :if={@build.release_notes} class="card">
+        <h2>Release notes</h2>
+        <p class="notes">{@build.release_notes}</p>
+      </section>
+
+      <.changelog :if={@changelog} changelog={@changelog} project={@project} />
+
+      <section :if={!@changelog && @build.commit_message} class="card">
         <h2>What's in it</h2>
-        <p class="notes">{@build.release_notes || @build.commit_message}</p>
+        <p class="notes">{@build.commit_message}</p>
+      </section>
+
+      <section :if={@pr_builds != []} class="card">
+        <h2>Other builds of PR #{@build.pr_number}</h2>
+        <ul class="related">
+          <li :for={other <- @pr_builds}>
+            <.link navigate={Viewer.build_path(@viewer, other)}>
+              {version_label(other)} #{other.number}
+            </.link>
+            <span class="muted">{short_sha(other.commit_sha)} · {other.state}</span>
+          </li>
+        </ul>
       </section>
 
       <section class="card">
@@ -186,7 +215,7 @@ defmodule BuildDistroWeb.BuildLive do
               <span :if={!@project.github_repo} class="mono">{short_sha(@build.commit_sha)}</span>
             </dd>
           </div>
-          <div :if={@build.run_url}>
+          <div :if={@build.run_url && @viewer.kind != :public}>
             <dt>CI run</dt>
             <dd><a href={@build.run_url}>View run</a></dd>
           </div>
@@ -203,16 +232,20 @@ defmodule BuildDistroWeb.BuildLive do
             <dd>iOS {@build.minimum_os} or later</dd>
           </div>
           <div :if={@build.profile}>
-            <dt>Profile</dt>
+            <dt>Signing</dt>
             <dd>
-              {@build.profile["name"]}
-              <span class="muted">· {@build.profile["kind"]} · {@build.profile["device_count"]} devices</span>
+              {signing_label(@build) || @build.profile["kind"]}
+              <span :if={signing(@build) == "enterprise"} class="muted">· installs on any device</span>
+              <span :if={signing(@build) != "enterprise"} class="muted">
+                · {@build.profile["device_count"]} devices
+              </span>
+              <span :if={@build.profile["name"]} class="muted">· {@build.profile["name"]}</span>
             </dd>
           </div>
         </dl>
       </section>
 
-      <section :if={@build.state == "ready"} class="card">
+      <section :if={@build.state == "ready" && Viewer.downloads?(@viewer)} class="card">
         <h2>Downloads</h2>
         <ul class="downloads">
           <li :for={artifact <- @build.artifacts}>
@@ -224,6 +257,76 @@ defmodule BuildDistroWeb.BuildLive do
         </ul>
       </section>
     </Layouts.app>
+    """
+  end
+
+  attr :changelog, :map, required: true
+  attr :project, :map, required: true
+
+  defp changelog(assigns) do
+    ~H"""
+    <section class="card">
+      <div class="card-header">
+        <h2>
+          <%= case @changelog.kind do %>
+            <% "pull_request" -> %>
+              Changes in this pull request
+            <% "main" -> %>
+              Changes since the previous build
+            <% "first" -> %>
+              First build on {@project.main_branch}
+            <% _ -> %>
+              Changes from {@project.main_branch}
+          <% end %>
+        </h2>
+        <a
+          :if={@project.github_repo && @changelog.base && @changelog.head}
+          href={"https://github.com/#{@project.github_repo}/compare/#{@changelog.base}...#{@changelog.head}"}
+          class="muted"
+        >
+          Compare
+        </a>
+      </div>
+
+      <p :if={@changelog.app == [] && @changelog.tooling == []} class="muted">No new commits.</p>
+      <ul :if={@changelog.app != []} class="changes">
+        <.change :for={entry <- @changelog.app} entry={entry} project={@project} />
+      </ul>
+
+      <details :if={@changelog.tooling != []} class="tooling">
+        <summary>Tooling and internal changes ({length(@changelog.tooling)})</summary>
+        <ul class="changes">
+          <.change :for={entry <- @changelog.tooling} entry={entry} project={@project} />
+        </ul>
+      </details>
+      <p :if={@changelog.truncated} class="muted">Only the first 1,000 commits are listed.</p>
+    </section>
+    """
+  end
+
+  attr :entry, :map, required: true
+  attr :project, :map, required: true
+
+  defp change(assigns) do
+    ~H"""
+    <li class="change">
+      <span class="change-subject">
+        <span :if={@entry.scope} class="change-scope">{@entry.scope}</span>
+        <span :if={@entry.breaking} class="change-breaking">breaking</span>
+        {@entry.subject}
+      </span>
+      <span class="change-meta muted">
+        <span :if={@entry.type}>{@entry.type}</span>
+        <a
+          :if={@project.github_repo}
+          href={"https://github.com/#{@project.github_repo}/commit/#{@entry.sha}"}
+          class="mono"
+        >
+          {short_sha(@entry.sha)}
+        </a>
+        <span :if={@entry.author}>{@entry.author}</span>
+      </span>
+    </li>
     """
   end
 

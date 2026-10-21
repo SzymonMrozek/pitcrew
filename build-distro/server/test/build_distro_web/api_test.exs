@@ -33,6 +33,8 @@ defmodule BuildDistroWeb.ApiTest do
 
     created = conn |> post(~p"/api/v1/builds", attrs) |> json_response(200)
     assert created["state"] == "uploading"
+    assert created["bucket"] == "main"
+    assert created["previous_commit_sha"] == nil
     assert created["url"] =~ "/#{project.slug}/builds/1"
     assert %{"kind" => "ipa", "part_count" => 1, "uploaded" => false} = hd(created["artifacts"])
     assert (conn |> post(~p"/api/v1/builds", attrs) |> json_response(200))["id"] == created["id"]
@@ -53,6 +55,14 @@ defmodule BuildDistroWeb.ApiTest do
     complete_path = ~p"/api/v1/builds/#{created["id"]}/complete"
     assert %{"state" => "processing"} = conn |> post(complete_path) |> json_response(200)
     assert %{"state" => "processing"} = conn |> post(complete_path) |> json_response(200)
+
+    changelog = %{
+      kind: "first",
+      head: attrs["commit_sha"],
+      commits: [%{sha: attrs["commit_sha"], message: "feat: x"}]
+    }
+
+    assert conn |> put(~p"/api/v1/builds/#{created["id"]}/changelog", changelog) |> response(204)
 
     assert :ok = perform_job(ProcessBuild, %{build_id: created["id"]})
 

@@ -32,6 +32,7 @@ defmodule BuildDistroWeb.Router do
     post "/builds/:id/artifacts/:kind/parts", BuildController, :parts
     post "/builds/:id/artifacts/:kind/progress", BuildController, :progress
     post "/builds/:id/complete", BuildController, :complete
+    put "/builds/:id/changelog", BuildController, :changelog
   end
 
   # iOS fetches these without cookies; the token in the path authorizes them.
@@ -44,9 +45,14 @@ defmodule BuildDistroWeb.Router do
     pipe_through :browser
 
     get "/", HomeController, :index
-    get "/admin/login", AdminSessionController, :new
-    post "/admin/login", AdminSessionController, :create
-    delete "/admin/logout", AdminSessionController, :delete
+    get "/admin/login", AuthController, :new
+    get "/auth/github", AuthController, :request
+    get "/auth/github/callback", AuthController, :callback
+    delete "/admin/logout", AuthController, :delete
+
+    if Application.compile_env(:build_distro, :dev_routes) do
+      get "/auth/dev", AuthController, :dev
+    end
 
     live_session :admin, on_mount: {BuildDistroWeb.Access, :admin} do
       live "/admin", AdminLive, :index
@@ -62,6 +68,13 @@ defmodule BuildDistroWeb.Router do
       get "/latest", LatestController, :show
       get "/builds/:number/download/:kind", DownloadController, :show
       get "/builds/:number/icon.png", DownloadController, :icon
+      get "/p/:token/builds/:number/icon.png", DownloadController, :icon
+    end
+
+    # A public link shows one bucket to anyone who has it, without signing in.
+    live_session :public, on_mount: {BuildDistroWeb.Access, :public} do
+      live "/:project/p/:token", BuildsLive, :index
+      live "/:project/p/:token/builds/:number", BuildLive, :show
     end
 
     live_session :project, on_mount: {BuildDistroWeb.Access, :project} do

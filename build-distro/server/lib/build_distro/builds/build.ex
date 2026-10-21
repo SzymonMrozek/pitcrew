@@ -3,6 +3,7 @@ defmodule BuildDistro.Builds.Build do
   import Ecto.Changeset
 
   @states ~w(uploading processing ready failed expired)
+  @buckets ~w(main pull_requests manual)
 
   schema "builds" do
     belongs_to :project, BuildDistro.Projects.Project
@@ -11,6 +12,8 @@ defmodule BuildDistro.Builds.Build do
     field :number, :integer
     field :idempotency_key, :string
     field :state, :string, default: "uploading"
+    field :bucket, :string, default: "manual"
+    field :changelog, :map
     field :failure_reason, :string
     field :commit_sha, :string
     field :branch, :string
@@ -31,6 +34,20 @@ defmodule BuildDistro.Builds.Build do
   end
 
   def states, do: @states
+
+  @doc """
+  Where a build is listed: `main` for the project's main branch,
+  `pull_requests` for pull requests, `manual` for any other branch.
+  """
+  def buckets, do: @buckets
+
+  def bucket_for(%{pr_number: pr}, _main_branch) when is_integer(pr), do: "pull_requests"
+  def bucket_for(%{branch: branch}, main_branch) when branch == main_branch, do: "main"
+  def bucket_for(_build, _main_branch), do: "manual"
+
+  def bucket_label("main"), do: "Main"
+  def bucket_label("pull_requests"), do: "Pull requests"
+  def bucket_label("manual"), do: "Manual"
 
   def create_changeset(build, attrs) do
     build

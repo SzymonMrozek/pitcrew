@@ -25,7 +25,7 @@ defmodule BuildDistroWeb.AccessTest do
     assert redirected_to(conn) == ~p"/#{project.slug}"
 
     assert {:ok, _view, html} = conn |> recycle() |> live(~p"/#{project.slug}")
-    assert html =~ "No builds yet"
+    assert html =~ "No main builds yet"
   end
 
   test "a wrong passcode doesn't", %{conn: conn, project: project, token: token} do
@@ -74,7 +74,7 @@ defmodule BuildDistroWeb.AccessTest do
   end
 
   test "admins see every project", %{conn: conn, project: project} do
-    conn = conn |> post(~p"/admin/login", %{"password" => "admin"}) |> recycle()
+    conn = sign_in_admin(conn)
 
     assert {:ok, _, html} = live(conn, ~p"/admin")
     assert html =~ project.name

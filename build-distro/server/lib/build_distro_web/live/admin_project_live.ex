@@ -5,7 +5,8 @@ defmodule BuildDistroWeb.AdminProjectLive do
 
   import BuildDistroWeb.AdminLive, only: [secret: 1]
 
-  alias BuildDistro.Projects
+  alias BuildDistro.{Changelog, Projects}
+  alias BuildDistro.Builds.Build
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -16,7 +17,12 @@ defmodule BuildDistroWeb.AdminProjectLive do
       project ->
         {:ok,
          socket
-         |> assign(page_title: "#{project.name} · Admin", new_invite_url: nil, new_api_key: nil)
+         |> assign(
+           page_title: "#{project.name} · Admin",
+           new_invite_url: nil,
+           new_api_key: nil,
+           new_public_url: nil
+         )
          |> assign_project(project)}
     end
   end
@@ -27,7 +33,8 @@ defmodule BuildDistroWeb.AdminProjectLive do
       invites: Projects.list_invites(project),
       invite_form: to_form(Projects.change_invite(), as: :invite),
       passcode_form: to_form(%{"passcode" => ""}, as: :passcode),
-      settings_form: to_form(Ecto.Changeset.change(project), as: :settings)
+      settings_form: to_form(Ecto.Changeset.change(project), as: :settings),
+      public_links: Projects.list_public_links(project)
     )
   end
 
@@ -72,6 +79,26 @@ defmodule BuildDistroWeb.AdminProjectLive do
         {:noreply,
          assign(socket, settings_form: to_form(changeset, as: :settings, action: :update))}
     end
+  end
+
+  def handle_event("create_public_link", %{"bucket" => bucket}, socket) do
+    project = socket.assigns.project
+
+    case Projects.create_public_link(project, bucket) do
+      {:ok, _link, token} ->
+        {:noreply,
+         socket
+         |> assign_project(project)
+         |> assign(new_public_url: BuildDistroWeb.Endpoint.url() <> "/#{project.slug}/p/#{token}")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Unknown bucket.")}
+    end
+  end
+
+  def handle_event("revoke_public_link", %{"id" => id}, socket) do
+    :ok = Projects.revoke_public_link(socket.assigns.project, String.to_integer(id))
+    {:noreply, assign_project(socket, socket.assigns.project)}
   end
 
   def handle_event("rotate_api_key", _params, socket) do
@@ -163,8 +190,74 @@ defmodule BuildDistroWeb.AdminProjectLive do
           placeholder="owner/name"
           hint="Optional. Links builds to their commits and pull requests."
         />
+        <.input
+          field={@settings_form[:main_branch]}
+          label="Main branch"
+          hint="Builds of this branch go to Main; other branches without a pull request go to Manual."
+          required
+        />
+        <.input
+          field={@settings_form[:tooling_types]}
+          label="Tooling commit types"
+          placeholder={Changelog.default_tooling_types()}
+          hint="Conventional Commit types listed last in changelogs. Empty uses the placeholder."
+        />
+        <.input
+          field={@settings_form[:tooling_scopes]}
+          label="Tooling scopes"
+          placeholder={Changelog.default_tooling_scopes()}
+          hint="Scopes listed last whatever the type, like fix(tooling). Empty uses the placeholder."
+        />
         <.button>Save</.button>
       </.form>
+
+      <section class="card">
+        <h2>Public links</h2>
+        <p class="muted">
+          Anyone with a public link can see and install that bucket's builds, without an invite or
+          passcode. Revoke a link to stop it working.
+        </p>
+
+        <div :if={@new_public_url} class="secret">
+          <p>Copy the link now; it isn't shown again.</p>
+          <.secret id="new-public-link" value={@new_public_url} />
+        </div>
+
+        <div class="inline-form">
+          <button
+            :for={bucket <- Build.buckets()}
+            type="button"
+            class="button button-small"
+            phx-click="create_public_link"
+            phx-value-bucket={bucket}
+          >
+            New {Build.bucket_label(bucket)} link
+          </button>
+        </div>
+
+        <ul class="invite-list">
+          <li :for={link <- @public_links}>
+            <span>
+              {Build.bucket_label(link.bucket)}
+              <span class="muted">
+                · created <.relative_time id={"public-#{link.id}-created"} at={link.inserted_at} />
+                <span :if={link.last_used_at}>
+                  · last used <.relative_time id={"public-#{link.id}-used"} at={link.last_used_at} />
+                </span>
+              </span>
+            </span>
+            <button
+              type="button"
+              class="button button-small button-danger"
+              phx-click="revoke_public_link"
+              phx-value-id={link.id}
+              data-confirm={"Stop this #{Build.bucket_label(link.bucket)} link working?"}
+            >
+              Revoke
+            </button>
+          </li>
+        </ul>
+      </section>
 
       <section class="card">
         <h2>CI API key</h2>

@@ -32,7 +32,9 @@ public struct Options: Equatable, Sendable {
                               In Actions, pass the job's token; it needs
                               statuses: write and pull-requests: write
       --github-repository O/R defaults to GITHUB_REPOSITORY
-      --no-github             don't report to GitHub
+      --base-ref BRANCH       the branch a pull request merges into, for its
+                              changelog; defaults to the PR's base on GitHub
+      --no-github             don't report to GitHub or fetch a changelog
       --wait                  wait until the build is ready; fail if it fails
       --timeout SECONDS       how long --wait waits (default 600)
     """
@@ -105,7 +107,10 @@ public struct Options: Equatable, Sendable {
         let repository = values["--github-repository"] ?? environment["GITHUB_REPOSITORY"]
         let apiURL = URL(string: environment["GITHUB_API_URL"] ?? "https://api.github.com")
         if !flags.contains("--no-github"), let token, !token.isEmpty, let repository, let apiURL, let commit = metadata.commitSHA {
-            gitHub = GitHubReporter.Target(apiURL: apiURL, repository: repository, commitSHA: commit, pullRequest: metadata.pullRequest)
+            gitHub = GitHubReporter.Target(
+                apiURL: apiURL, repository: repository, commitSHA: commit,
+                pullRequest: metadata.pullRequest, baseRef: values["--base-ref"] ?? context.baseRef
+            )
             gitHubToken = token
         }
     }
@@ -121,6 +126,7 @@ struct GitHubContext {
     var pullRequest: Int?
     var runURL: String?
     var message: String?
+    var baseRef: String?
 
     init(environment: [String: String]) {
         guard environment["GITHUB_ACTIONS"] == "true" else { return }
@@ -142,6 +148,7 @@ struct GitHubContext {
         commitSHA = head?["sha"] as? String ?? environment["GITHUB_SHA"]
         branch = (environment["GITHUB_HEAD_REF"]).flatMap { $0.isEmpty ? nil : $0 } ?? environment["GITHUB_REF_NAME"]
         self.pullRequest = pullRequest?["number"] as? Int
+        baseRef = (pullRequest?["base"] as? [String: Any])?["ref"] as? String
         message = pullRequest?["title"] as? String ?? (event?["head_commit"] as? [String: Any])?["message"] as? String
     }
 }

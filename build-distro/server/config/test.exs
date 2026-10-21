@@ -20,7 +20,8 @@ config :build_distro, :storage,
   access_key_id: "build-distro",
   secret_access_key: "build-distro-secret"
 
-config :build_distro, :admin_password, "admin"
+config :build_distro, :admin_github_logins, ["Admin-Login"]
+config :build_distro, :github_oauth, client_id: "client-id", client_secret: "client-secret"
 config :build_distro, :min_part_size, 5 * 1024 * 1024
 config :build_distro, :passcode_iterations, 1_000
 

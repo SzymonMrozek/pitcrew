@@ -1,14 +1,16 @@
 defmodule BuildDistroWeb.Access do
   @moduledoc """
-  Who may see what. Testers hold accepted invites per project in their
-  session; admins sign in with the admin password. Every request and every
-  LiveView mount checks again, so revoking an invite takes effect at once.
+  Who may see what. Admins sign in with GitHub; testers hold accepted invites
+  per project in their session; anyone with a public link sees that link's
+  bucket. Every request and every LiveView mount checks again, so removing an
+  admin login or revoking an invite or link takes effect at once.
   """
 
   import Plug.Conn
   import Phoenix.Controller
 
-  alias BuildDistro.Projects
+  alias BuildDistro.{Accounts, Projects}
+  alias BuildDistroWeb.Viewer
 
   @refresh_after_seconds 24 * 60 * 60
 
@@ -19,27 +21,36 @@ defmodule BuildDistroWeb.Access do
     conn |> put_session("invites", invites) |> configure_session(renew: true)
   end
 
-  def sign_in_admin(conn) do
-    conn |> put_session("admin", admin_fingerprint()) |> configure_session(renew: true)
+  def sign_in_admin(conn, user) do
+    conn |> put_session("user_id", user.id) |> configure_session(renew: true)
   end
 
-  def sign_out_admin(conn), do: delete_session(conn, "admin")
+  def sign_out_admin(conn), do: delete_session(conn, "user_id")
 
-  def admin?(session), do: Plug.Crypto.secure_compare(session["admin"] || "", admin_fingerprint())
+  def current_admin(session), do: Accounts.get_admin(session["user_id"])
 
-  # Sessions name the password they were created with, so changing
-  # ADMIN_PASSWORD signs every admin out.
-  defp admin_fingerprint do
-    password = Application.fetch_env!(:build_distro, :admin_password)
-    :crypto.hash(:sha256, "admin:" <> password) |> Base.url_encode64() |> binary_part(0, 22)
+  def admin?(session), do: current_admin(session) != nil
+
+  @doc "What a session may see of a project, or nil."
+  def session_viewer(session, project) do
+    cond do
+      user = current_admin(session) ->
+        Viewer.new(project, :admin, admin: user)
+
+      invite_id = get_in(session, ["invites", to_string(project.id)]) ->
+        if Projects.invite_active?(project, invite_id), do: Viewer.new(project, :tester)
+
+      true ->
+        nil
+    end
   end
 
-  def project_access?(session, project) do
-    admin?(session) or
-      case get_in(session, ["invites", to_string(project.id)]) do
-        nil -> false
-        invite_id -> Projects.invite_active?(project, invite_id)
-      end
+  @doc "What a public link shows, or nil."
+  def public_viewer(project, token) do
+    case Projects.find_active_public_link(project, token) do
+      nil -> nil
+      link -> Viewer.new(project, :public, bucket: link.bucket, token: token)
+    end
   end
 
   ## Plugs
@@ -57,8 +68,15 @@ defmodule BuildDistroWeb.Access do
   def require_project_access(conn, _opts) do
     project = Projects.get_project_by_slug(conn.path_params["project"])
 
-    if project && project_access?(get_session(conn), project) do
-      assign(conn, :project, project)
+    viewer =
+      project &&
+        case conn.path_params do
+          %{"token" => token} -> public_viewer(project, token)
+          _ -> session_viewer(get_session(conn), project)
+        end
+
+    if viewer do
+      conn |> assign(:project, project) |> assign(:viewer, viewer)
     else
       conn
       |> put_status(:not_found)
@@ -71,26 +89,38 @@ defmodule BuildDistroWeb.Access do
   ## LiveView
 
   def on_mount(:admin, _params, session, socket) do
-    if admin?(session) do
-      {:cont, Phoenix.Component.assign(socket, :admin?, true)}
-    else
-      {:halt, Phoenix.LiveView.redirect(socket, to: "/admin/login")}
+    case current_admin(session) do
+      nil -> {:halt, Phoenix.LiveView.redirect(socket, to: "/admin/login")}
+      user -> {:cont, Phoenix.Component.assign(socket, current_admin: user, admin?: true)}
     end
   end
 
-  def on_mount(:project, %{"project" => slug}, session, socket) do
+  def on_mount(kind, %{"project" => slug} = params, session, socket)
+      when kind in [:project, :public] do
     project = Projects.get_project_by_slug(slug)
 
-    if project && project_access?(session, project) do
+    viewer =
+      project &&
+        case kind do
+          :project -> session_viewer(session, project)
+          :public -> public_viewer(project, params["token"])
+        end
+
+    if viewer do
       {:cont,
-       socket
-       |> Phoenix.Component.assign(:project, project)
-       |> Phoenix.Component.assign(:admin?, admin?(session))}
+       Phoenix.Component.assign(socket,
+         project: project,
+         viewer: viewer,
+         admin?: viewer.kind == :admin
+       )}
     else
+      message =
+        if kind == :public,
+          do: "That link doesn't work anymore.",
+          else: "That page needs an invite link."
+
       {:halt,
-       socket
-       |> Phoenix.LiveView.put_flash(:error, "That page needs an invite link.")
-       |> Phoenix.LiveView.redirect(to: "/")}
+       socket |> Phoenix.LiveView.put_flash(:error, message) |> Phoenix.LiveView.redirect(to: "/")}
     end
   end
 end

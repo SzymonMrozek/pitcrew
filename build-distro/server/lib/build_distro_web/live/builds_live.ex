@@ -1,9 +1,15 @@
 defmodule BuildDistroWeb.BuildsLive do
-  @moduledoc "A project's builds, updated live as CI uploads and processes them."
+  @moduledoc """
+  A project's builds by bucket: Main, Pull requests and Manual. Pull requests
+  show their newest build, with the count of earlier ones. Updated live as CI
+  uploads and processes builds.
+  """
 
   use BuildDistroWeb, :live_view
 
   alias BuildDistro.Builds
+  alias BuildDistro.Builds.Build
+  alias BuildDistroWeb.Viewer
 
   @impl true
   def mount(_params, _session, socket) do
@@ -14,71 +20,78 @@ defmodule BuildDistroWeb.BuildsLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    filter =
-      case params["filter"] do
-        nil -> :all
-        "" -> :all
-        "pull-requests" -> :pull_requests
-        branch -> branch
-      end
-
-    {:noreply, socket |> assign(:filter, filter) |> load()}
+    buckets = socket.assigns.viewer.buckets
+    bucket = if params["bucket"] in buckets, do: params["bucket"], else: hd(buckets)
+    {:noreply, socket |> assign(:bucket, bucket) |> load()}
   end
 
   @impl true
   def handle_info({:build, _build_id}, socket), do: {:noreply, load(socket)}
 
   defp load(socket) do
-    project = socket.assigns.project
+    %{project: project, bucket: bucket} = socket.assigns
+    builds = Builds.list_builds(project, bucket)
 
     assign(socket,
-      builds: Builds.list_builds(project, socket.assigns.filter),
-      branches: Builds.list_branches(project)
+      rows: rows(bucket, builds),
+      counts: Builds.bucket_counts(project)
     )
   end
+
+  # A pull request is one row: its newest build and how many came before.
+  defp rows("pull_requests", builds) do
+    builds
+    |> Enum.group_by(& &1.pr_number)
+    |> Enum.map(fn {_pr, [newest | older]} -> {newest, length(older)} end)
+    |> Enum.sort_by(fn {build, _} -> build.number end, :desc)
+  end
+
+  defp rows(_bucket, builds), do: Enum.map(builds, &{&1, 0})
 
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} project={@project} admin?={@admin?}>
-      <nav class="filters" aria-label="Filter builds">
-        <.link patch={~p"/#{@project.slug}"} class="chip" aria-current={@filter == :all && "true"}>
-          All
-        </.link>
+    <Layouts.app flash={@flash} project={@project} admin?={@admin?} home={Viewer.home_path(@viewer)}>
+      <nav :if={length(@viewer.buckets) > 1} class="tabs" aria-label="Buckets">
         <.link
-          :for={branch <- Enum.take(@branches, 4)}
-          patch={~p"/#{@project.slug}?#{[filter: branch]}"}
-          class="chip"
-          aria-current={@filter == branch && "true"}
+          :for={bucket <- @viewer.buckets}
+          patch={Viewer.bucket_path(@viewer, bucket)}
+          class="tab"
+          aria-current={@bucket == bucket && "page"}
         >
-          {branch}
-        </.link>
-        <.link
-          patch={~p"/#{@project.slug}?#{[filter: "pull-requests"]}"}
-          class="chip"
-          aria-current={@filter == :pull_requests && "true"}
-        >
-          Pull requests
+          {Build.bucket_label(bucket)}
+          <span class="tab-count">{Map.get(@counts, bucket, 0)}</span>
         </.link>
       </nav>
+      <h1 :if={@viewer.kind == :public} class="bucket-title">{Build.bucket_label(@bucket)} builds</h1>
 
-      <ol :if={@builds != []} class="build-list">
-        <li :for={build <- @builds} id={"build-#{build.id}"}>
-          <.link navigate={~p"/#{@project.slug}/builds/#{build.number}"} class="build-row">
-            <.app_icon project={@project} build={build} size={44} />
+      <ol :if={@rows != []} class="build-list">
+        <li :for={{build, older} <- @rows} id={"build-#{build.id}"}>
+          <.link navigate={Viewer.build_path(@viewer, build)} class="build-row">
+            <.app_icon
+              project={@project}
+              build={build}
+              size={44}
+              src={Viewer.icon_path(@viewer, build)}
+            />
             <span class="build-row-main">
               <span class="build-row-title">
-                {version_label(build)}
+                <span :if={build.pr_number}>PR #{build.pr_number}</span>
+                <span :if={!build.pr_number}>{version_label(build)}</span>
                 <span class="muted">#{build.number}</span>
               </span>
               <span class="build-row-meta">
-                <span :if={build.pr_number}>PR #{build.pr_number}</span>
-                <span :if={build.branch && !build.pr_number}>{build.branch}</span>
+                <span :if={build.pr_number}>{version_label(build)}</span>
+                <span :if={build.bucket == "manual" && build.branch}>{build.branch}</span>
                 <span :if={build.commit_message} class="truncate">{first_line(build.commit_message)}</span>
+              </span>
+              <span :if={older > 0} class="build-row-meta">
+                {older} earlier {if older == 1, do: "build", else: "builds"}
               </span>
               <.progress_bar :if={build.state == "uploading"} build={build} />
             </span>
             <span class="build-row-side">
+              <.signing_badge build={build} />
               <.state_badge build={build} />
               <.relative_time id={"build-#{build.id}-time"} at={build.inserted_at} />
             </span>
@@ -86,8 +99,8 @@ defmodule BuildDistroWeb.BuildsLive do
         </li>
       </ol>
 
-      <div :if={@builds == []} class="empty">
-        <p class="empty-title">No builds yet</p>
+      <div :if={@rows == []} class="empty">
+        <p class="empty-title">No {String.downcase(Build.bucket_label(@bucket))} builds yet</p>
         <p class="muted">Builds appear here the moment CI starts uploading them.</p>
       </div>
     </Layouts.app>

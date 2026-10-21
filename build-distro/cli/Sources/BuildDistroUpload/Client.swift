@@ -98,6 +98,10 @@ public struct BuildDistroClient: Sendable {
         _ = try? await transport.send(request, body: body)
     }
 
+    public func putChangelog(buildID: Int, _ changelog: Changelog) async throws {
+        _ = try await perform("PUT", "builds/\(buildID)/changelog", body: changelog)
+    }
+
     enum Completion: Equatable {
         case completed(Build)
         case incomplete(kind: String, missingParts: [Int])
@@ -129,19 +133,23 @@ public struct BuildDistroClient: Sendable {
     private func call<Body: Encodable & Sendable, Response: Decodable & Sendable>(
         _ method: String, _ path: String, body: Body?
     ) async throws -> Response {
+        try decoder.decode(Response.self, from: try await perform(method, path, body: body))
+    }
+
+    /// Sends a request with retries and returns the response body.
+    private func perform<Body: Encodable & Sendable>(_ method: String, _ path: String, body: Body?) async throws -> Data {
         var request = request(method, path)
         let data = try body.map { try encoder.encode($0) }
         if data != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
 
         do {
-            let responseBody = try await retry.run { [transport, request] in
+            return try await retry.run { [transport, request] in
                 let (responseBody, response) = try await transport.send(request, body: data)
                 guard (200 ..< 300).contains(response.statusCode) else {
                     throw HTTPStatusError.status(response.statusCode, responseBody)
                 }
                 return responseBody
             }
-            return try decoder.decode(Response.self, from: responseBody)
         } catch let HTTPStatusError.status(code, body) {
             throw UploadError.rejected(status: code, message: String(decoding: body, as: UTF8.self))
         }

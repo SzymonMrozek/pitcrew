@@ -43,6 +43,18 @@ actor StartedBuild {
     func set(_ build: Build) { self.build = build }
 }
 
+/// The changelog comes from GitHub, so it needs the job's token; without it
+/// the build page shows the commit message instead. A failure only warns.
+func sendChangelog(for build: Build, reporter: GitHubReporter?, client: BuildDistroClient) async {
+    guard let reporter, let changelog = await reporter.changelog(for: build) else { return }
+    do {
+        try await client.putChangelog(buildID: build.id, changelog)
+        print("Changelog: \(changelog.commits.count) commits (\(changelog.kind))")
+    } catch {
+        print("::warning::Couldn't send the changelog: \(error)")
+    }
+}
+
 func failedBuild(_ build: Build, _ reason: String) -> Build {
     var build = build
     build.state = "failed"
@@ -80,6 +92,7 @@ do {
         var build = try await uploader.upload(artifacts, metadata: options.metadata) { build in
             await started.set(build)
             await reporter?.started(build)
+            await sendChangelog(for: build, reporter: reporter, client: uploader.client)
         }
         if options.wait {
             build = try await uploader.waitUntilProcessed(build, timeout: options.timeout)

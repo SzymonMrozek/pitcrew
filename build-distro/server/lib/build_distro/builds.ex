@@ -33,33 +33,60 @@ defmodule BuildDistro.Builds do
 
   ## Reading
 
-  @doc "Builds for a list page, newest first. `filter` is `:all`, `:pull_requests` or a branch."
-  def list_builds(project, filter \\ :all, limit \\ 50) do
+  @doc "A bucket's builds, newest first."
+  def list_builds(project, bucket, limit \\ 100) do
     Build
-    |> where(project_id: ^project.id)
+    |> where(project_id: ^project.id, bucket: ^bucket)
     |> where([b], b.state != "expired")
-    |> filter_builds(filter)
     |> order_by(desc: :number)
     |> limit(^limit)
     |> Repo.all()
     |> with_progress()
   end
 
-  defp filter_builds(query, :all), do: query
-  defp filter_builds(query, :pull_requests), do: where(query, [b], not is_nil(b.pr_number))
-  defp filter_builds(query, branch) when is_binary(branch), do: where(query, branch: ^branch)
-
-  @doc "Branches with builds, the most recently built first."
-  def list_branches(project) do
+  @doc "How many builds each bucket holds."
+  def bucket_counts(project) do
     Repo.all(
       from b in Build,
-        where: b.project_id == ^project.id and not is_nil(b.branch) and b.state != "expired",
-        group_by: b.branch,
-        order_by: [desc: max(b.number)],
-        select: b.branch,
+        where: b.project_id == ^project.id and b.state != "expired",
+        group_by: b.bucket,
+        select: {b.bucket, count(b.id)}
+    )
+    |> Map.new()
+  end
+
+  @doc "The other builds of a build's pull request, newest first."
+  def pull_request_builds(%Build{pr_number: nil}), do: []
+
+  def pull_request_builds(%Build{} = build) do
+    Repo.all(
+      from b in Build,
+        where:
+          b.project_id == ^build.project_id and b.pr_number == ^build.pr_number and
+            b.id != ^build.id and b.state != "expired",
+        order_by: [desc: b.number],
         limit: 20
     )
   end
+
+  @doc """
+  The commit a main build's changelog starts after: that of the previous
+  ready build on main. Commits of failed builds in between roll into the next
+  one that testers can install.
+  """
+  def previous_main_commit(%Build{bucket: "main"} = build) do
+    Repo.one(
+      from b in Build,
+        where:
+          b.project_id == ^build.project_id and b.bucket == "main" and b.state == "ready" and
+            b.number < ^build.number and not is_nil(b.commit_sha),
+        order_by: [desc: b.number],
+        limit: 1,
+        select: b.commit_sha
+    )
+  end
+
+  def previous_main_commit(_build), do: nil
 
   def get_build(project, number) do
     case Repo.get_by(Build, project_id: project.id, number: number) do
@@ -203,9 +230,14 @@ defmodule BuildDistro.Builds do
     number =
       Repo.one(from b in Build, where: b.project_id == ^project.id, select: max(b.number)) || 0
 
+    changeset = Build.create_changeset(%Build{project_id: project.id, number: number + 1}, attrs)
+
     changeset =
-      %Build{project_id: project.id, number: number + 1}
-      |> Build.create_changeset(attrs)
+      Ecto.Changeset.put_change(
+        changeset,
+        :bucket,
+        Build.bucket_for(Ecto.Changeset.apply_changes(changeset), project.main_branch)
+      )
 
     with {:ok, build} <- Repo.insert(changeset),
          :ok <- insert_artifacts(build, artifacts) do
@@ -535,6 +567,17 @@ defmodule BuildDistro.Builds do
         {:ok, build}
       end
     end)
+  end
+
+  ## Changelog
+
+  @doc "Stores the changelog CI sent; see `BuildDistro.Changelog.put/2`."
+  def put_changelog(%Build{state: "expired"}, _params), do: {:error, {:state, "expired"}}
+
+  def put_changelog(%Build{} = build, params) do
+    with {:ok, build} <- BuildDistro.Changelog.put(build, params) do
+      {:ok, broadcast(build)}
+    end
   end
 
   ## Processing results

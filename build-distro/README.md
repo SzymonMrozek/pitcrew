@@ -1,7 +1,7 @@
 # build-distro
 
-Self-hosted ad hoc build distribution for iOS: CI uploads an IPA, testers
-open a link on their iPhone and tap Install. Like Firebase App Distribution
+Self-hosted build distribution for iOS, ad hoc and in-house: CI uploads an
+IPA, testers open a link on their iPhone and tap Install. Like Firebase App Distribution
 or Runway's build distro, on a server you own, for the price of a small VM
 and an S3 bucket.
 
@@ -16,9 +16,18 @@ and an S3 bucket.
 - **GitHub without any stored token.** The upload step sets a commit status
   and keeps one PR comment up to date, using the job's own short-lived token.
   The server never talks to GitHub.
+- **Main, Pull requests and Manual.** Builds are listed by where they came
+  from: the main branch, a pull request (one row per PR), or any other branch.
+- **Changelogs that mean something.** A pull request lists what it adds to
+  main; a main build lists every commit since the previous main build.
+  Conventional Commits marked as tooling (types like `chore` or `refactor`,
+  scopes like `tooling`) go last, folded away. The rules are per project.
+- **Ad hoc and in-house signing.** In-house builds say they install on any
+  device and how to trust the team; ad hoc builds show the profile's devices.
 - **dSYMs stored with each build**, for download.
-- **Access by invite.** One link per tester plus a project passcode; revoking
-  a link takes effect immediately.
+- **Three ways in.** Admins sign in with GitHub. Testers get one invite link
+  each plus a project passcode. A public link shows one bucket to anyone who
+  has it. Revoking any of them takes effect immediately.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for why it works this way.
 
@@ -32,7 +41,7 @@ permissions:
 
 # ...
 
-- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.1.0
+- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.2.0
   with:
     server: https://builds.example.com
     api-key: ${{ secrets.BUILD_DISTRO_API_KEY }}
@@ -45,6 +54,11 @@ universal macOS binary), checks its SHA-256 and caches it. It reads the
 branch, commit, PR, PR title and run link from GitHub, and waits until the
 build is ready. Outputs: `url` and `number`. A full workflow is in
 [examples/github-actions.yml](examples/github-actions.yml).
+
+The changelog comes from GitHub's compare API with the same token, which needs
+`contents: read`: what a pull request adds to its base branch, what a main
+build adds to the previous ready main build, or what another branch adds to
+main. Merge commits are left out.
 
 GitHub reporting uses the job's `GITHUB_TOKEN`, which GitHub creates for each
 job, limits to the repository and the `permissions` above, and revokes when
@@ -82,18 +96,24 @@ VM, Cloudflare R2 and a Cloudflare Tunnel.
 4. **Deploy.**
 
    ```bash
-   git clone --branch build-distro-v0.1.0 https://github.com/SzymonMrozek/pitcrew.git
+   git clone --branch build-distro-v0.2.0 https://github.com/SzymonMrozek/pitcrew.git
    cd pitcrew/build-distro
    cp examples/env.example .env   # then fill it in
    docker compose up --detach --build --wait
    ```
 
-5. **Project.** Sign in at `/admin` with `ADMIN_PASSWORD`, create a project and
-   save its API key as the `BUILD_DISTRO_API_KEY` secret of your repository.
-   Setting the GitHub repository only adds commit and PR links to build pages.
-6. **Testers.** Create one invite per tester and send it with the passcode.
+5. **Admins.** Create a GitHub OAuth App (Settings → Developer settings →
+   OAuth Apps) with the callback `https://<your host>/auth/github/callback`.
+   It requests no scopes and can't touch repositories. Put its client ID and
+   secret in `.env`, with the GitHub logins allowed in as `ADMIN_GITHUB_LOGINS`.
+6. **Project.** Sign in at `/admin`, create a project and save its API key as
+   the `BUILD_DISTRO_API_KEY` secret of your repository. The GitHub repository
+   adds commit, PR and compare links; the main branch decides which builds go
+   to Main; the tooling rules decide what goes last in changelogs.
+7. **Testers.** Create one invite per tester and send it with the passcode.
    Invites open the project in the browser they're accepted in; testers open
-   them in Safari on their iPhone.
+   them in Safari on their iPhone. For people without an invite, create a
+   public link for a bucket, such as Main.
 
 To update, check out a newer tag and run `docker compose up --detach --build`.
 Open pages reconnect by themselves.

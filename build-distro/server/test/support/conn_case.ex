@@ -25,10 +25,15 @@ defmodule BuildDistroWeb.ConnCase do
 
     on_exit(fn ->
       BuildDistro.RateLimiter.reset({:join, "127.0.0.1"})
-      BuildDistro.RateLimiter.reset({:admin, "127.0.0.1"})
     end)
 
     {:ok, conn: Phoenix.ConnTest.build_conn()}
+  end
+
+  @doc "A browser signed in as an admin listed in the test config."
+  def sign_in_admin(conn) do
+    {:ok, user} = BuildDistro.Accounts.sign_in(%{"id" => 4242, "login" => "admin-login"})
+    Plug.Test.init_test_session(conn, %{"user_id" => user.id})
   end
 
   @doc "A browser that accepted an invite to `project`."

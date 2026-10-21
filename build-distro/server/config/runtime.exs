@@ -30,7 +30,15 @@ if config_env() == :prod do
     access_key_id: require_env.("S3_ACCESS_KEY_ID"),
     secret_access_key: require_env.("S3_SECRET_ACCESS_KEY")
 
-  config :build_distro, :admin_password, require_env.("ADMIN_PASSWORD")
+  # GitHub logins that may sign in as admins, comma-separated.
+  config :build_distro,
+         :admin_github_logins,
+         "ADMIN_GITHUB_LOGINS" |> System.get_env("") |> String.split(~r/[,\s]+/, trim: true)
+
+  # A GitHub OAuth App with the callback https://<host>/auth/github/callback.
+  config :build_distro, :github_oauth,
+    client_id: System.get_env("GITHUB_CLIENT_ID"),
+    client_secret: System.get_env("GITHUB_CLIENT_SECRET")
 
   config :build_distro, :retention,
     days: String.to_integer(System.get_env("RETENTION_DAYS", "30"))

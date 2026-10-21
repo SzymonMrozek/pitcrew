@@ -43,7 +43,9 @@ defmodule BuildDistroWeb.AdminLive do
     <Layouts.app flash={@flash} admin?={true}>
       <div class="admin-header">
         <h1>Projects</h1>
-        <.link href={~p"/admin/logout"} method="delete" class="muted">Sign out</.link>
+        <span class="muted">
+          @{@current_admin.login} · <.link href={~p"/admin/logout"} method="delete">Sign out</.link>
+        </span>
       </div>
 
       <section :if={@created} class="card secret">

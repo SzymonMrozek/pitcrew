@@ -29,16 +29,93 @@ defmodule BuildDistroWeb.BuildPagesTest do
     assert html =~ "1.4.0 (412)"
   end
 
-  test "the list updates live", %{conn: conn, project: project} do
+  test "builds are listed by bucket, live", %{conn: conn, project: project} do
     {:ok, view, _} = live(conn, ~p"/#{project.slug}")
-    build = ready_build(project, %{"pr_number" => 42})
+    ready_build(project, %{"branch" => "main"})
 
-    html = render(view)
+    assert render(view) =~ "1.4.0 (412)"
+
+    ready_build(project, %{"branch" => "feature/a", "pr_number" => 42})
+    ready_build(project, %{"branch" => "feature/a", "pr_number" => 42})
+    html = view |> element("a.tab", "Pull requests") |> render_click()
     assert html =~ "PR #42"
-    assert html =~ "Ready"
-    assert view |> element("a", "Pull requests") |> render_click() =~ "1.4.0 (412)"
-    assert render_patch(view, ~p"/#{project.slug}?filter=other-branch") =~ "No builds yet"
-    assert build.number == 1
+    assert html =~ "1 earlier build"
+
+    ready_build(project, %{"branch" => "experiment"})
+    assert view |> element("a.tab", "Manual") |> render_click() =~ "experiment"
+    assert render(view) =~ ~r/Main\s*<span[^>]*class="tab-count">1</
+  end
+
+  test "a public link shows only its bucket, without signing in", %{project: project} do
+    main = ready_build(project, %{"branch" => "main"})
+    pr = ready_build(project, %{"branch" => "feature/a", "pr_number" => 7})
+    {:ok, _link, token} = BuildDistro.Projects.create_public_link(project, "main")
+    public = build_conn()
+
+    {:ok, _view, html} = live(public, ~p"/#{project.slug}/p/#{token}")
+    assert html =~ "Main builds"
+    refute html =~ "PR #7"
+    refute html =~ ~s(class="tabs")
+
+    {:ok, _view, html} = live(public, ~p"/#{project.slug}/p/#{token}/builds/#{main.number}")
+    assert html =~ "itms-services://"
+    refute html =~ "Downloads"
+
+    assert {:error, {:live_redirect, _}} =
+             live(public, ~p"/#{project.slug}/p/#{token}/builds/#{pr.number}")
+
+    assert public
+           |> get(~p"/#{project.slug}/p/#{token}/builds/#{main.number}/icon.png")
+           |> response(200)
+
+    assert public
+           |> get(~p"/#{project.slug}/p/#{token}/builds/#{pr.number}/icon.png")
+           |> response(404)
+
+    assert public |> get(~p"/#{project.slug}/builds/#{main.number}/download/ipa") |> response(404)
+    assert {:error, _} = live(public, ~p"/#{project.slug}")
+  end
+
+  test "in-house builds say they install anywhere and how to trust them", %{
+    conn: conn,
+    project: project
+  } do
+    ipa = ipa_fixture(profile: profile_fixture(:enterprise))
+    build = upload_build(project, [{"ipa", ipa}])
+    :ok = perform_job(BuildDistro.Workers.ProcessBuild, %{build_id: build.id})
+
+    {:ok, _view, html} = live(conn, ~p"/#{project.slug}/builds/#{build.number}")
+    assert html =~ "In-house"
+    assert html =~ "installs on any device"
+    assert html =~ "VPN &amp; Device Management"
+  end
+
+  test "the changelog lists app changes first and tooling last", %{conn: conn, project: project} do
+    build = ready_build(project, %{"branch" => "feature/a", "pr_number" => 9})
+
+    {:ok, _} =
+      BuildDistro.Builds.put_changelog(build, %{
+        "kind" => "pull_request",
+        "base" => "aaaaaaa",
+        "head" => build.commit_sha,
+        "commits" => [
+          %{
+            "sha" => "1111111",
+            "message" => "chore(tooling): bump the linter",
+            "author" => "dev"
+          },
+          %{"sha" => "2222222", "message" => "feat(trade): add stop orders", "author" => "dev"},
+          %{"sha" => "3333333", "message" => "fix(tooling): flaky script"}
+        ]
+      })
+
+    {:ok, _view, html} = live(conn, ~p"/#{project.slug}/builds/#{build.number}")
+    assert html =~ "Changes in this pull request"
+    [app, tooling] = String.split(html, "Tooling and internal changes (2)")
+    assert app =~ "add stop orders"
+    refute app =~ "bump the linter"
+    assert tooling =~ "bump the linter"
+    assert tooling =~ "flaky script"
   end
 
   test "an older build points at the newer one", %{conn: conn, project: project} do

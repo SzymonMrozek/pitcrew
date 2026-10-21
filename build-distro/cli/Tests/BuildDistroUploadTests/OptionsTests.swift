@@ -5,7 +5,7 @@ import Testing
 @Suite struct OptionsTests {
     @Test func readsPullRequestsFromTheGitHubEvent() throws {
         let event = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).json")
-        try Data(#"{"pull_request":{"number":42,"title":"Add widgets","head":{"sha":"abc123def4567"}}}"#.utf8).write(to: event)
+        try Data(#"{"pull_request":{"number":42,"title":"Add widgets","head":{"sha":"abc123def4567"},"base":{"ref":"develop"}}}"#.utf8).write(to: event)
 
         let options = try Options(arguments: ["--ipa", "App.ipa", "--wait"], environment: [
             "BUILD_DISTRO_URL": "https://builds.example",
@@ -31,6 +31,14 @@ import Testing
             commitMessage: "Add widgets"
         ))
         #expect(options.wait)
+        #expect(options.gitHub == nil)
+
+        let reporting = try Options(arguments: ["--ipa", "App.ipa"], environment: [
+            "BUILD_DISTRO_URL": "https://builds.example", "BUILD_DISTRO_API_KEY": "bd_key", "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_PATH": event.path, "GITHUB_TOKEN": "job-token", "GITHUB_REPOSITORY": "example/app",
+        ])
+        #expect(reporting.gitHub?.baseRef == "develop")
+        #expect(reporting.gitHub?.pullRequest == 42)
     }
 
     @Test func flagsOverrideTheEnvironment() throws {

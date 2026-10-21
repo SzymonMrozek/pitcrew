@@ -50,6 +50,11 @@ The upload, step by step:
 6. CI waits for `ready`, then sets the commit status and creates or edits one
    PR comment, with the job's own `GITHUB_TOKEN`.
 
+Right after the build starts, CI also asks GitHub's compare API what the build
+adds and sends the commits to `PUT /api/v1/builds/:id/changelog`. The start
+response tells it the build's bucket and, for main, the commit of the previous
+ready main build.
+
 ## Invariants
 
 These are the properties that make it work. If you build your own, keep them,
@@ -84,10 +89,18 @@ whatever your stack.
    Pages refresh their tokens long before they expire.
 9. **Secrets stay out of the database.** The database is replicated to the
    bucket. API keys and passcodes are stored as hashes.
-10. **The server holds no GitHub credentials.** CI reports to GitHub with the
-   job's token, which is scoped to the repository and expires with the job. A
-   leaked server can't touch your repositories, and organizations don't need to
-   allow personal access tokens.
+10. **The server holds no repository credentials.** CI reports to GitHub and
+   reads changelogs with the job's token, which is scoped to the repository
+   and expires with the job. Admin sign-in uses an OAuth App that requests no
+   scopes and drops its token after reading the profile. A leaked server can't
+   touch your repositories.
+11. **Access is decided per request, from the source of truth.** Admins are
+   the GitHub logins in `ADMIN_GITHUB_LOGINS`, checked on every request, not
+   a flag stored at sign-in. Invites and public links are rows that revocation
+   flips. A public link sees exactly one bucket; its pages, icons and install
+   links all check that bucket, and it never gets dSYM or IPA downloads.
+12. **Changelogs are stored raw and grouped when shown.** Editing a project's
+   tooling rules regroups every build, old ones included.
 
 ## Incidental choices
 
@@ -98,9 +111,13 @@ Replace these freely.
   keeps invariants 5 and 6.
 - **SQLite with Litestream** instead of Postgres. One file, one process, a
   continuous backup to the bucket you already pay for.
-- **Invite links plus a project passcode** for testers. An invite alone leaks
-  when forwarded; a passcode alone can't be revoked per person. GitHub or OIDC
-  sign-in would also work.
+- **Invite links plus a project passcode** for testers, GitHub only for
+  admins. Testers such as QA or product people often have no GitHub account.
+  An invite alone leaks when forwarded; a passcode alone can't be revoked per
+  person.
+- **Buckets from the git context**, not configured per build: a PR number
+  means Pull requests, the project's main branch means Main, anything else is
+  Manual.
 - **Cloudflare R2.** Any S3-compatible store works; tests use MinIO.
 - **No frontend build step.** LiveView's prebuilt JavaScript and one CSS file
   are served as they are, so a release build needs no Node, esbuild or
