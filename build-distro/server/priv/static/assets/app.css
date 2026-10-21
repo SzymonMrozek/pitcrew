@@ -78,10 +78,9 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size:
 
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 600; }
 .brand:hover { text-decoration: none; }
-.brand-mark {
-  width: 22px; height: 22px; border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent), #8a5bff);
-}
+.brand-mark { width: 24px; height: 24px; display: block; }
+.hero-mark { width: 96px; height: 96px; display: block; margin: 0 auto 16px; }
+.card .hero-mark { margin: 0 0 12px; width: 72px; height: 72px; }
 .topbar-links { display: flex; gap: 16px; font-size: 0.95rem; }
 
 .page { max-width: 760px; margin: 0 auto; padding: 4px 16px calc(48px + env(safe-area-inset-bottom)); }

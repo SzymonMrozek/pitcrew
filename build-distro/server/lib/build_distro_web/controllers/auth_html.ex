@@ -5,6 +5,7 @@ defmodule BuildDistroWeb.AuthHTML do
     ~H"""
     <Layouts.app flash={@flash}>
       <div class="card narrow">
+        <img src={~p"/images/pitcrew-mark.svg"} class="hero-mark" alt="" />
         <h1>Admin</h1>
         <p class="muted">Admins sign in with GitHub to manage projects, invites and links.</p>
         <p :if={@error} class="field-error">{@error}</p>

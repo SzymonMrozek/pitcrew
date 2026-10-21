@@ -1,4 +1,9 @@
-# pitcrew
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/pitcrew-lockup-dark.svg">
+    <img alt="pitcrew" src="assets/logo/pitcrew-lockup-light.svg" width="440">
+  </picture>
+</h1>
 
 The tools I built for my own iOS work, where one app is developed in many
 places at once: several git worktrees, several simulators, several coding

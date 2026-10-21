@@ -15,7 +15,7 @@ defmodule BuildDistroWeb.Layouts do
     ~H"""
     <header class="topbar">
       <a href={@home || if(@project, do: ~p"/#{@project.slug}", else: ~p"/")} class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <img src={~p"/favicon.svg"} class="brand-mark" alt="" />
         <span>{if @project, do: @project.name, else: "build-distro"}</span>
       </a>
       <nav class="topbar-links">
