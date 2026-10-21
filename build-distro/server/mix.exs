@@ -62,7 +62,7 @@ defmodule BuildDistro.MixProject do
       "assets.vendor": &vendor_assets/1,
       "assets.deploy": ["assets.vendor", "phx.digest"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+      test: ["assets.vendor", "ecto.create --quiet", "ecto.migrate --quiet", "test"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end

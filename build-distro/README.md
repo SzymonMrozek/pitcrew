@@ -41,7 +41,7 @@ permissions:
 
 # ...
 
-- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.2.2
+- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.2.3
   with:
     server: https://builds.example.com
     api-key: ${{ secrets.BUILD_DISTRO_API_KEY }}
@@ -96,7 +96,7 @@ VM, Cloudflare R2 and a Cloudflare Tunnel.
 4. **Deploy.**
 
    ```bash
-   git clone --branch build-distro-v0.2.2 https://github.com/SzymonMrozek/pitcrew.git
+   git clone --branch build-distro-v0.2.3 https://github.com/SzymonMrozek/pitcrew.git
    cd pitcrew/build-distro
    cp examples/env.example .env   # then fill it in
    docker compose up --detach --build --wait
