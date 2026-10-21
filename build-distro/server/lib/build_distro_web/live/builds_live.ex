@@ -15,7 +15,7 @@ defmodule BuildDistroWeb.BuildsLive do
   def mount(_params, _session, socket) do
     # Subscribe before loading, so no update can fall between the two.
     if connected?(socket), do: Builds.subscribe(socket.assigns.project)
-    {:ok, assign(socket, page_title: socket.assigns.project.name)}
+    {:ok, assign(socket, page_title: Layouts.title(socket.assigns.project.name))}
   end
 
   @impl true

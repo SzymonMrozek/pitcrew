@@ -9,7 +9,12 @@ defmodule BuildDistroWeb.AuthController do
   def new(conn, _params) do
     if Access.admin?(get_session(conn)),
       do: redirect(conn, to: ~p"/admin"),
-      else: render(conn, :new, configured?: GitHubOAuth.configured?(), error: nil)
+      else:
+        render(conn, :new,
+          configured?: GitHubOAuth.configured?(),
+          error: nil,
+          page_title: title()
+        )
   end
 
   # The state ties the callback to this browser, so a forged callback can't
@@ -49,6 +54,8 @@ defmodule BuildDistroWeb.AuthController do
   defp failed(conn, message) do
     conn
     |> put_status(:unauthorized)
-    |> render(:new, configured?: GitHubOAuth.configured?(), error: message)
+    |> render(:new, configured?: GitHubOAuth.configured?(), error: message, page_title: title())
   end
+
+  defp title, do: BuildDistroWeb.Layouts.title("Admin sign-in")
 end

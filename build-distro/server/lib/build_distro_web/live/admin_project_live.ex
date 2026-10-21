@@ -18,7 +18,7 @@ defmodule BuildDistroWeb.AdminProjectLive do
         {:ok,
          socket
          |> assign(
-           page_title: "#{project.name} · Admin",
+           page_title: Layouts.title("Admin · #{project.name}"),
            new_invite_url: nil,
            new_api_key: nil,
            new_public_url: nil

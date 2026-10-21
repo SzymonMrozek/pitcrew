@@ -5,6 +5,9 @@ defmodule BuildDistroWeb.Layouts do
 
   embed_templates "layouts/*"
 
+  @doc "A tab title that starts with the product: `build-distro · Admin`."
+  def title(page), do: "build-distro · " <> page
+
   attr :flash, :map, required: true
   attr :project, :map, default: nil
   attr :admin?, :boolean, default: false
@@ -15,7 +18,7 @@ defmodule BuildDistroWeb.Layouts do
     ~H"""
     <header class="topbar">
       <a href={@home || if(@project, do: ~p"/#{@project.slug}", else: ~p"/")} class="brand">
-        <img src={~p"/favicon.svg"} class="brand-mark" alt="" />
+        <img src={~p"/images/favicon.svg"} class="brand-mark" alt="" />
         <span>{if @project, do: @project.name, else: "build-distro"}</span>
       </a>
       <nav class="topbar-links">

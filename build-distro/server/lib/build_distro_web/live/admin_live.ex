@@ -9,7 +9,7 @@ defmodule BuildDistroWeb.AdminLive do
   def mount(_params, _session, socket) do
     {:ok,
      assign(socket,
-       page_title: "Admin",
+       page_title: Layouts.title("Admin"),
        projects: Projects.list_projects(),
        form: to_form(Projects.change_project()),
        created: nil

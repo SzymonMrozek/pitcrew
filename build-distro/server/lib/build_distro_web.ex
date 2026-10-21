@@ -17,9 +17,10 @@ defmodule BuildDistroWeb do
   those modules here.
   """
 
-  def static_paths,
-    do:
-      ~w(assets fonts images favicon.ico favicon.svg favicon-32.png apple-touch-icon.png robots.txt)
+  # Fingerprinted copies only match a directory here, so referenced icons
+  # live in images/. favicon.ico and apple-touch-icon.png stay at the root for
+  # browsers that ask for those exact paths.
+  def static_paths, do: ~w(assets fonts images favicon.ico apple-touch-icon.png robots.txt)
 
   def router do
     quote do

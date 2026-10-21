@@ -54,7 +54,8 @@ defmodule BuildDistroWeb.BuildLive do
     |> assign(
       build: build,
       changelog: Changelog.grouped(build, socket.assigns.project),
-      page_title: "#{version_label(build)} ##{build.number} · #{socket.assigns.project.name}"
+      page_title:
+        Layouts.title("#{socket.assigns.project.name} · #{version_label(build)} ##{build.number}")
     )
     |> assign_related(build)
     |> assign_links()

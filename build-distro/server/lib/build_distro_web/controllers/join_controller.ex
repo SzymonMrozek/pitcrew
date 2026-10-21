@@ -12,7 +12,12 @@ defmodule BuildDistroWeb.JoinController do
   def new(conn, %{"project" => slug, "token" => token}) do
     with %{} = project <- Projects.get_project_by_slug(slug),
          %{} <- Projects.find_active_invite(project, token) do
-      render(conn, :new, project: project, token: token, error: nil)
+      render(conn, :new,
+        project: project,
+        token: token,
+        error: nil,
+        page_title: BuildDistroWeb.Layouts.title(project.name)
+      )
     else
       _ -> invalid(conn)
     end
@@ -28,7 +33,8 @@ defmodule BuildDistroWeb.JoinController do
           |> render(:new,
             project: project,
             token: token,
-            error: "Too many attempts. Try again in a few minutes."
+            error: "Too many attempts. Try again in a few minutes.",
+            page_title: BuildDistroWeb.Layouts.title(project.name)
           )
 
         Projects.verify_passcode(project, passcode) ->
@@ -39,7 +45,12 @@ defmodule BuildDistroWeb.JoinController do
         true ->
           conn
           |> put_status(:unauthorized)
-          |> render(:new, project: project, token: token, error: "That passcode isn't right.")
+          |> render(:new,
+            project: project,
+            token: token,
+            error: "That passcode isn't right.",
+            page_title: BuildDistroWeb.Layouts.title(project.name)
+          )
       end
     else
       _ -> invalid(conn)
