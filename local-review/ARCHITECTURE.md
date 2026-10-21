@@ -42,7 +42,8 @@ Keep these, whatever your stack.
    approval revision hashes each file's path, before/after bytes and mode.
    Another worktree advancing the target, or committing the same content, keeps
    the approval valid. A content change the reviewer didn't see invalidates it.
-2. **Execution re-freezes content at every step.** Content is checked after
+2. **Execution re-freezes content at every step.** Configured preparation runs
+   before freezing content and expensive validation. Content is checked after
    the merge checks run, after staging and after committing. Any drift stops
    the attempt. Files can change while a long validation runs.
 3. **A withdrawn approval never merges.** Every attempt rereads the request
@@ -93,11 +94,11 @@ Each of these cost real debugging time.
   can be the one being merged. The server keeps its web assets in memory, and it
   copies `server.py` and `agent.py` to a versioned runtime directory in the Git
   common dir before it launches workers.
-- **A headless agent that ends its turn kills its background jobs.** Workers
-  started execution in the background and then finished their turn, so the merge
-  died silently. Each attempt now records its PID. An exited PID returns the
-  approval to pending, and the prompt tells the agent never to end its turn while
-  execution runs.
+- **A shell timeout can kill a merge halfway through validation.** The execution
+  CLI launches a separate session with file-backed output and no inherited stdin.
+  It records the worker PID before returning; repeated launches reuse a live
+  worker. An exited PID returns the approval to pending. Agents poll the saved
+  request until completion instead of owning the merge's process lifetime.
 - **Agents launched by agents inherit session markers.** A Claude session
   started from Codex has both `CLAUDECODE` and `CODEX_THREAD_ID` set. The nearest
   agent process in the ancestry decides which one is calling. Workers clear every
