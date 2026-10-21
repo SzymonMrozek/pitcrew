@@ -1,0 +1,16 @@
+# S3-compatible server for tests and local development. SeaweedFS checks
+# signatures, so presigned URLs are verified the way R2 verifies them.
+name: build-distro-s3
+
+services:
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -master.volumeSizeLimitMB=256
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz || exit 1"]
+      interval: 2s
+      retries: 30

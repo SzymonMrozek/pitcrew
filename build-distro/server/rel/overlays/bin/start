@@ -1,0 +1,12 @@
+#!/bin/sh
+# Restores the database from the bucket when the volume is empty (a new or
+# replaced VM), then runs the server under Litestream so every write is
+# streamed back. LITESTREAM=off runs the server alone.
+set -eu
+
+if [ "${LITESTREAM:-on}" = "off" ]; then
+  exec /app/bin/build_distro start
+fi
+
+litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$DATABASE_PATH"
+exec litestream replicate -config /etc/litestream.yml -exec "/app/bin/build_distro start"

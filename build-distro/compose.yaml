@@ -1,0 +1,25 @@
+# Production: the server and a Cloudflare Tunnel, which is the only way in.
+# No ports are published; see examples/env.example for the settings.
+name: build-distro
+
+services:
+  app:
+    build: ./server
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - data:/data
+    stop_grace_period: 30s
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  data:

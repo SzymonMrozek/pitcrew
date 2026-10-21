@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "build-distro",
+      "credentials": [{ "accessKey": "build-distro", "secretKey": "build-distro-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

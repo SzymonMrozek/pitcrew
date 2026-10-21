@@ -1,0 +1,106 @@
+name: build-distro upload
+description: Uploads an ad hoc IPA (and dSYMs) to a build-distro server, then reports it on the commit and pull request with the job's own token.
+
+inputs:
+  server:
+    description: The build-distro address, for example https://builds.example.com
+    required: true
+  api-key:
+    description: The project's API key. Pass it from a secret.
+    required: true
+  ipa:
+    description: Path to the IPA.
+    required: true
+  dsyms:
+    description: Path to a dSYMs zip or folder.
+    required: false
+  notes:
+    description: Release notes shown on the build page.
+    required: false
+  wait:
+    description: Wait until the build is ready, and fail if processing fails.
+    required: false
+    default: "true"
+  concurrency:
+    description: Parallel part uploads.
+    required: false
+    default: "6"
+  github-token:
+    description: >-
+      Token for the commit status and pull request comment. The job's own token
+      is enough with `statuses: write` and `pull-requests: write` permissions.
+      Set to an empty string to skip reporting.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  url:
+    description: The build page.
+    value: ${{ steps.upload.outputs.url }}
+  number:
+    description: The build number.
+    value: ${{ steps.upload.outputs.number }}
+
+runs:
+  using: composite
+  steps:
+    # The action downloads the binary released with its own tag, so pinning the
+    # action pins the client. Other refs build the client from source.
+    # github.action_ref is empty inside composite actions, so the repository and
+    # ref come from where the runner checked the action out:
+    # _actions/<owner>/<repo>/<ref>/build-distro.
+    - name: Install build-distro-upload
+      id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        if [[ "$(uname)" != Darwin ]]; then
+          echo "::error::build-distro-upload runs on macOS runners" >&2
+          exit 1
+        fi
+
+        ACTION_REF=""
+        if [[ "$ACTION_PATH" =~ /_actions/([^/]+)/([^/]+)/([^/]+)/build-distro/?$ ]]; then
+          ACTION_REPOSITORY="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+          ACTION_REF="${BASH_REMATCH[3]}"
+        fi
+
+        if [[ "$ACTION_REF" == build-distro-v* ]]; then
+          dir="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/build-distro-upload/${ACTION_REF}"
+          if [[ ! -x "$dir/build-distro-upload" ]]; then
+            base="https://github.com/${ACTION_REPOSITORY}/releases/download/${ACTION_REF}"
+            work="$(mktemp -d)"
+            curl -fsSL --retry 5 --retry-all-errors -o "$work/build-distro-upload.tar.gz" "$base/build-distro-upload.tar.gz"
+            curl -fsSL --retry 5 --retry-all-errors -o "$work/build-distro-upload.tar.gz.sha256" "$base/build-distro-upload.tar.gz.sha256"
+            (cd "$work" && shasum -a 256 -c build-distro-upload.tar.gz.sha256)
+            mkdir -p "$dir"
+            tar -xzf "$work/build-distro-upload.tar.gz" -C "$dir"
+          fi
+          echo "path=$dir/build-distro-upload" >> "$GITHUB_OUTPUT"
+        else
+          swift build -c release --package-path "$ACTION_PATH/cli" >&2
+          echo "path=$(swift build -c release --package-path "$ACTION_PATH/cli" --show-bin-path)/build-distro-upload" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload
+      id: upload
+      shell: bash
+      env:
+        BUILD_DISTRO_URL: ${{ inputs.server }}
+        BUILD_DISTRO_API_KEY: ${{ inputs.api-key }}
+        IPA: ${{ inputs.ipa }}
+        DSYMS: ${{ inputs.dsyms }}
+        NOTES: ${{ inputs.notes }}
+        WAIT: ${{ inputs.wait }}
+        CONCURRENCY: ${{ inputs.concurrency }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        BIN: ${{ steps.install.outputs.path }}
+      run: |
+        set -euo pipefail
+        args=(--ipa "$IPA" --concurrency "$CONCURRENCY")
+        [[ -n "$DSYMS" ]] && args+=(--dsyms "$DSYMS")
+        [[ -n "$NOTES" ]] && args+=(--notes "$NOTES")
+        [[ "$WAIT" == "true" ]] && args+=(--wait)
+        "$BIN" "${args[@]}"

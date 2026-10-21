@@ -1,0 +1,65 @@
+name: build-distro
+
+on:
+  push:
+    branches: [main]
+    tags: ["build-distro-v*"]
+    paths: ["build-distro/**", ".github/workflows/build-distro.yml"]
+  pull_request:
+    paths: ["build-distro/**", ".github/workflows/build-distro.yml"]
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: build-distro/server
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f test/s3/compose.yaml up -d --wait
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28.5"
+          elixir-version: "1.20.4"
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix format --check-formatted
+      - run: mix test
+      - name: Production image builds
+        run: docker build --tag build-distro .
+
+  cli:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: build-distro/cli
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/build-distro-v')
+    needs: [server, cli]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: build-distro/cli
+    steps:
+      - uses: actions/checkout@v4
+      # Universal, size-optimized and stripped: about 220 KB to download.
+      - name: Build the universal binary
+        run: |
+          swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize
+          mkdir -p dist
+          cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/build-distro-upload" dist/
+          strip -x dist/build-distro-upload
+          tar -czf build-distro-upload.tar.gz -C dist build-distro-upload
+          shasum -a 256 build-distro-upload.tar.gz > build-distro-upload.tar.gz.sha256
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build-distro-upload.tar.gz build-distro-upload.tar.gz.sha256 \
+            --title "$GITHUB_REF_NAME" --notes "build-distro server and upload client. See build-distro/README.md."

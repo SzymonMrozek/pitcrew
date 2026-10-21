@@ -1,0 +1,31 @@
+defmodule BuildDistroWeb.Layouts do
+  @moduledoc "The page skeleton and the header every page shares."
+
+  use BuildDistroWeb, :html
+
+  embed_templates "layouts/*"
+
+  attr :flash, :map, required: true
+  attr :project, :map, default: nil
+  attr :admin?, :boolean, default: false
+  slot :inner_block, required: true
+
+  def app(assigns) do
+    ~H"""
+    <header class="topbar">
+      <a href={if @project, do: ~p"/#{@project.slug}", else: ~p"/"} class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>{if @project, do: @project.name, else: "build-distro"}</span>
+      </a>
+      <nav class="topbar-links">
+        <a :if={@admin?} href={~p"/admin"}>Admin</a>
+      </nav>
+    </header>
+    <p class="connection" role="status">Reconnecting…</p>
+    <.flash_group flash={@flash} />
+    <main class="page">
+      {render_slot(@inner_block)}
+    </main>
+    """
+  end
+end

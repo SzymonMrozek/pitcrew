@@ -1,0 +1,38 @@
+# A job that builds an ad hoc IPA and distributes it. Pull requests get a
+# commit status and a PR comment with the install link, posted with the job's
+# own token: no GitHub token is stored anywhere.
+name: Distribute
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  distribute:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Your signing setup goes here: certificate, provisioning profiles.
+
+      - name: Archive and export
+        run: |
+          xcodebuild archive -scheme MyApp -archivePath build/MyApp.xcarchive -destination generic/platform=iOS
+          xcodebuild -exportArchive -archivePath build/MyApp.xcarchive \
+            -exportPath build -exportOptionsPlist AdHocExportOptions.plist
+
+      - name: Distribute
+        id: distribute
+        uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.1.0
+        with:
+          server: https://builds.example.com
+          api-key: ${{ secrets.BUILD_DISTRO_API_KEY }}
+          ipa: build/MyApp.ipa
+          dsyms: build/MyApp.xcarchive/dSYMs
+
+      - run: echo "Install from ${{ steps.distribute.outputs.url }}"
