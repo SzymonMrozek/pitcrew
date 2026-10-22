@@ -50,6 +50,11 @@ command = ["wt", "merge", "{target}", "--no-commit", "--no-rebase"]
 # Appended to the merge agent's instructions.
 instructions = "The Worktrunk pre-merge hook runs the affected tests; don't run them beforehand just to repeat them."
 
+# Optional: formatting before freezing content and running expensive checks.
+# [[merge.prepare]]
+# paths = ['\.swift$']
+# command = ["make", "format-changed"]
+
 # Runs before committing when any changed path matches one of `paths`.
 [[merge.checks]]
 paths = ['^(App|Modules)/', '^Project\.swift$']

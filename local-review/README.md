@@ -207,12 +207,18 @@ modes, not to the target's commit.
 Execution:
 
 1. checks that the approval is still pending, on the intended branch and target
-2. runs each configured merge check whose paths match, such as launching the app
-3. freezes the prepared files and stages them
-4. backs up the branch tip to `refs/wt-backup/<branch>`
-5. squashes to one commit with your description as its body
-6. runs the merge command (`wt merge <target> --no-commit --no-rebase` by
+2. runs matching `merge.prepare` commands (for example formatting), then freezes their output
+3. runs each configured merge check whose paths match, such as launching the app
+4. checks for content drift and stages the prepared files
+5. backs up the branch tip to `refs/wt-backup/<branch>`
+6. squashes to one commit with your description as its body
+7. runs the merge command (`wt merge <target> --no-commit --no-rebase` by
    default), which runs your Worktrunk hooks and removes the worktree
+
+The execution CLI starts a detached process and returns its `mergePid` and
+`executionLog`. It survives the launching shell's timeout or exit. Poll
+`--merge-request <id>` for completion and inspect the execution log for output;
+repeating execution while its PID is alive returns the existing process.
 
 It never pushes. A failed attempt returns the same approval to pending, so the
 agent fixes the cause and retries.

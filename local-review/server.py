@@ -91,6 +91,8 @@ CONFIG = {
         'command': ['wt', 'merge', '{target}', '--no-commit', '--no-rebase'],
         # [{paths, command}]: run before committing when any changed path matches.
         'checks': [],
+        # Content preparation (for example formatting), before freezing and checking it.
+        'prepare': [],
         # Project rules appended to the merge agent's instructions.
         'instructions': '',
     },
@@ -130,7 +132,7 @@ def load_config(root):
             re.compile(pattern)
     for item in config['priority']:
         re.compile(item['pattern'])
-    for check in config['merge']['checks']:
+    for check in [*config['merge']['prepare'], *config['merge']['checks']]:
         if not check.get('command') or not all(isinstance(arg, str) for arg in check['command']):
             raise ValueError(f'Each merge check in {path} needs a command list')
         for pattern in check.get('paths', []):
@@ -1741,9 +1743,9 @@ class Review:
             '--title "<final Conventional Commit title>" --description-file /absolute/path/to/final-description.txt. '
             'Prepare one sensible commit describing the complete final behavior and validation. '
             'If execution fails, inspect its log, correct the cause and execute the SAME request again; the approval remains pending. '
-            'Execution can outlast one shell command. If you run it in the background, keep polling '
-            f'{cli} --base {self.target} --merge-request {request["id"]} until its status is merged or pending, '
-            'and never end your turn while it runs: ending the turn stops the merge. '
+            'Execution starts a detached process that survives shell time limits. Do not start another attempt while its mergePid is alive. Keep polling '
+            f'{cli} --base {self.target} --merge-request {request["id"]} until merged, or pending with no live mergePid, '
+            'and keep handling the request until it finishes. Read executionLog for validation output. '
             'Work in this existing worktree; do not create another. '
             f'Record this approval as one user interaction named merge-{request["id"]}; finish/update its snapshot after corrections '
             'and before merging removes the worktree. Internal retries are not new user interactions. '
@@ -1866,11 +1868,35 @@ class Review:
 
     def recover_interrupted_merge(self, request):
         """Return a working approval to pending when the process running its attempt has exited."""
-        if request and request['status'] == 'working' and not process_alive(request.get('mergePid')):
+        if request and (request['status'] == 'working' or (request['status'] == 'pending' and request.get('executionLog') and request.get('mergePid'))) and not process_alive(request.get('mergePid')):
             request.update(status='pending', summary='The previous merge attempt stopped before finishing because its process '
                            'exited. Inspect the worktree, validate and execute the same request again.', mergePid=None)
             write_json(Path(request['path']), request)
         return request
+
+    def launch_merge_request(self, request_id, title, description):
+        with self.merge_request_lock():
+            request = self.recover_interrupted_merge(self.merge_request())
+            if not request or request['id'] != request_id or request['status'] not in ('pending', 'working'):
+                raise ValueError('No matching pending approval')
+            if process_alive(request.get('mergePid')):
+                return {key: request.get(key) for key in ('id', 'status', 'mergePid', 'executionLog')}
+            if self.branch != request['branch'] or self.target != request['target']:
+                raise ValueError('The approved branch or target changed')
+            self.validate_message(title, description)
+            message = self.store / (request_id + '-execution-message.txt')
+            message.write_text(description)
+            log_path = self.store / (request_id + '-execution.log')
+            with log_path.open('a') as log:
+                process = subprocess.Popen([sys.executable, str(ASSETS / 'server.py'), '--repo', self.repo,
+                    '--base', self.target, '--execute-merge-request', request_id, '--merge-worker',
+                    '--title', title, '--description-file', str(message)], cwd=self.repo,
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True)
+            request.update(mergePid=process.pid, executionLog=str(log_path),
+                           summary='Detached merge execution started. Poll this request for completion.')
+            write_json(Path(request['path']), request)
+            return {key: request[key] for key in ('id', 'status', 'mergePid', 'executionLog')}
 
     def execute_merge_request(self, request_id, title, description):
         with self.merge_request_lock():
@@ -1902,7 +1928,9 @@ class Review:
         with self.merge_request_lock():
             request = self.merge_request()
             request.update(status='merged' if self.job['status'] == 'merged' else 'pending',
-                           summary=self.job['log'][-10000:])
+                           preparedRevision=self.revision, summary=self.job['log'][-10000:])
+            if request['status'] == 'pending':
+                request['mergePid'] = None
             if request['status'] == 'merged':
                 request.update(finishedAt=datetime.now(timezone.utc).isoformat(), title=title, description=description)
             write_json(Path(request['path']), request)
@@ -1913,6 +1941,8 @@ class Review:
         with subprocess.Popen(args, cwd=self.repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, stdin=subprocess.DEVNULL, env={**os.environ, 'NO_COLOR': '1'}) as process:
             for line in process.stdout:
+                if getattr(self, 'stream_merge_log', False):
+                    print(line, end='', flush=True)
                 with self.lock:
                     self.job['log'] = (self.job['log'] + line)[-100000:]
             if process.wait():
@@ -1920,6 +1950,17 @@ class Review:
 
     def merge(self, revision, title, description):
         try:
+            branch, target_head = self.branch, self.target_head
+            for preparation in self.config['merge']['prepare']:
+                if any(re.search(pattern, f['path']) for pattern in preparation.get('paths', ['']) for f in self.files):
+                    self.command([arg.replace('{target}', self.target) for arg in preparation['command']])
+            if self.config['merge']['prepare']:
+                with self.lock:
+                    prepared = self.capture()
+                    if self.git('branch', '--show-current').strip() != branch or prepared[1] != target_head:
+                        raise ValueError('Branch or target moved during preparation. Rebase and retry the same request.')
+                    self.head, self.target_head, self.base, self.files, self.blobs, self.revision = prepared
+                    revision = self.revision
             for check in self.config['merge']['checks']:
                 if any(re.search(pattern, f['path']) for pattern in check.get('paths', ['']) for f in self.files):
                     self.command(check['command'])
@@ -2311,6 +2352,7 @@ def main():
     iterations.add_argument('--finish-iteration', metavar='ID')
     iterations.add_argument('--merge-request', metavar='ID', help='Inspect a pending user approval without merging')
     iterations.add_argument('--execute-merge-request', metavar='ID', help='Agent-only: validate and merge a matching approval')
+    parser.add_argument('--merge-worker', action='store_true', help=argparse.SUPPRESS)
     iterations.add_argument('--feedback', action='store_true', help='List open review tool feedback')
     iterations.add_argument('--queue', action='store_true', help='Print repository merge queue and pending Git snapshots as JSON')
     iterations.add_argument('--queue-page', action='store_true', help='Open the lightweight repository merge queue page')
@@ -2330,6 +2372,8 @@ def main():
     parser.add_argument('--file', type=Path, help='Movie for --add-demo')
     parser.add_argument('--appearance', choices=APPEARANCES, help='Appearance for --record-demo (default: [demos] appearance, dark)')
     args = parser.parse_args()
+    if args.merge_worker and not args.execute_merge_request:
+        parser.error('--merge-worker requires --execute-merge-request')
     if args.base.startswith('-') or not re.fullmatch(r'[A-Za-z0-9_./-]+', args.base):
         parser.error('Use a local branch name for --base')
     if args.appearance and not args.record_demo:
@@ -2398,8 +2442,21 @@ def main():
             return
         if args.execute_merge_request:
             description = args.description_file.read_text() if args.description_file else ''
-            review.execute_merge_request(args.execute_merge_request, args.title, description)
-            print(review.job['log'])
+            if args.merge_worker:
+                review.stream_merge_log = True
+                try:
+                    review.execute_merge_request(args.execute_merge_request, args.title, description)
+                except ValueError as error:
+                    with review.merge_request_lock():
+                        request = review.merge_request()
+                        if request and request['id'] == args.execute_merge_request and request['status'] == 'pending' and request.get('mergePid') == os.getpid():
+                            request.update(mergePid=None, summary=str(error))
+                            write_json(Path(request['path']), request)
+                    raise
+                finally:
+                    print(review.job['log'], flush=True)
+            else:
+                print(json.dumps(review.launch_merge_request(args.execute_merge_request, args.title, description)))
             return
         if args.begin_iteration:
             review.begin_iteration(args.begin_iteration, args.request)

@@ -1301,6 +1301,44 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.review.execute_merge_request(request['id'], 'fix(test): change', 'Description')
 
+    def test_launch_detaches_and_does_not_duplicate_a_running_execution(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        with patch.object(m.subprocess, 'Popen') as launch:
+            launch.return_value.pid = os.getpid()
+            result = self.review.launch_merge_request(request['id'], 'fix(test): detached', 'Validation survives its shell.')
+            self.assertEqual(result['mergePid'], os.getpid())
+            self.assertTrue(launch.call_args.kwargs['start_new_session'])
+            self.assertEqual(launch.call_args.kwargs['stdin'], subprocess.DEVNULL)
+            self.assertNotEqual(launch.call_args.kwargs['stdout'], subprocess.PIPE)
+            self.assertIn('--merge-worker', launch.call_args.args[0])
+            self.review.launch_merge_request(request['id'], 'fix(test): detached', 'Validation survives its shell.')
+            launch.assert_called_once()
+        self.review.cancel_merge_request(request['id'])
+        with self.assertRaisesRegex(ValueError, 'pending approval'):
+            self.review.launch_merge_request(request['id'], 'fix(test): detached', 'Withdrawn approval stays withdrawn.')
+
+    def test_detached_execution_finishes_after_launching_process_exits(self):
+        self.write('.config/local-review.toml', "[merge]\ncommand = ['git', 'status', '--short']\n"
+                   "[[merge.prepare]]\ncommand = ['python3', '-c', 'from pathlib import Path; Path(\"Interactor.swift\").write_text(\"let value = 3\")']\n"
+                   "[[merge.checks]]\ncommand = ['python3', '-c', 'from pathlib import Path; import time; assert Path(\"Interactor.swift\").read_text() == \"let value = 3\"; time.sleep(.4)']\n")
+        self.review.refresh()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        description = self.root / '.git/description.txt'
+        description.write_text('Survive the short-lived launching shell.')
+        with m.queue_slot(self.review.store, request['id'], conversation=request['agent']):
+            result = subprocess.run([sys.executable, str(TOOL / 'server.py'), '--repo', str(self.root),
+                '--execute-merge-request', request['id'], '--title', 'fix(test): durable',
+                '--description-file', str(description)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            execution = json.loads(result.stdout)
+            for _ in range(200):
+                saved = self.review.merge_request()
+                if saved['status'] == 'merged':
+                    break
+                time.sleep(.05)
+        self.assertEqual(saved['status'], 'merged', Path(execution['executionLog']).read_text())
+        self.assertEqual(self.git('log', '-1', '--format=%s'), 'fix(test): durable')
+
     def test_failed_attempt_can_be_withdrawn_before_retry(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         self.write('Modules/App.swift', 'agent correction\n')
@@ -1352,10 +1390,12 @@ class ReviewTests(unittest.TestCase):
         self.assertIn('Do not open review or queue pages in any browser', request['prompt'])
         self.assertIn('the user opens them manually', request['prompt'])
 
-    def test_worker_prompt_keeps_the_turn_open_during_execution(self):
+    def test_worker_prompt_polls_the_detached_execution_without_duplicate_attempts(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
-        self.assertIn('never end your turn while it runs', request['prompt'])
-        self.assertIn('--merge-request ' + request['id'] + ' until its status is merged or pending', request['prompt'])
+        self.assertIn('survives shell time limits', request['prompt'])
+        self.assertIn('Do not start another attempt while its mergePid is alive', request['prompt'])
+        self.assertIn('--merge-request ' + request['id'] + ' until merged, or pending with no live mergePid', request['prompt'])
+        self.assertIn('keep handling the request until it finishes', request['prompt'])
 
     def queued_pair(self):
         first = self.review.request_merge(self.review.approval_revision(), '', '')
@@ -2081,6 +2121,45 @@ if '--output-last-message' in sys.argv:
             self.review.merge(self.review.revision, 'feat(review): reviewed', 'Reviewed change with tests.')
         self.assertEqual(self.review.job['status'], 'merged', self.review.job)
         self.assertNotIn(['make', 'run-app'], calls)
+
+    def test_preparation_formats_before_checks_and_freezes_the_result(self):
+        self.write('.config/local-review.toml', "[[merge.prepare]]\npaths = ['\\.swift$']\ncommand = ['format', '{target}']\n"
+                   "[[merge.checks]]\ncommand = ['build-app']\n")
+        self.review.refresh()
+        calls = []
+        def command(args):
+            calls.append(args)
+            if args[0] == 'format':
+                self.assertEqual(self.review.job['status'], 'running')
+                with self.assertRaisesRegex(ValueError, 'Wait for the merge'):
+                    self.review.refresh()
+                self.write('Interactor.swift', 'let value = 3\n')
+            elif args[0] == 'build-app':
+                self.assertEqual((self.root / 'Interactor.swift').read_text(), 'let value = 3\n')
+            elif args[0] == 'git':
+                self.git(*args[1:])
+        with patch.object(self.review, 'command', side_effect=command):
+            self.review.start_merge(self.review.revision, 'fix(test): formatted', 'Format before expensive validation.')
+            for _ in range(200):
+                if self.review.job['status'] != 'running':
+                    break
+                time.sleep(.05)
+        self.assertEqual(self.review.job['status'], 'merged', self.review.job)
+        self.assertEqual(calls[:2], [['format', 'main'], ['build-app']])
+        self.assertEqual(self.git('show', 'HEAD:Interactor.swift'), 'let value = 3')
+
+    def test_drift_during_checks_still_fails_after_preparation(self):
+        self.write('.config/local-review.toml', "[[merge.prepare]]\ncommand = ['format']\n"
+                   "[[merge.checks]]\ncommand = ['build-app']\n")
+        self.review.refresh()
+        head = self.git('rev-parse', 'HEAD')
+        def command(args):
+            self.write('Interactor.swift', 'formatted\n' if args[0] == 'format' else 'changed during build\n')
+        with patch.object(self.review, 'command', side_effect=command):
+            self.review.merge(self.review.revision, 'fix(test): drift', 'Keep content drift checks.')
+        self.assertEqual(self.review.job['status'], 'failed')
+        self.assertIn('Files changed during validation', self.review.job['log'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), head)
 
     def test_failed_validation_does_not_stage_or_commit(self):
         self.write('.config/local-review.toml', "[[merge.checks]]\npaths = ['^App/']\ncommand = ['make', 'run-app']\n")
