@@ -521,6 +521,52 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(health['version'], legacy['version'])
         self.assertEqual(health['runtimeVersion'], upgraded['version'])
 
+    def test_older_release_launcher_reuses_the_newer_running_server(self):
+        metadata = self.review.store / 'shared-server.json'
+        def copy_tool(name, release):
+            assets = self.review.common / name
+            for asset in ('server.py', 'agent.py', *m.WEB_ASSETS):
+                destination = assets / asset
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes((m.ASSETS / asset).read_bytes())
+            source = (assets / 'server.py').read_text()
+            (assets / 'server.py').write_text(source.replace(f"RELEASE = '{m.RELEASE}'", f"RELEASE = '{release}'"))
+            return assets / 'server.py'
+        older = copy_tool('older-review-tool', '0.0.1')
+        same_release = copy_tool('edited-review-tool', m.RELEASE)
+        (same_release.parent / 'agent.py').write_text((m.ASSETS / 'agent.py').read_text() + '\n# local edit\n')
+        probe = m.ReviewServer(('127.0.0.1', 0), m.Handler)
+        origin = f'http://127.0.0.1:{probe.server_port}/'
+        probe.server_close()
+        m.write_json(metadata, {'url': origin + '#persisted-token'})
+        def stop():
+            saved = m.read_json(metadata, {})
+            if saved.get('pid') and m.process_alive(saved['pid']):
+                os.kill(saved['pid'], 15)
+        self.addCleanup(stop)
+        def launch(script):
+            result = run_launcher([sys.executable, str(script), '--repo', str(self.root), '--no-open'], self.review.store)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return m.read_json(metadata, {})
+        downgraded = launch(older)
+        current = launch(Path(m.__file__))
+        self.assertNotEqual(current['pid'], downgraded['pid'])
+        self.assertEqual(launch(older), current)
+        with urllib.request.urlopen(urllib.request.Request(origin + 'api/health',
+                headers={'X-Review-Token': 'persisted-token'})) as response:
+            self.assertEqual(json.load(response)['release'], m.RELEASE)
+        edited = launch(same_release)
+        self.assertNotEqual(edited['pid'], current['pid'])
+
+    def test_release_ordering_is_numeric_and_ignores_missing_releases(self):
+        major, minor, patch = map(int, m.RELEASE.split('.'))
+        self.assertTrue(m.newer_release(f'{major}.{minor + 10}.0'))
+        self.assertTrue(m.newer_release(f'{major}.{minor}.{patch + 1}'))
+        self.assertFalse(m.newer_release(m.RELEASE))
+        self.assertFalse(m.newer_release('0.0.1'))
+        for release in (None, '', 'next', 7):
+            self.assertFalse(m.newer_release(release))
+
     def test_feedback_can_be_marked_implemented_and_reopened(self):
         first = self.review.save_feedback('Expand context')['entries'][0]
         self.review.save_feedback('Jump to definition')

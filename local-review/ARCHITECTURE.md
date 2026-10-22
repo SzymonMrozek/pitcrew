@@ -124,8 +124,13 @@ Each of these cost real debugging time.
   chat. Failed deliveries make their comments retryable.
 - **Tool upgrades must not break posted links.** A changed tool restarts an
   idle server on the same port and token. A merge in progress finishes on the old
-  server first. The health endpoint reports both the original and the current
-  version, so older launchers reuse a newer server instead of downgrading it.
+  server first. The health endpoint reports the content version and the
+  numeric `RELEASE`. A launcher whose release is older than the running
+  server's reuses it instead of downgrading it, so a stale worktree can't
+  replace a newer tool. Same-release launchers with different content still
+  restart it, which keeps unreleased edits testable. Bump `RELEASE` with every
+  `local-review-v*` tag. Launchers released before 0.7.0 don't compare
+  releases and still replace a newer server.
 - **Git LFS pointers aren't images.** Compare the LFS objects when they're
   present locally. Report missing ones; never fetch them.
 - **A simulator recording is only a movie once it's interrupted.**

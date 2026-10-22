@@ -31,6 +31,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socketserver
 from urllib.parse import urlparse, parse_qs
 
+# Bump with every local-review release tag, so launchers can order running servers.
+RELEASE = '0.7.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -2151,7 +2153,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/health':
                 # Legacy launchers reuse the upgraded server instead of replacing it with old code.
                 self.send(200, {'version': getattr(self.server, 'legacy_version', self.server.version),
-                                'runtimeVersion': self.server.version})
+                                'runtimeVersion': self.server.version, 'release': RELEASE})
                 return
             if url.path == '/api/queue' and hasattr(self.server, 'registry'):
                 self.send(200, {**merge_queue(self.server.registry.store), 'tool': self.server.tool})
@@ -2339,6 +2341,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, {'error': str(error)})
 
 
+def newer_release(release):
+    """Whether a running server's release is newer than this launcher's, which then reuses it."""
+    try:
+        return tuple(map(int, release.split('.'))) > tuple(map(int, RELEASE.split('.')))
+    except (AttributeError, ValueError):
+        return False
+
+
 def main():
     global AGENT_RUNTIME
     parser = argparse.ArgumentParser(description=__doc__)
@@ -2487,7 +2497,7 @@ def main():
                     request = urllib.request.Request(origin + 'api/health', headers=headers)
                     with urllib.request.urlopen(request, timeout=2) as response:
                         running = json.load(response)
-                    if running.get('runtimeVersion', running['version']) != version:
+                    if running.get('runtimeVersion', running['version']) != version and not newer_release(running.get('release')):
                         request = urllib.request.Request(origin + 'api/shutdown', data=b'{}',
                             headers={**headers, 'Content-Type': 'application/json'})
                         with urllib.request.urlopen(request, timeout=2):
