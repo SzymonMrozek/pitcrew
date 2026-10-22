@@ -1955,10 +1955,12 @@ class Review:
                 if any(re.search(pattern, f['path']) for pattern in preparation.get('paths', ['']) for f in self.files):
                     self.command([arg.replace('{target}', self.target) for arg in preparation['command']])
             if self.config['merge']['prepare']:
-                self.refresh()
-                if self.branch != branch or self.target_head != target_head:
-                    raise ValueError('Branch or target moved during preparation. Rebase and retry the same request.')
-                revision = self.revision
+                with self.lock:
+                    prepared = self.capture()
+                    if self.git('branch', '--show-current').strip() != branch or prepared[1] != target_head:
+                        raise ValueError('Branch or target moved during preparation. Rebase and retry the same request.')
+                    self.head, self.target_head, self.base, self.files, self.blobs, self.revision = prepared
+                    revision = self.revision
             for check in self.config['merge']['checks']:
                 if any(re.search(pattern, f['path']) for pattern in check.get('paths', ['']) for f in self.files):
                     self.command(check['command'])

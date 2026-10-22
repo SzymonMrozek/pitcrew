@@ -1319,7 +1319,8 @@ class ReviewTests(unittest.TestCase):
 
     def test_detached_execution_finishes_after_launching_process_exits(self):
         self.write('.config/local-review.toml', "[merge]\ncommand = ['git', 'status', '--short']\n"
-                   "[[merge.checks]]\ncommand = ['python3', '-c', 'import time; time.sleep(.4)']\n")
+                   "[[merge.prepare]]\ncommand = ['python3', '-c', 'from pathlib import Path; Path(\"Interactor.swift\").write_text(\"let value = 3\")']\n"
+                   "[[merge.checks]]\ncommand = ['python3', '-c', 'from pathlib import Path; import time; assert Path(\"Interactor.swift\").read_text() == \"let value = 3\"; time.sleep(.4)']\n")
         self.review.refresh()
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         description = self.root / '.git/description.txt'
@@ -2129,13 +2130,20 @@ if '--output-last-message' in sys.argv:
         def command(args):
             calls.append(args)
             if args[0] == 'format':
+                self.assertEqual(self.review.job['status'], 'running')
+                with self.assertRaisesRegex(ValueError, 'Wait for the merge'):
+                    self.review.refresh()
                 self.write('Interactor.swift', 'let value = 3\n')
             elif args[0] == 'build-app':
                 self.assertEqual((self.root / 'Interactor.swift').read_text(), 'let value = 3\n')
             elif args[0] == 'git':
                 self.git(*args[1:])
         with patch.object(self.review, 'command', side_effect=command):
-            self.review.merge(self.review.revision, 'fix(test): formatted', 'Format before expensive validation.')
+            self.review.start_merge(self.review.revision, 'fix(test): formatted', 'Format before expensive validation.')
+            for _ in range(200):
+                if self.review.job['status'] != 'running':
+                    break
+                time.sleep(.05)
         self.assertEqual(self.review.job['status'], 'merged', self.review.job)
         self.assertEqual(calls[:2], [['format', 'main'], ['build-app']])
         self.assertEqual(self.git('show', 'HEAD:Interactor.swift'), 'let value = 3')
