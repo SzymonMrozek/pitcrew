@@ -305,7 +305,31 @@ class ReviewTests(unittest.TestCase):
                         "[demos]\npaths = ['(']\n", "[demos]\nunknown = 1\n"):
             self.write('.config/local-review.toml', invalid)
             with self.assertRaises((ValueError, m.re.error)):
+                m.load_config(self.root, strict=True)
+
+    def test_builds_that_do_not_own_the_configuration_skip_settings_they_do_not_know(self):
+        self.write('.config/local-review.toml', "title = 'Team'\nfuture = 1\n[merge]\ninstructions = 'Rebase first.'\nlater = 1\n"
+                   "[launch]\ncommand = ['run']\n")
+        with self.assertRaisesRegex(ValueError, "Unknown setting 'future', 'merge.later', 'launch'"):
+            m.load_config(self.root, strict=True)
+        with patch.object(m, 'ASSETS', self.root.resolve() / 'Tools/review'):
+            self.assertTrue(m.owns_config(self.root), 'The checked-out tool owns its repository configuration')
+            with self.assertRaisesRegex(ValueError, 'Unknown setting'):
                 m.load_config(self.root)
+        with patch.object(m, 'ASSETS', self.root.resolve() / '.git/local-review/runtime/v1'):
+            self.assertFalse(m.owns_config(self.root), 'Merge workers run a copy stored in the Git common directory')
+        self.assertFalse(m.owns_config(self.root), 'A shared server launched from another worktree')
+        with patch('sys.stderr', new=io.StringIO()) as stderr:
+            config = m.load_config(self.root)
+            m.Review(self.root, 'main').refresh()
+        self.assertEqual((config['title'], config['merge']['instructions']), ('Team', 'Rebase first.'), 'Known settings still apply')
+        self.assertNotIn('future', config)
+        self.assertNotIn('later', config['merge'])
+        self.assertEqual(stderr.getvalue().count('Ignoring settings'), 1, 'Each refresh rereads the file; the warning appears once')
+        self.assertIn('future, merge.later, launch', stderr.getvalue())
+        self.write('.config/local-review.toml', "merge = 'wt merge'\n")
+        with self.assertRaisesRegex(ValueError, r'\[merge\] .* must be a table'):
+            m.load_config(self.root)
 
     def test_settings_and_viewed_state_persist_and_revision_changes(self):
         self.review.update_settings({**m.DEFAULTS, 'exclude': ['*/Generated/*'], 'imageScale': 60})
@@ -1194,7 +1218,7 @@ class ReviewTests(unittest.TestCase):
                                  ('[run]\nscheme = "App"\n', 'Unknown setting')]:
             self.write('.config/local-review.toml', invalid)
             with self.assertRaisesRegex(ValueError, message, msg=invalid):
-                m.load_config(self.root)
+                m.load_config(self.root, strict=True)
 
     def test_run_lists_destinations_and_launches_only_a_listed_one(self):
         phone = {'id': '00008120-PHONE', 'name': 'My iPhone', 'kind': 'device', 'detail': 'iPhone 17 · iOS 27.0'}

@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.7.0'
+RELEASE = '0.7.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -107,8 +107,25 @@ CONFIG = {
 }
 
 
-def load_config(root):
-    """Merge the repository configuration over the defaults; a removed worktree keeps the defaults."""
+IGNORED_SETTINGS = set()
+
+
+def owns_config(root):
+    """Whether this copy of the tool is the one checked out in root, the build its configuration was written for.
+
+    The shared server serves every worktree with the build that launched it, and merge workers run a copy
+    stored in the Git common directory, so either can read settings that a newer build added."""
+    try:
+        return '.git' not in ASSETS.relative_to(Path(root).resolve()).parts
+    except ValueError:
+        return False
+
+
+def load_config(root, strict=None):
+    """Merge the repository configuration over the defaults; a removed worktree keeps the defaults.
+
+    Unknown settings are typos for the build that owns the configuration, and settings from a newer
+    build for any other; those are skipped with a warning so an older build keeps working."""
     config = json.loads(json.dumps(CONFIG))
     path = Path(os.environ.get('LOCAL_REVIEW_CONFIG') or Path(root) / CONFIG_PATH)
     try:
@@ -118,15 +135,24 @@ def load_config(root):
         return config
     except tomllib.TOMLDecodeError as error:
         raise ValueError(f'Invalid {path}: {error}')
+    strict = owns_config(root) if strict is None else strict
+    unknown = []
     for key, value in custom.items():
         if key not in config:
-            raise ValueError(f'Unknown setting {key!r} in {path}')
+            unknown.append(key)
+            continue
         if isinstance(config[key], dict):
-            if not isinstance(value, dict) or set(value) - set(config[key]):
-                raise ValueError(f'Unknown setting in [{key}] of {path}')
-            config[key].update(value)
+            if not isinstance(value, dict):
+                raise ValueError(f'[{key}] in {path} must be a table')
+            unknown += [f'{key}.{name}' for name in value if name not in config[key]]
+            config[key].update({name: setting for name, setting in value.items() if name in config[key]})
         else:
             config[key] = value
+    if unknown and strict:
+        raise ValueError(f'Unknown setting {", ".join(map(repr, unknown))} in {path}')
+    if unknown and (ignored := (str(path.resolve()), *unknown)) not in IGNORED_SETTINGS:
+        IGNORED_SETTINGS.add(ignored)
+        print(f'Ignoring settings this build does not know, {", ".join(unknown)}, in {path}', file=sys.stderr)
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,40}', config['name']):
         raise ValueError(f'name in {path} must be lowercase letters, digits and dashes')
     for kind, patterns in config['files'].items():

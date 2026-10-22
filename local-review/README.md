@@ -386,6 +386,10 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[demos]` | dark, no paths | `paths` whose changes should come with a demo recording, and the recording `appearance` |
 | `[run]` | none | `destinations` and `command` for **Run…** |
 
+An unknown key is an error for the tool checked out in that repository. A
+shared server or merge worker from another build skips it with a warning, so
+adding a setting doesn't break worktrees pinned to an older version.
+
 ## Storage and security
 
 Settings, scores, comments, approvals, demo recordings, logs and server metadata live in

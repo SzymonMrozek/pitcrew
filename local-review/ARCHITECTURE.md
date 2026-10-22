@@ -131,6 +131,12 @@ Each of these cost real debugging time.
   restart it, which keeps unreleased edits testable. Bump `RELEASE` with every
   `local-review-v*` tag. Launchers released before 0.7.0 don't compare
   releases and still replace a newer server.
+- **One build reads every worktree's configuration.** The shared server and
+  the merge workers it launches run one build for all worktrees, which can be
+  older than a worktree's checkout: a same-release edit or a launcher released
+  before 0.7.0 restarts it. Unknown settings fail only when the tool reads the
+  repository it's checked out in, where they're typos; any other build skips
+  them with a warning.
 - **Git LFS pointers aren't images.** Compare the LFS objects when they're
   present locally. Report missing ones; never fetch them.
 - **A simulator recording is only a movie once it's interrupted.**
