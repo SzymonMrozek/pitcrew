@@ -20,6 +20,10 @@ extension Inspector {
             !nearby("lint:ignore-test-context:", line: line(attribute), above: 2, reason: true) {
             directSetup.append(line(node))
         }
+        if number, let generic = node.calledExpression.as(GenericSpecializationExprSyntax.self),
+           ["IntegerFormatStyle", "FloatingPointFormatStyle"].contains(generic.expression.trimmedDescription) {
+            emit(.sharedNumberFormat, node.calledExpression, exception: "lint:allow-number-format:", merge: true)
+        }
         if currency, name == "currency", node.arguments.first?.label?.text == "code", let point = callPoint(node) {
             emit(
                 .sharedCurrencyFormat,
@@ -175,12 +179,20 @@ extension Inspector {
             line(node.period) == node.base.map({ line($0.endPositionBeforeTrailingTrivia) }) {
             emit(.sharedPercentageFormat, node, exception: "lint:allow-percentage-format:", merge: true)
         }
-        checkPercentMember(node)
+        checkSharedNumericMember(node, enabled: percentage, name: "percent", rule: .sharedPercentageFormat,
+                                 exception: "lint:allow-percentage-format:")
+        checkSharedNumericMember(node, enabled: number, name: "number", rule: .sharedNumberFormat,
+                                 exception: "lint:allow-number-format:")
+        if number, name == "FormatStyle", node.base?.trimmedDescription == "Decimal",
+           node.parent?.as(FunctionCallExprSyntax.self) != nil {
+            emit(.sharedNumberFormat, node, exception: "lint:allow-number-format:", merge: true)
+        }
     }
 
-    func checkPercentMember(_ node: MemberAccessExprSyntax) {
-        let name = node.declName.baseName.text
-        if percentage, name == "percent", node.base == nil {
+    func checkSharedNumericMember(
+        _ node: MemberAccessExprSyntax, enabled: Bool, name: String, rule: Rule, exception: String
+    ) {
+        if enabled, node.declName.baseName.text == name, node.base == nil {
             var forbidden = false
             if let parent = node.parent?.as(MemberAccessExprSyntax.self) {
                 forbidden = [
@@ -213,10 +225,10 @@ extension Inspector {
                         let point = callPoint(call) { start = point }
                 }
                 emit(
-                    .sharedPercentageFormat,
+                    rule,
                     start,
                     through: end,
-                    exception: "lint:allow-percentage-format:",
+                    exception: exception,
                     merge: true
                 )
             }

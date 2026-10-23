@@ -4190,5 +4190,138 @@
     "lines": [
       1
     ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "fraction precision",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = value.formatted(.number.precision(.fractionLength(0 ... 2)))\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "locale chain",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = value.formatted(\n    .number\n        .locale(Locale(identifier: \"en_US\"))\n)\n",
+    "lines": [
+      2
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "integer count",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = count.formatted(.number)\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "input format",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let field = TextField(\"Amount\", value: $amount, format: .number)\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "decimal style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let style = Decimal.FormatStyle(locale: Locale(identifier: \"en_US\"))\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "explicit integer style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let style = IntegerFormatStyle<Int>(locale: Locale(identifier: \"en_US\"))\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "explicit floating style",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let style = FloatingPointFormatStyle<Double>(locale: Locale(identifier: \"en_US\"))\n",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "shared default",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = value.formatted(.number())\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "shared precision",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = value.formatted(.number(precision: .upTo(2)))\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "shared significant digits",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let text = value.formatted(.number(precision: .significant(1 ... 4)))\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "editing exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "// lint:allow-number-format: Echo editable digits without grouping.\nlet text = value.formatted(.number.grouping(.never))\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "decimal exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "// lint:allow-number-format: Independent test oracle.\nlet style = Decimal.FormatStyle(locale: Locale(identifier: \"en_US\"))\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "unrelated property",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let value = model.number\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "currency constructor",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let style = Decimal.FormatStyle.Currency(code: \"USD\")\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "comments and strings",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Example.swift",
+    "source": "let example = \"value.formatted(.number)\"\n// value.formatted(.number)\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "owner",
+    "path": "Modules/Utilities/NumberFormatting/Sources/NumberFormat.swift",
+    "source": "let text = value.formatted(.number)\n",
+    "lines": []
+  },
+  {
+    "rule": "shared_number_format",
+    "name": "generated",
+    "path": "Modules/Models/Proto/Sources/Generated/Value.swift",
+    "source": "let text = value.formatted(.number)\n",
+    "lines": []
   }
 ]
