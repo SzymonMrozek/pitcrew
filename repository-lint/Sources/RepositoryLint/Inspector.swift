@@ -51,6 +51,7 @@ final class Inspector: SyntaxVisitor {
     let locations: SourceLocationConverter
     let designTokens: Bool
     let currency: Bool
+    let number: Bool
     let percentage: Bool
     let needsReferences: Bool
     let customColorEnabled: Bool
@@ -85,6 +86,8 @@ final class Inspector: SyntaxVisitor {
         designTokens = usesDesignTokens(path, configuration: configuration)
         currency = path.hasSuffix(".swift") && path.hasPrefix("Modules/") && !path.contains("Generated/")
             && !path.hasPrefix("Modules/Utilities/CurrencyFormatting/")
+        number = path.hasSuffix(".swift") && path.hasPrefix("Modules/") && !path.contains("Generated/")
+            && !path.hasPrefix("Modules/Utilities/NumberFormatting/")
         percentage = path.hasSuffix(".swift") && path.hasPrefix("Modules/") && !path.contains("Generated/")
             && !path.hasPrefix("Modules/Utilities/PercentageFormatting/")
         needsReferences = source.contains("@Dependency") || source.contains("@Bindable")

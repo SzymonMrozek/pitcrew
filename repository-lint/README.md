@@ -1,6 +1,6 @@
 # repository-lint
 
-A macOS Swift package for 23 SwiftSyntax checks, a changed-line Git runner,
+A macOS Swift package for 24 SwiftSyntax checks, a changed-line Git runner,
 standard SwiftLint integration, and a nested-call formatter. It parses each
 file once, scans up to four files concurrently, sorts diagnostics, and records
 SQLite timings. It is independent of the app's Swift package graph.
@@ -32,7 +32,7 @@ checks complete changed files. `--all` checks all tracked Swift files.
 
 The rules assume `Modules/<category>/<module>/` source layout, `Generated/`
 exemptions, `.tests.swift` tests, Interactor/ViewModel names, a DependencyInjection
-wrapper, and shared CurrencyFormatting/PercentageFormatting modules. These are
+wrapper, and shared CurrencyFormatting/PercentageFormatting/NumberFormatting modules. These are
 opinionated reference rules. Read [ARCHITECTURE.md](ARCHITECTURE.md) before adapting
 them to another architecture.
 
@@ -55,7 +55,7 @@ color factory name, and generated paths excluded from nested-call formatting.
 [examples/mise.toml](examples/mise.toml) show consumer integration.
 
 ```bash
-# Stable IDs and exact diagnostic lines for 351 examples across 23 rules:
+# Stable IDs and exact diagnostic lines for 368 examples across 24 rules:
 ./repository-lint/run.sh --self-test
 # Build production first; tests run the CLI in temporary consumer Git repos:
 REPOSITORY_LINT_BINARY="$(git rev-parse --path-format=absolute --git-common-dir)/repository-lint/build/release/repository-lint" \

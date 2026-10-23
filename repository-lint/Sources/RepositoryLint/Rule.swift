@@ -17,6 +17,7 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
     case onAppearTask = "on_appear_task"
     case redundantMainActor = "redundant_main_actor"
     case sharedCurrencyFormat = "shared_currency_format"
+    case sharedNumberFormat = "shared_number_format"
     case sharedPercentageFormat = "shared_percentage_format"
     case singleUseDependency = "single_use_dependency"
     case testContextSetup = "test_context_setup"
@@ -68,6 +69,9 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
         case .sharedCurrencyFormat:
             "Format money with CurrencyFormatting (`.currency(...)`); document a required exception "
                 + "with lint:allow-currency-format: reason."
+        case .sharedNumberFormat:
+            "Format plain numbers with NumberFormatting (`.number(...)`); document a required "
+                + "exception with lint:allow-number-format: reason."
         case .sharedPercentageFormat:
             "Format percentages with PercentageFormatting (`.percentage(...)`); document a required "
                 + "exception with lint:allow-percentage-format: reason."
