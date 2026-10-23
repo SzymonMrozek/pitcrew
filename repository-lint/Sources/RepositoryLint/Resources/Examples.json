@@ -4070,5 +4070,125 @@
     "lines": [
       5
     ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "direct",
+    "path": "Example.swift",
+    "source": "let locale = Locale.current",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "qualified",
+    "path": "App/Example.swift",
+    "source": "let locale = Foundation.Locale.autoupdatingCurrent",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "multiline",
+    "path": "Example.swift",
+    "source": "let locale = Locale\n    .current",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "comments-between-tokens",
+    "path": "Example.swift",
+    "source": "let locale = Locale /* provider required */ .current",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "typed-default",
+    "path": "Example.swift",
+    "source": "func render(locale: Locale = .current) {}",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "typed-variable",
+    "path": "Example.swift",
+    "source": "let locale: Foundation.Locale? = .autoupdatingCurrent",
+    "lines": [
+      1
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "typed-multiline-default",
+    "path": "Example.swift",
+    "source": "func render(locale: Locale =\n    .current\n) {}",
+    "lines": [
+      2
+    ]
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "explicit-locale",
+    "path": "Example.swift",
+    "source": "let locale = Locale(identifier: \"pl_PL\")",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "injected-provider",
+    "path": "Example.swift",
+    "source": "@Dependency var currentLocaleProvider: CurrentLocaleProvider\nlet locale = currentLocaleProvider.get()",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "other-current",
+    "path": "Example.swift",
+    "source": "let calendar = Calendar.current\nfunc render(calendar: Calendar = .current) {}",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "comments-and-strings",
+    "path": "Example.swift",
+    "source": "// Locale.current\n/* Locale.autoupdatingCurrent */\nlet text = \"Locale.current\"",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "provider-implementation",
+    "path": "Modules/Utilities/CurrentLocale/Implementation/Sources/CurrentLocaleImplementationModule.swift",
+    "source": "let locale = Locale.current",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "generated",
+    "path": "Modules/Models/Example/Sources/Generated/Message.swift",
+    "source": "let locale = Locale.current",
+    "lines": []
+  },
+  {
+    "rule": "no_current_locale",
+    "name": "provider-interface-is-not-exempt",
+    "path": "Modules/Utilities/CurrentLocale/Interface/Sources/CurrentLocale.swift",
+    "source": "let locale = Locale.current",
+    "lines": [
+      1
+    ]
   }
 ]

@@ -97,7 +97,33 @@ extension Inspector {
         }
     }
 
+    func checkCurrentLocale(_ node: MemberAccessExprSyntax) {
+        guard
+            path.hasSuffix(".swift"), !path.contains("Generated/"),
+            !path.hasPrefix("Modules/Utilities/CurrentLocale/Implementation/"),
+            ["current", "autoupdatingCurrent"].contains(node.declName.baseName.text)
+        else { return }
+        if nominalName(node.base) == "Locale" {
+            emit(.noCurrentLocale, node, through: node.endPositionBeforeTrailingTrivia)
+            return
+        }
+        guard node.base == nil, let initializer = node.parent?.as(InitializerClauseSyntax.self) else { return }
+        let type = initializer.parent?.as(PatternBindingSyntax.self)?.typeAnnotation?.type
+            ?? initializer.parent?.as(FunctionParameterSyntax.self)?.type
+        if let type, isLocaleType(type) {
+            emit(.noCurrentLocale, node, through: node.endPositionBeforeTrailingTrivia)
+        }
+    }
+
+    private func isLocaleType(_ type: TypeSyntax) -> Bool {
+        if let optional = type.as(OptionalTypeSyntax.self) { return isLocaleType(optional.wrappedType) }
+        if let optional = type.as(ImplicitlyUnwrappedOptionalTypeSyntax.self) { return isLocaleType(optional.wrappedType) }
+        if let identifier = type.as(IdentifierTypeSyntax.self) { return identifier.name.text == "Locale" }
+        return type.as(MemberTypeSyntax.self)?.name.text == "Locale"
+    }
+
     func checkMember(_ node: MemberAccessExprSyntax) {
+        checkCurrentLocale(node)
         let name = node.declName.baseName.text
         let base = nominalName(node.base)
         if customColorEnabled, ["Color", "UIColor", "NSColor"].contains(base), namedColor(name) {

@@ -60,6 +60,18 @@ private func execute(_ arguments: [String], in directory: URL) throws -> (Int32,
     #expect(diagnostics?.count == 1)
     #expect(diagnostics?.first?["rule"] as? String == "no_sf_symbols")
 
+    // A change to the member line must select a locale diagnostic on the preceding type line.
+    let locale = "let locale = Locale\n    .current\n"
+    try locale.write(to: file, atomically: true, encoding: .utf8)
+    #expect(try execute(["git", "add", "."], in: directory).0 == 0)
+    #expect(try execute(["git", "commit", "-m", "locale fixture"], in: directory).0 == 0)
+    #expect(try execute([executable, "--custom-only"], in: directory).0 == 0)
+    try locale.replacingOccurrences(of: ".current", with: ".autoupdatingCurrent")
+        .write(to: file, atomically: true, encoding: .utf8)
+    let changedLocale = try execute([executable, "--custom-only", "--json"], in: directory)
+    #expect(changedLocale.0 == 1)
+    #expect(changedLocale.1.contains("no_current_locale"))
+
     // A changed closing line must still select the diagnostic on the opening line.
     let multiline = "let view = content.padding(\n    .horizontal,\n    12\n)\n"
     try multiline.write(to: file, atomically: true, encoding: .utf8)

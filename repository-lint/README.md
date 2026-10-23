@@ -1,6 +1,6 @@
 # repository-lint
 
-A macOS Swift package for 23 SwiftSyntax checks, a changed-line Git runner,
+A macOS Swift package for 24 SwiftSyntax checks, a changed-line Git runner,
 standard SwiftLint integration, and a nested-call formatter. It parses each
 file once, scans up to four files concurrently, sorts diagnostics, and records
 SQLite timings. It is independent of the app's Swift package graph.
@@ -55,7 +55,7 @@ color factory name, and generated paths excluded from nested-call formatting.
 [examples/mise.toml](examples/mise.toml) show consumer integration.
 
 ```bash
-# Stable IDs and exact diagnostic lines for 351 examples across 23 rules:
+# Stable IDs and exact diagnostic lines for 365 examples across 24 rules:
 ./repository-lint/run.sh --self-test
 # Build production first; tests run the CLI in temporary consumer Git repos:
 REPOSITORY_LINT_BINARY="$(git rev-parse --path-format=absolute --git-common-dir)/repository-lint/build/release/repository-lint" \
@@ -71,6 +71,11 @@ indentation, and cover diff filtering, untracked and deleted files, filenames
 with spaces, JSON output, configurable naming, formatter exclusions, raw strings,
 nested comments, modifier exemptions, and closure boundaries. Launcher tests
 check cache reuse/invalidation and failed-build recovery without compiling Swift.
+
+The `no_current_locale` rule rejects direct system locale reads and typed shorthand
+locale defaults. Resolve `CurrentLocaleProvider` through dependency injection;
+only `Modules/Utilities/CurrentLocale/Implementation/` reads the system locale.
+Generated sources are exempt.
 
 ## Cache and metrics
 

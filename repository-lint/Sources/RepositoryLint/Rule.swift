@@ -11,6 +11,7 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
     case noCoordinatorInViewModel = "no_coordinator_in_view_model"
     case noDirectInjected = "no_direct_injected"
     case noDirectInjectedImport = "no_direct_injected_import"
+    case noCurrentLocale = "no_current_locale"
     case noEagerDependency = "no_eager_dependency"
     case noSfSymbols = "no_sf_symbols"
     case nestedCallArguments = "nested_call_arguments"
@@ -53,6 +54,8 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
             "Use @Dependency instead of @Injected outside the DependencyInjection module."
         case .noDirectInjectedImport:
             "Import DependencyInjection instead of Injected outside the wrapper module."
+        case .noCurrentLocale:
+            "Resolve CurrentLocaleProvider from the dependency container instead of using the system locale directly."
         case .noEagerDependency:
             "Use the default lazy @Dependency resolution instead of resolve: .eager."
         case .noSfSymbols:
