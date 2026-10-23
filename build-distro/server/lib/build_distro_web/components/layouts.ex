@@ -8,6 +8,21 @@ defmodule BuildDistroWeb.Layouts do
   @doc "A tab title that starts with the product: `build-distro · Admin`."
   def title(page), do: "build-distro · " <> page
 
+  def manifest_path(conn) do
+    case conn.path_params do
+      %{"project" => project} = params ->
+        public? = match?([^project, "p", _ | _], conn.path_info)
+        base = "/#{project}" <> if(public?, do: "/p/#{params["token"]}", else: "")
+
+        base <>
+          "/manifest.webmanifest?" <>
+          URI.encode_query(%{"bucket" => conn.query_params["bucket"] || "main"})
+
+      _ ->
+        "/manifest.webmanifest"
+    end
+  end
+
   attr :flash, :map, required: true
   attr :project, :map, default: nil
   attr :admin?, :boolean, default: false

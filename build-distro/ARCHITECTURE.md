@@ -87,11 +87,14 @@ whatever your stack.
    and IPA without cookies. The manifest URL carries a signed, expiring token,
    and the manifest points at a presigned IPA URL created when it is fetched.
    Pages refresh their tokens long before they expire.
-9. **Secrets stay out of the database.** The database is replicated to the
-   bucket. API keys and passcodes are stored as hashes. Public links also store
+9. **Secrets are never stored in plaintext in the database.** The database is
+   replicated to the bucket. API keys and passcodes are stored as hashes. Public links also store
    only hashes; admins can copy a signed version of that hash, authenticated
    with the server's `SECRET_KEY_BASE`. These links last until revoked (or the
    signing secret changes). Original random-token public URLs remain valid.
+   Web Push endpoints and subscription keys, which must be recoverable for
+   delivery, are encrypted with `SECRET_KEY_BASE`. VAPID private keys stay in
+   the environment.
 10. **The server holds no repository credentials.** CI reports to GitHub and
    reads changelogs with the job's token, which is scoped to the repository
    and expires with the job. Admin sign-in uses an OAuth App that requests no
@@ -104,6 +107,13 @@ whatever your stack.
    links all check that bucket, and it never gets dSYM or IPA downloads.
 12. **Changelogs are stored raw and grouped when shown.** Editing a project's
    tooling rules regroups every build, old ones included.
+13. **Push follows access and readiness.** Opt-in subscriptions belong to one
+   project, bucket and access grant. The ready transition creates durable Oban
+   delivery jobs in its database transaction, once per subscribed device.
+   Workers recheck grant validity before sending, delete gone endpoints and
+   retry transient errors. Network delivery is at least once; a build-specific
+   notification tag coalesces duplicates. Public destinations retain a signed
+   public token. The root-scoped service worker caches no pages or artifacts.
 
 ## Incidental choices
 

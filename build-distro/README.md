@@ -28,6 +28,8 @@ and an S3 bucket.
 - **Three ways in.** Admins sign in with GitHub. Testers get one invite link
   each plus a project passcode. A public link shows one bucket to anyone who
   has it. Revoking any of them takes effect immediately.
+- **Opt-in new-build notifications.** Add a bucket to your Home Screen and
+  enable Web Push. A notification opens the build as soon as it is ready.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for why it works this way.
 
@@ -41,7 +43,7 @@ permissions:
 
 # ...
 
-- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.2.3
+- uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.3.0
   with:
     server: https://builds.example.com
     api-key: ${{ secrets.BUILD_DISTRO_API_KEY }}
@@ -96,7 +98,7 @@ VM, Cloudflare R2 and a Cloudflare Tunnel.
 4. **Deploy.**
 
    ```bash
-   git clone --branch build-distro-v0.2.3 https://github.com/SzymonMrozek/pitcrew.git
+   git clone --branch build-distro-v0.3.0 https://github.com/SzymonMrozek/pitcrew.git
    cd pitcrew/build-distro
    cp examples/env.example .env   # then fill it in
    docker compose up --detach --build --wait
@@ -123,6 +125,53 @@ Builds older than `RETENTION_DAYS` (default 30) lose their files; the newest
 ready build of each branch is always kept, and `/<project>/latest?branch=main`
 always points at it.
 
+## New-build notifications
+
+Push is optional. Generate a VAPID keypair once, from `server/`:
+
+```bash
+mix web_push.gen.vapid
+```
+
+Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` in the server's
+`.env`, then rebuild and restart the app. The subject is an HTTPS contact URL
+or `mailto:admin@example.com`. Keep the same keypair across deployments. The
+notification controls stay hidden when these settings are absent. Partial or
+invalid settings stop startup with an error. No paid push provider or Apple
+Developer membership is needed; the browser's push service delivers messages.
+
+On iPhone/iPad (iOS/iPadOS 16.4 or later):
+
+1. Open the bucket you want to follow, using your invite or public link.
+2. Choose Share → Add to Home Screen, then open the installed web app.
+3. If needed, paste your invite into **Open your invite** on the installed
+   app's home page, then enter the passcode; admins can sign in there too.
+   Public links keep their access in the app's launch URL.
+4. Tap **Notify me about new builds** and allow notifications.
+
+Each bucket opts in separately on each device. **Turn off notifications**
+disables only that bucket; other subscriptions on the device keep working.
+Supported desktop/Android browsers can subscribe directly. Permission denial
+requires changing the browser/device notification setting before trying again.
+
+Notifications are queued in the same transaction that makes a build ready;
+uploads, failures, and existing builds do not generate notifications. Jobs
+retry temporary delivery errors and remove expired subscriptions. They recheck
+the original invite, allowed admin login, or public link before sending.
+Revoking access stops future sends; it cannot recall a notification already
+accepted by the browser's push service. Public notification taps open the
+public build page, without requiring an invite. A repeated delivery of the
+same build uses the same notification tag.
+
+The service worker handles notifications only: it does not cache private
+pages, public links, or build artifacts. Push endpoints and subscription keys
+are encrypted in the database using `SECRET_KEY_BASE`; changing it requires
+subscribers to opt in again. Changing the VAPID keypair requires resetting
+the browser's push subscription and opting in again. Outbound HTTPS is
+restricted to Apple, Google, Mozilla and Microsoft push endpoints; HTTP
+redirects are never followed. Allow these push services through any outbound
+firewall, including `*.push.apple.com` for Safari.
+
 ## Development
 
 ```bash
@@ -130,6 +179,7 @@ cd server
 docker compose -f test/s3/compose.yaml up -d --wait   # S3 on 127.0.0.1:8333
 mix setup
 mix test
+node --test test/*.test.mjs
 mix phx.server   # http://localhost:4000, admin password "admin"
 ```
 

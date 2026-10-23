@@ -9,6 +9,29 @@ defmodule BuildDistroWeb.JoinController do
   @attempts 10
   @window :timer.minutes(10)
 
+  # Installed web apps may have a different cookie jar from the browser that accepted the invite.
+  def open(conn, %{"invite_url" => url}) when is_binary(url) and byte_size(url) <= 2048 do
+    origin = URI.parse(BuildDistroWeb.Endpoint.url())
+
+    with {:ok, %URI{scheme: scheme, host: host, port: port, path: path}} <-
+           URI.new(String.trim(url)),
+         true <- {scheme, host, port} == {origin.scheme, origin.host, origin.port},
+         ["", project, "join", token] <- String.split(path || "", "/"),
+         true <- project != "" and token != "" do
+      redirect(conn, to: ~p"/#{project}/join/#{token}")
+    else
+      _ -> invalid_url(conn)
+    end
+  end
+
+  def open(conn, _), do: invalid_url(conn)
+
+  defp invalid_url(conn) do
+    conn
+    |> put_flash(:error, "Paste the invite link for this build-distro server.")
+    |> redirect(to: ~p"/")
+  end
+
   def new(conn, %{"project" => slug, "token" => token}) do
     with %{} = project <- Projects.get_project_by_slug(slug),
          %{} <- Projects.find_active_invite(project, token) do

@@ -18,6 +18,7 @@
   }
 
   const Hooks = {
+    BuildNotifications: globalThis.BuildNotifications,
     RelativeTime: {
       mounted() {
         this.render()

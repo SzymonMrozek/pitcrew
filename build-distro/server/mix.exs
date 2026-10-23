@@ -4,8 +4,8 @@ defmodule BuildDistro.MixProject do
   def project do
     [
       app: :build_distro,
-      version: "0.1.0",
-      elixir: "~> 1.17",
+      version: "0.3.0",
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -51,6 +51,7 @@ defmodule BuildDistro.MixProject do
       {:ex_aws, "~> 2.7"},
       {:ex_aws_s3, "~> 2.5"},
       {:sweet_xml, "~> 0.7"},
+      {:web_push, "~> 0.1.0"},
       {:eqrcode, "~> 0.2"}
     ]
   end

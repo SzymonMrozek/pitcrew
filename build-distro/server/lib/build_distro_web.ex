@@ -20,7 +20,8 @@ defmodule BuildDistroWeb do
   # Fingerprinted copies only match a directory here, so referenced icons
   # live in images/. favicon.ico and apple-touch-icon.png stay at the root for
   # browsers that ask for those exact paths.
-  def static_paths, do: ~w(assets fonts images favicon.ico apple-touch-icon.png robots.txt)
+  def static_paths,
+    do: ~w(assets fonts images favicon.ico apple-touch-icon.png robots.txt service-worker.js)
 
   def router do
     quote do

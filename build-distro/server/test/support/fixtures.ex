@@ -3,6 +3,48 @@ defmodule BuildDistro.Fixtures do
 
   alias BuildDistro.{Builds, Projects}
 
+  def push_fixture do
+    {public, private} = :crypto.generate_key(:ecdh, :prime256v1)
+    auth = :crypto.strong_rand_bytes(16)
+
+    %{
+      private: private,
+      public: public,
+      auth: auth,
+      subscription: %{
+        "endpoint" => "https://web.push.apple.com/#{System.unique_integer([:positive])}",
+        "keys" => %{
+          "p256dh" => Base.url_encode64(public, padding: false),
+          "auth" => Base.url_encode64(auth, padding: false)
+        }
+      }
+    }
+  end
+
+  def configure_push do
+    previous = Application.get_env(:web_push, :vapid)
+    previous_options = Application.get_env(:build_distro, :push_request_options)
+    keys = WebPush.Vapid.generate_keypair()
+
+    Application.put_env(
+      :web_push,
+      :vapid,
+      Map.to_list(Map.put(keys, :subject, "mailto:admin@example.com"))
+    )
+
+    Application.put_env(:build_distro, :push_request_options, adapter: BuildDistro.PushAdapter)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:web_push, :vapid, previous),
+        else: Application.delete_env(:web_push, :vapid)
+
+      if previous_options,
+        do: Application.put_env(:build_distro, :push_request_options, previous_options),
+        else: Application.delete_env(:build_distro, :push_request_options)
+    end)
+  end
+
   @fixtures Path.expand("../fixtures", __DIR__)
 
   def fixture_path(name), do: Path.join(@fixtures, name)

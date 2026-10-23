@@ -4,7 +4,7 @@ defmodule BuildDistroWeb.Router do
   import BuildDistroWeb.Access, only: [require_project_access: 2, refresh_session: 2]
 
   pipeline :browser do
-    plug :accepts, ["html"]
+    plug :accepts, ["html", "json", "webmanifest"]
     plug :fetch_session
     plug :fetch_live_flash
     plug :put_root_layout, html: {BuildDistroWeb.Layouts, :root}
@@ -45,9 +45,11 @@ defmodule BuildDistroWeb.Router do
     pipe_through :browser
 
     get "/", HomeController, :index
+    get "/manifest.webmanifest", PwaController, :manifest
     get "/admin/login", AuthController, :new
     get "/auth/github", AuthController, :request
     get "/auth/github/callback", AuthController, :callback
+    post "/auth/invite", JoinController, :open
     delete "/admin/logout", AuthController, :delete
 
     if Application.compile_env(:build_distro, :dev_routes) do
@@ -66,6 +68,10 @@ defmodule BuildDistroWeb.Router do
       pipe_through :project
 
       get "/latest", LatestController, :show
+      get "/manifest.webmanifest", PwaController, :manifest
+      get "/p/:token/manifest.webmanifest", PwaController, :manifest
+      post "/notifications/:bucket", PushController, :update
+      post "/p/:token/notifications/:bucket", PushController, :update
       get "/builds/:number/download/:kind", DownloadController, :show
       get "/builds/:number/icon.png", DownloadController, :icon
       get "/p/:token/builds/:number/icon.png", DownloadController, :icon

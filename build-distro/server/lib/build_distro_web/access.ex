@@ -38,7 +38,8 @@ defmodule BuildDistroWeb.Access do
         Viewer.new(project, :admin, admin: user)
 
       invite_id = get_in(session, ["invites", to_string(project.id)]) ->
-        if Projects.invite_active?(project, invite_id), do: Viewer.new(project, :tester)
+        if Projects.invite_active?(project, invite_id),
+          do: Viewer.new(project, :tester, invite_id: invite_id)
 
       true ->
         nil
@@ -48,8 +49,11 @@ defmodule BuildDistroWeb.Access do
   @doc "What a public link shows, or nil."
   def public_viewer(project, token) do
     case Projects.find_active_public_link(project, token) do
-      nil -> nil
-      link -> Viewer.new(project, :public, bucket: link.bucket, token: token)
+      nil ->
+        nil
+
+      link ->
+        Viewer.new(project, :public, bucket: link.bucket, token: token, public_link_id: link.id)
     end
   end
 

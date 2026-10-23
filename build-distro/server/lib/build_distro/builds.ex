@@ -606,7 +606,11 @@ defmodule BuildDistro.Builds do
       case Repo.get(Build, build.id) do
         %Build{state: state} = current ->
           if state in from_states do
-            current |> Ecto.Changeset.change() |> change.() |> Repo.update()
+            with {:ok, updated} <-
+                   current |> Ecto.Changeset.change() |> change.() |> Repo.update() do
+              if updated.state == "ready", do: BuildDistro.Notifications.enqueue(updated)
+              {:ok, updated}
+            end
           else
             {:ok, current}
           end

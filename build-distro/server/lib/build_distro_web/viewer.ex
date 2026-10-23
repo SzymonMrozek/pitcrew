@@ -7,7 +7,7 @@ defmodule BuildDistroWeb.Viewer do
 
   alias BuildDistro.Builds.Build
 
-  defstruct [:project, :kind, :admin, :buckets, :base]
+  defstruct [:project, :kind, :admin, :invite_id, :public_link_id, :buckets, :base]
 
   def new(project, kind, opts \\ [])
 
@@ -15,6 +15,7 @@ defmodule BuildDistroWeb.Viewer do
     %__MODULE__{
       project: project,
       kind: :public,
+      public_link_id: opts[:public_link_id],
       buckets: [Keyword.fetch!(opts, :bucket)],
       base: "/#{project.slug}/p/#{Keyword.fetch!(opts, :token)}"
     }
@@ -25,6 +26,7 @@ defmodule BuildDistroWeb.Viewer do
       project: project,
       kind: kind,
       admin: opts[:admin],
+      invite_id: opts[:invite_id],
       buckets: Build.buckets(),
       base: "/#{project.slug}"
     }

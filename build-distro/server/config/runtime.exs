@@ -1,5 +1,29 @@
 import Config
 
+vapid = for name <- ~w(VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT), do: System.get_env(name)
+
+if Enum.any?(vapid, &(&1 not in [nil, ""])) do
+  [public, private, subject] = vapid
+  contact = URI.parse(subject || "")
+
+  valid_contact? =
+    (contact.scheme == "mailto" and is_binary(contact.path) and
+       String.contains?(contact.path, "@")) or
+      (contact.scheme == "https" and is_binary(contact.host) and contact.host != "")
+
+  with {:ok, public_bytes} when byte_size(public_bytes) == 65 <-
+         Base.url_decode64(public || "", padding: false),
+       {:ok, private_bytes} when byte_size(private_bytes) == 32 <-
+         Base.url_decode64(private || "", padding: false),
+       {^public_bytes, _} <- :crypto.generate_key(:ecdh, :prime256v1, private_bytes),
+       true <- valid_contact? do
+    config :web_push, :vapid, public_key: public, private_key: private, subject: subject
+  else
+    _ ->
+      raise "Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT to a valid matching keypair and contact URL"
+  end
+end
+
 if System.get_env("PHX_SERVER") do
   config :build_distro, BuildDistroWeb.Endpoint, server: true
 end

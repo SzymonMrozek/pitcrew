@@ -65,6 +65,25 @@ defmodule BuildDistroWeb.BuildsLive do
       </nav>
       <h1 :if={@viewer.kind == :public} class="bucket-title">{Build.bucket_label(@bucket)} builds</h1>
 
+      <section
+        :if={BuildDistro.Notifications.enabled?()}
+        id="build-notifications"
+        class="card notification-settings"
+        phx-hook="BuildNotifications"
+        data-url={@viewer.base <> "/notifications/" <> @bucket}
+        data-manifest={@viewer.base <> "/manifest.webmanifest?bucket=" <> @bucket}
+        data-public-key={BuildDistro.Notifications.public_key()}
+      >
+        <h2>New build notifications</h2>
+        <p class="muted">
+          Get notified when a new {String.downcase(Build.bucket_label(@bucket))} build is ready.
+        </p>
+        <div id="build-notifications-controls" phx-update="ignore">
+          <button type="button" class="button button-small" data-push-toggle disabled>Checking notifications…</button>
+          <p class="muted" data-push-status role="status"></p>
+        </div>
+      </section>
+
       <ol :if={@rows != []} class="build-list">
         <li :for={{build, older} <- @rows} id={"build-#{build.id}"}>
           <.link navigate={Viewer.build_path(@viewer, build)} class="build-row">

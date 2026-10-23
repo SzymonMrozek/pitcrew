@@ -28,7 +28,7 @@ jobs:
 
       - name: Distribute
         id: distribute
-        uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.2.3
+        uses: SzymonMrozek/pitcrew/build-distro@build-distro-v0.3.0
         with:
           server: https://builds.example.com
           api-key: ${{ secrets.BUILD_DISTRO_API_KEY }}

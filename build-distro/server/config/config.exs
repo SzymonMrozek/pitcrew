@@ -22,7 +22,7 @@ config :build_distro, BuildDistroWeb.Endpoint,
 config :build_distro, Oban,
   engine: Oban.Engines.Lite,
   repo: BuildDistro.Repo,
-  queues: [processing: 2, maintenance: 1],
+  queues: [processing: 2, maintenance: 1, notifications: 2],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 7 * 24 * 60 * 60},
     {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(10)},
@@ -47,5 +47,15 @@ config :logger, :default_formatter,
   metadata: [:request_id, :build_id]
 
 config :phoenix, :json_library, Jason
+
+config :phoenix, :filter_parameters, [
+  "password",
+  "passcode",
+  "token",
+  "subscription",
+  "invite_url",
+  "endpoint",
+  "keys"
+]
 
 import_config "#{config_env()}.exs"
