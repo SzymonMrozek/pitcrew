@@ -88,7 +88,10 @@ whatever your stack.
    and the manifest points at a presigned IPA URL created when it is fetched.
    Pages refresh their tokens long before they expire.
 9. **Secrets stay out of the database.** The database is replicated to the
-   bucket. API keys and passcodes are stored as hashes.
+   bucket. API keys and passcodes are stored as hashes. Public links also store
+   only hashes; admins can copy a signed version of that hash, authenticated
+   with the server's `SECRET_KEY_BASE`. These links last until revoked (or the
+   signing secret changes). Original random-token public URLs remain valid.
 10. **The server holds no repository credentials.** CI reports to GitHub and
    reads changelogs with the job's token, which is scoped to the repository
    and expires with the job. Admin sign-in uses an OAuth App that requests no

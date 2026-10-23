@@ -219,7 +219,7 @@ defmodule BuildDistroWeb.AdminProjectLive do
         </p>
 
         <div :if={@new_public_url} class="secret">
-          <p>Copy the link now; it isn't shown again.</p>
+          <p>Share this link. You can copy it again from the list below.</p>
           <.secret id="new-public-link" value={@new_public_url} />
         </div>
 
@@ -246,15 +246,27 @@ defmodule BuildDistroWeb.AdminProjectLive do
                 </span>
               </span>
             </span>
-            <button
-              type="button"
-              class="button button-small button-danger"
-              phx-click="revoke_public_link"
-              phx-value-id={link.id}
-              data-confirm={"Stop this #{Build.bucket_label(link.bucket)} link working?"}
-            >
-              Revoke
-            </button>
+            <div class="public-link-actions">
+              <button
+                type="button"
+                class="button button-small"
+                id={"public-#{link.id}-copy"}
+                phx-hook="Copy"
+                data-copy={BuildDistroWeb.Endpoint.url() <> "/#{@project.slug}/p/#{Projects.public_link_token(link)}"}
+                aria-label={"Copy #{Build.bucket_label(link.bucket)} public link"}
+              >
+                Copy
+              </button>
+              <button
+                type="button"
+                class="button button-small button-danger"
+                phx-click="revoke_public_link"
+                phx-value-id={link.id}
+                data-confirm={"Stop this #{Build.bucket_label(link.bucket)} link working?"}
+              >
+                Revoke
+              </button>
+            </div>
           </li>
         </ul>
       </section>

@@ -138,7 +138,7 @@ defmodule BuildDistro.Projects do
     )
   end
 
-  @doc "Creates a link that shows one bucket to anyone who has it. The token is returned only here."
+  @doc "Creates a link that shows one bucket to anyone who has it."
   def create_public_link(project, bucket) do
     if bucket in Build.buckets() do
       token = Secrets.generate_token("pub")
@@ -146,12 +146,19 @@ defmodule BuildDistro.Projects do
       %PublicLink{project_id: project.id, bucket: bucket, token_hash: Secrets.hash_token(token)}
       |> Repo.insert()
       |> case do
-        {:ok, link} -> {:ok, link, token}
+        {:ok, link} -> {:ok, link, public_link_token(link)}
         error -> error
       end
     else
       {:error, :invalid_bucket}
     end
+  end
+
+  @doc "A recoverable token for sharing a public link, including links created before signing."
+  def public_link_token(%PublicLink{} = link) do
+    Phoenix.Token.sign(BuildDistroWeb.Endpoint, "public-link", link.token_hash,
+      signed_at: DateTime.to_unix(link.inserted_at)
+    )
   end
 
   def revoke_public_link(project, link_id) do
@@ -164,7 +171,12 @@ defmodule BuildDistro.Projects do
   end
 
   def find_active_public_link(project, token) when is_binary(token) do
-    hash = Secrets.hash_token(token)
+    # Older shared URLs carry the original random token and must keep working.
+    hash =
+      case Phoenix.Token.verify(BuildDistroWeb.Endpoint, "public-link", token, max_age: :infinity) do
+        {:ok, hash} when is_binary(hash) -> hash
+        _ -> Secrets.hash_token(token)
+      end
 
     query =
       from l in PublicLink,

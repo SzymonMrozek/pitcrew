@@ -279,6 +279,7 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size:
 .invite-list { margin: 16px 0 0; }
 .invite-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .invite-list .revoked { opacity: 0.55; }
+.public-link-actions { display: flex; gap: 8px; flex: none; }
 .secret { border-color: var(--accent); }
 div.secret { margin: 0 0 16px; }
 .secret-value {

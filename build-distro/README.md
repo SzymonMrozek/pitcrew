@@ -113,7 +113,8 @@ VM, Cloudflare R2 and a Cloudflare Tunnel.
 7. **Testers.** Create one invite per tester and send it with the passcode.
    Invites open the project in the browser they're accepted in; testers open
    them in Safari on their iPhone. For people without an invite, create a
-   public link for a bucket, such as Main.
+   public link for a bucket, such as Main. Use Copy beside Revoke to share an
+   existing public link again, including links created before this version.
 
 To update, check out a newer tag and run `docker compose up --detach --build`.
 Open pages reconnect by themselves.

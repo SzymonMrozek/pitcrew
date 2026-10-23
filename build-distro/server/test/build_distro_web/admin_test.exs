@@ -9,17 +9,62 @@ defmodule BuildDistroWeb.AdminTest do
     assert {:error, {:redirect, %{to: "/admin/login"}}} = live(build_conn(), ~p"/admin")
   end
 
-  test "public links show once and can be revoked", %{conn: conn} do
+  test "public links can be copied after a reload and revoked", %{conn: conn} do
     %{project: project} = project_fixture()
     {:ok, view, _} = live(conn, ~p"/admin/projects/#{project.slug}")
 
     html = view |> element("button", "New Main link") |> render_click()
-    assert [_, path] = Regex.run(~r{http://[^/]+(/#{project.slug}/p/pub_[\w-]+)}, html)
+
+    url =
+      html |> LazyHTML.from_document() |> LazyHTML.query("#new-public-link") |> LazyHTML.text()
+
+    path = URI.parse(url).path
     assert {:ok, _, _} = live(build_conn(), path)
 
     [link] = BuildDistro.Projects.list_public_links(project)
+    {:ok, view, _} = live(conn, ~p"/admin/projects/#{project.slug}")
+
+    assert has_element?(
+             view,
+             "#public-#{link.id}-copy[phx-hook='Copy'][data-copy='#{url}']",
+             "Copy"
+           )
+
     view |> element("button[phx-value-id='#{link.id}']", "Revoke") |> render_click()
+    refute has_element?(view, "#public-#{link.id}-copy")
     assert {:error, {:redirect, %{to: "/"}}} = live(build_conn(), path)
+  end
+
+  test "existing public links can be copied without breaking their original URLs", %{conn: conn} do
+    %{project: project} = project_fixture()
+    token = BuildDistro.Secrets.generate_token("pub")
+
+    link =
+      BuildDistro.Repo.insert!(%BuildDistro.Projects.PublicLink{
+        project_id: project.id,
+        bucket: "main",
+        token_hash: BuildDistro.Secrets.hash_token(token),
+        inserted_at: DateTime.add(DateTime.utc_now(), -365, :day)
+      })
+
+    original_path = ~p"/#{project.slug}/p/#{token}"
+    {:ok, view, _} = live(conn, ~p"/admin/projects/#{project.slug}")
+
+    [url] =
+      view
+      |> element("#public-#{link.id}-copy")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("button")
+      |> LazyHTML.attribute("data-copy")
+
+    copied_path = URI.parse(url).path
+    assert {:ok, _, _} = live(build_conn(), original_path)
+    assert {:ok, _, _} = live(build_conn(), copied_path)
+
+    view |> element("button[phx-value-id='#{link.id}']", "Revoke") |> render_click()
+    assert {:error, {:redirect, %{to: "/"}}} = live(build_conn(), original_path)
+    assert {:error, {:redirect, %{to: "/"}}} = live(build_conn(), copied_path)
   end
 
   test "settings hold the main branch and tooling rules", %{conn: conn} do
