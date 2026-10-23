@@ -1,0 +1,15 @@
+name: repository-hygiene
+
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/**", ".githooks/**", ".github/workflows/repository-hygiene.yml"]
+  pull_request:
+    paths: ["scripts/**", ".githooks/**", ".github/workflows/repository-hygiene.yml"]
+
+jobs:
+  push-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s scripts/tests -v

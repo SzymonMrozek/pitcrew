@@ -149,10 +149,10 @@ function worker() {
 test("background push shows a notification and its tap preserves the public build URL", async () => {
   const w = worker()
   let pending
-  w.listeners.push({ data: { json: () => ({ title: "HFun · new build", body: "1.4 (412) is ready", url: "/app/p/public-token/builds/42", tag: "build-42" }) },
+  w.listeners.push({ data: { json: () => ({ title: "My App · new build", body: "1.4 (412) is ready", url: "/app/p/public-token/builds/42", tag: "build-42" }) },
     waitUntil: promise => { pending = promise } })
   await pending
-  assert.equal(w.notifications[0].title, "HFun · new build")
+  assert.equal(w.notifications[0].title, "My App · new build")
   assert.equal(w.notifications[0].options.tag, "build-42")
   let closed = false
   w.listeners.notificationclick({ notification: { data: w.notifications[0].options.data, close: () => { closed = true } },

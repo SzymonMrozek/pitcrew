@@ -171,7 +171,7 @@ defmodule BuildDistro.NotificationsTest do
     {:ok, sub} = Notifications.subscribe(ctx.viewer, "main", ctx.push.subscription)
 
     {:ok, project} =
-      Projects.update_project(ctx.project, %{"name" => String.duplicate("HFun", 1000)})
+      Projects.update_project(ctx.project, %{"name" => String.duplicate("App ", 1000)})
 
     build = ready_build(project)
 

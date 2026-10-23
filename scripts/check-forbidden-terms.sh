@@ -6,6 +6,7 @@ set -euo pipefail
 
 terms_file="${PITCREW_FORBIDDEN_TERMS:-$HOME/.config/pitcrew/forbidden-terms}"
 range="${1:-}"
+tree="${2:-}"
 
 if [ ! -f "$terms_file" ]; then
   echo "No forbidden-terms list at $terms_file; skipping." >&2
@@ -20,14 +21,20 @@ grep -vE '^[[:space:]]*(#|$)' "$terms_file" > "$patterns" || true
 root=$(git rev-parse --show-toplevel)
 status=0
 
-if git -C "$root" grep -n -i -I -E -f "$patterns" >&2; then
+if git -C "$root" grep -n -i -I -E -f "$patterns" ${tree:+"$tree"} -- >&2; then
   echo "Forbidden terms found in tracked files." >&2
   status=1
+else
+  result=$?
+  [ "$result" -eq 1 ] || exit "$result"
 fi
 
-if [ -n "$range" ] && git -C "$root" log --format='%H %an <%ae>%n%B' "$range" | grep -n -i -E -f "$patterns" >&2; then
-  echo "Forbidden terms found in commits $range." >&2
-  status=1
+if [ -n "$range" ]; then
+  metadata=$(git -C "$root" log --format='%H %an <%ae>%n%B' "$range")
+  if printf '%s\n' "$metadata" | grep -n -i -E -f "$patterns" >&2; then
+    echo "Forbidden terms found in commits $range." >&2
+    status=1
+  fi
 fi
 
 exit "$status"

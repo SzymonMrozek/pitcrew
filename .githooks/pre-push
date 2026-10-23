@@ -10,5 +10,5 @@ while read -r _ local_sha _ remote_sha; do
   else
     range="$remote_sha..$local_sha"
   fi
-  "$(git rev-parse --show-toplevel)/scripts/check-forbidden-terms.sh" "$range"
+  "$(git rev-parse --show-toplevel)/scripts/check-forbidden-terms.sh" "$range" "$local_sha"
 done

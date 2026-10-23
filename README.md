@@ -76,10 +76,13 @@ git config core.hooksPath .githooks
 ```
 
 The pre-push hook runs [`scripts/check-forbidden-terms.sh`](scripts/check-forbidden-terms.sh)
-against a private list of terms in `~/.config/pitcrew/forbidden-terms` (one
+against each pushed commit’s tree and commit metadata, using a private list of
+terms in `~/.config/pitcrew/forbidden-terms` (one
 regex per line, kept outside the repository). That's how names from my private
 projects stay out of public commits. The same trick works if you publish your
-own tools.
+own tools. Run `scripts/check-forbidden-terms.sh` without arguments to check
+the current tracked files before committing. Test the guard with
+`python3 -m unittest discover -s scripts/tests`.
 
 ## License
 
