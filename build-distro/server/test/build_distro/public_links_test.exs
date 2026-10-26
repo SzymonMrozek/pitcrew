@@ -3,6 +3,23 @@ defmodule BuildDistro.PublicLinksTest do
 
   alias BuildDistro.Projects
 
+  test "the default link is stable and belongs to the requested project and bucket" do
+    %{project: project} = project_fixture()
+    %{project: other} = project_fixture()
+    {:ok, _, _} = Projects.create_public_link(other, "main")
+    {:ok, _, _} = Projects.create_public_link(project, "manual")
+    assert Projects.public_link_for_bucket(project, "main") == nil
+
+    {:ok, first, _} = Projects.create_public_link(project, "main")
+    {:ok, second, _} = Projects.create_public_link(project, "main")
+    assert Projects.public_link_for_bucket(project, "main").id == first.id
+
+    :ok = Projects.revoke_public_link(project, first.id)
+    assert Projects.public_link_for_bucket(project, "main").id == second.id
+    :ok = Projects.revoke_public_link(project, second.id)
+    assert Projects.public_link_for_bucket(project, "main") == nil
+  end
+
   test "copied tokens are scoped to their project and reject tampering" do
     %{project: project} = project_fixture()
     %{project: other_project} = project_fixture(%{"slug" => "other"})

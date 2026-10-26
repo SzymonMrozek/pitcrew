@@ -117,6 +117,11 @@ VM, Cloudflare R2 and a Cloudflare Tunnel.
    them in Safari on their iPhone. For people without an invite, create a
    public link for a bucket, such as Main. Use Copy beside Revoke to share an
    existing public link again, including links created before this version.
+   Each build has a Copy public link button when its bucket has an active
+   public link. Its QR code and the URL returned to CI use that public build
+   address too. Without an active public link, build URLs still require an
+   invite or admin sign-in. Revoking a public link also revokes build URLs
+   shared through it.
 
 To update, check out a newer tag and run `docker compose up --detach --build`.
 Open pages reconnect by themselves.
