@@ -122,12 +122,26 @@ def deliver_reserved(path):
         update(status='blocked', delivery='failed', summary=f'Agent delivery failed: {error}')
 
 
+def require_codex_queue(cli):
+    try:
+        result = subprocess.run([cli, 'queue', '--help'], capture_output=True, text=True, timeout=10, env=clean_env())
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f'Cannot check Codex queue support in {cli}: {error}. The saved request can be retried.') from error
+    # Older CLIs accept "queue" as a prompt and print global help with exit status zero.
+    if result.returncode or not all(flag in result.stdout for flag in ('--thread', '--message')):
+        raise ValueError(f'The saved Codex executable {cli} does not support codex queue --thread --message. '
+                         'Run the review launcher from the original Codex chat using a queue-capable CLI '
+                         '(or set CODEX_CLI_PATH explicitly), then resume the same saved approval. '
+                         'Review feedback remains available to retry; no new approval is needed.')
+
+
 def conversation_command(provider, cli, session, prompt):
     if not session:
         raise ValueError('No originating agent conversation. Start review from its chat first.')
     if provider == 'claude':
         return [cli, '--resume', session, '--print', '--output-format', 'stream-json', '--verbose',
                 '--permission-mode', 'dontAsk', '--allowedTools', *CLAUDE_TOOLS]
+    require_codex_queue(cli)
     return [cli, 'queue', '--thread', session, '--message', prompt]
 
 

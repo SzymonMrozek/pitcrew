@@ -69,6 +69,13 @@ Keep these, whatever your stack.
 10. **Failure returns the same approval to pending.** Retries don't create new
     approvals, new iterations or new queue positions.
 
+The recorded CLI follows the actual ancestor agent binary (or an explicit
+`CODEX_CLI_PATH`), since a desktop app and `PATH` can contain different Codex
+versions. A stopped approval resumed by its same originating conversation may
+refresh that CLI path; it never changes providers or conversations. Delivery
+probes queue capabilities instead of guessing from a version number, and never
+falls back to `exec resume` for an open desktop conversation.
+
 ## Incidental choices
 
 Replace these freely:

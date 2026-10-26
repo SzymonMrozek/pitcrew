@@ -172,6 +172,14 @@ with every new unresolved comment from all review scopes and
 an optional note. The agent treats it as a new request: it records an
 interaction, makes the changes and replies to each comment. It never merges.
 Codex uses `codex queue` so an open desktop chat keeps its existing writer.
+The launcher records the ancestor Codex executable, including the desktop app's
+bundled CLI, rather than assuming the executable on `PATH` is the same one.
+An explicit `CODEX_CLI_PATH` takes precedence. Before sending, delivery checks
+that this saved executable supports `queue --thread --message`; unsupported
+CLIs leave actionable retry instructions instead of trying to resume a desktop
+chat with a second persistence writer. Resuming a stopped approval from the
+same provider and conversation refreshes its CLI path without changing its
+approval, content, or queue position. Other conversations cannot rebind it.
 The page confirms delivery; follow the reply in the original chat and refresh
 to review what changed. Claude resumes in the background and its reply appears
 on the page when it finishes.

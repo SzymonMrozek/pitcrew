@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.7.1'
+RELEASE = '0.7.2'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -333,7 +333,7 @@ def merge_queue(store):
             'next': pending[0]['id'] if pending else None}
 
 
-def parent_agent():
+def parent_agent(with_cli=False):
     binaries = {str(Path(cli).resolve()): provider for provider, cli in (
         ('codex', os.environ.get('CODEX_CLI_PATH') or shutil.which('codex')), ('claude', shutil.which('claude'))
         ) if cli}
@@ -344,10 +344,9 @@ def parent_agent():
                                     capture_output=True, text=True, timeout=1)
             parent, command = result.stdout.strip().split(None, 1)
             name = Path(command).name.lower()
-            if name in ('codex', 'claude'):
-                return name
-            if command in binaries:
-                return binaries[command]
+            provider = name if name in ('codex', 'claude') else binaries.get(command)
+            if provider:
+                return {'provider': provider, 'cli': command} if with_cli else provider
             pid = int(parent)
             if pid <= 1:
                 break
@@ -367,8 +366,13 @@ def detect_agent(name=CONFIG['name']):
     if claude and active_parent != 'codex':
         return {'provider': 'claude', 'sessionId': claude_session, 'cli': shutil.which('claude')}
     if codex_session:
+        cli = os.environ.get('CODEX_CLI_PATH')
+        if not cli:
+            parent = parent_agent(with_cli=True)
+            # A desktop chat can run a newer bundled CLI than the executable on PATH.
+            cli = parent['cli'] if isinstance(parent, dict) and parent['provider'] == 'codex' else shutil.which('codex')
         return {'provider': 'codex', 'sessionId': codex_session,
-                'cli': os.environ.get('CODEX_CLI_PATH') or shutil.which('codex')}
+                'cli': cli}
     return None
 
 
@@ -2433,6 +2437,9 @@ def main():
                     parser.error('No matching stopped approval to resume')
                 if review.branch != request['branch'] or review.target != request['target']:
                     parser.error('The approved branch or target changed')
+                origin, saved = detect_agent(config['name']), request.get('agent') or {}
+                if origin and all(origin.get(key) == saved.get(key) for key in ('provider', 'sessionId')):
+                    request['agent'] = {**saved, 'cli': origin.get('cli') or saved.get('cli')}
                 request.update(status='pending', delivery='not_sent', workerPid=None, mergePid=None,
                                summary='Approval resumed. Waiting for its queue turn.')
                 write_json(Path(request['path']), request)

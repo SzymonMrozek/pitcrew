@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOL))
-from agent import deliver, deliver_review  # noqa: E402
+from agent import deliver, deliver_review, require_codex_queue  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('review_server', TOOL / 'server.py')
 m = importlib.util.module_from_spec(spec)
@@ -115,6 +115,9 @@ class ReviewTests(unittest.TestCase):
         ancestry.start()
         self.addCleanup(ancestry.stop)
         self.addCleanup(self.env.stop)
+        probe = patch('agent.require_codex_queue')
+        probe.start()
+        self.addCleanup(probe.stop)
         self.review = m.Review(self.root, 'main')
         self.review.record_agent()
         self.notifier = patch.object(m.Review, 'notify_merge_request')
@@ -1589,6 +1592,23 @@ class ReviewTests(unittest.TestCase):
                     m.main()
         self.assertEqual(self.notify.call_count, 2)
 
+    def test_resume_refreshes_cli_only_for_the_original_conversation(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        argv = ['server.py', '--repo', str(self.root), '--resume-merge-request', request['id']]
+        for provider, session, expected_cli in (
+            ('codex', 'original-codex-chat', '/desktop/codex'),
+            ('codex', 'another-chat', '/fake/codex'),
+            ('claude', 'original-codex-chat', '/fake/codex'),
+        ):
+            m.write_json(Path(request['path']), {**request, 'status': 'blocked', 'workerPid': None})
+            origin = {'provider': provider, 'sessionId': session, 'cli': '/desktop/codex'}
+            with patch.object(sys, 'argv', argv), patch.object(m, 'detect_agent', return_value=origin), patch('sys.stdout', new=io.StringIO()):
+                m.main()
+            resumed = self.review.merge_request()
+            self.assertEqual(resumed['agent'], {**request['agent'], 'cli': expected_cli})
+            for field in ('id', 'requestedAt', 'revision', 'snapshotRef', 'snapshotCommit'):
+                self.assertEqual(resumed[field], request[field])
+
     def test_real_delivery_waits_before_launch_and_skips_withdrawn_queue_item(self):
         self.check_delivery_queue(cancel_later=True)
 
@@ -1601,6 +1621,9 @@ class ReviewTests(unittest.TestCase):
         cli.write_text('''#!/usr/bin/env python3
 import fcntl, json, os, re, sys, time
 from pathlib import Path
+if sys.argv[1:] == ['queue', '--help']:
+    print('Usage: codex queue --thread THREAD --message TEXT')
+    sys.exit(0)
 prompt = sys.argv[sys.argv.index("--message") + 1] if sys.argv[1] == "queue" else sys.stdin.read()
 path = Path(re.search(r" at (.*?) and verify", prompt).group(1))
 request = json.loads(path.read_text())
@@ -1765,7 +1788,9 @@ if '--output-last-message' in sys.argv:
         self.comment('Rename value.')
         handoff = self.send_review()
         cli = self.root / '.git' / 'fake-codex'
-        cli.write_text('#!/usr/bin/env python3\nimport sys\nassert sys.argv[1:4] == ["queue", "--thread", "original-codex-chat"]\n'
+        cli.write_text('#!/usr/bin/env python3\nimport sys\n'
+                       'if sys.argv[1:] == ["queue", "--help"]:\n print("Usage: codex queue --thread THREAD --message TEXT"); sys.exit(0)\n'
+                       'assert sys.argv[1:4] == ["queue", "--thread", "original-codex-chat"]\n'
                        'assert sys.argv[4] == "--message"\nassert "Rename value." in sys.argv[5]\n')
         cli.chmod(0o755)
         m.write_json(Path(handoff['path']), {**handoff, 'agent': {**handoff['agent'], 'cli': str(cli)}})
@@ -2028,6 +2053,18 @@ if '--output-last-message' in sys.argv:
                 self.assertIsNone(m.parent_agent())
             with patch.object(m.shutil, 'which', return_value='/fake/versions/2.1.169'), patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '10 /fake/versions/2.1.169\n')):
                 self.assertEqual(m.parent_agent(), 'claude', 'Native Claude binaries use version filenames')
+
+    def test_codex_origin_records_actual_ancestor_binary_before_path_fallback(self):
+        os.environ.pop('CODEX_CLI_PATH', None)
+        bundled = '/Applications/Desktop App.app/Contents/MacOS/codex'
+        with patch.object(m, 'parent_agent', new=parent_agent_impl), patch.object(m.shutil, 'which', return_value='/old/bin/codex'), patch.object(
+            m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, f'1 {bundled}\n')
+        ):
+            self.assertEqual(m.detect_agent()['cli'], bundled)
+            with patch.dict(os.environ, {'CODEX_CLI_PATH': '/explicit/codex'}):
+                self.assertEqual(m.detect_agent()['cli'], '/explicit/codex')
+        with patch.object(m, 'parent_agent', return_value=None), patch.object(m.shutil, 'which', return_value='/path/codex'):
+            self.assertEqual(m.detect_agent()['cli'], '/path/codex')
 
     def test_claude_delivery_uses_saved_origin_and_cleans_nested_markers(self):
         with patch.dict(os.environ, {'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}), patch.object(m.shutil, 'which', return_value='/fake/claude'):
@@ -2497,6 +2534,26 @@ if '--output-last-message' in sys.argv:
             self.assertEqual(json.load(response)['mergeRequest']['status'], 'cancelled')
         with request('/api/shutdown', {}) as response:
             self.assertEqual(json.load(response)['status'], 'stopping')
+
+
+class CodexQueueCompatibilityTests(unittest.TestCase):
+    def test_supported_queue_is_checked_without_sending_a_message(self):
+        result = subprocess.CompletedProcess([], 0, 'Usage: codex queue --thread THREAD --message TEXT', '')
+        with patch('agent.subprocess.run', return_value=result) as probe:
+            require_codex_queue('/desktop/codex')
+        self.assertEqual(probe.call_args.args[0], ['/desktop/codex', 'queue', '--help'])
+        self.assertNotIn('CODEX_THREAD_ID', probe.call_args.kwargs['env'])
+
+    def test_global_help_with_zero_exit_does_not_count_as_queue_support(self):
+        for result in (subprocess.CompletedProcess([], 0, 'Usage: codex [OPTIONS] [PROMPT]', ''),
+                       subprocess.CompletedProcess([], 2, '', "unexpected argument '--thread'")):
+            with patch('agent.subprocess.run', return_value=result), self.assertRaisesRegex(ValueError, 'same saved approval'):
+                require_codex_queue('/older/codex')
+
+    def test_missing_and_hung_executables_report_retryable_errors(self):
+        for error in (FileNotFoundError('missing'), subprocess.TimeoutExpired('codex', 10)):
+            with patch('agent.subprocess.run', side_effect=error), self.assertRaisesRegex(ValueError, 'saved request can be retried'):
+                require_codex_queue('/unavailable/codex')
 
 
 if __name__ == '__main__':
