@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.8.0'
+RELEASE = '0.8.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -860,6 +860,7 @@ class Review:
         simulator, device = self.simulator_device()
         if device.get('state') != 'Booted':
             raise ValueError(f'{simulator["name"]} is not booted. Launch the app on it before triggering Dev Menu.')
+        simulator = self.open_simulator()
         self.simctl('spawn', simulator['id'], 'notifyutil', '-p', 'com.apple.UIKit.SimulatorShake')
         return simulator
 

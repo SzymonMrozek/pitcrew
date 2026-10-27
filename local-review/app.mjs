@@ -105,7 +105,7 @@ function updateChrome() {
   $('#simulator').disabled = simulatorOpening || !state.simulator || state.job.status === 'running' || state.job.status === 'merged';
   $('#simulator').title = state.simulator ? `Open ${state.simulator.name}` : 'No dedicated simulator is assigned to this worktree';
   $('#dev-menu').disabled = devMenuTriggering || !state.simulator || state.job.status === 'running' || state.job.status === 'merged';
-  $('#dev-menu').title = state.simulator ? `Send a shake to ${state.simulator.name} to open its app's Dev Menu` : 'No dedicated simulator is assigned to this worktree';
+  $('#dev-menu').title = state.simulator ? `Open ${state.simulator.name} and send a shake to show its app's Dev Menu` : 'No dedicated simulator is assigned to this worktree';
   $('#run').hidden = !state.run;
   $('#run').disabled = !state.run?.available || state.job.status === 'running' || state.job.status === 'merged';
   $('#run').textContent = state.run?.last?.status === 'running' ? 'Running…' : 'Run…';
@@ -647,8 +647,8 @@ $('#simulator').onclick = () => run(async () => {
   finally {simulatorOpening = false; updateChrome();}
 });
 $('#dev-menu').onclick = () => run(async () => {
-  devMenuTriggering = true; updateChrome(); notice('Triggering worktree Dev Menu…');
-  try {const result = await api('simulator/dev-menu', {}); notice(`Sent shake to ${result.simulator.name}.`);}
+  devMenuTriggering = true; updateChrome(); notice('Opening worktree Simulator and triggering Dev Menu…');
+  try {const result = await api('simulator/dev-menu', {}); notice(`Opened ${result.simulator.name} and sent shake.`);}
   finally {devMenuTriggering = false; updateChrome();}
 });
 let runDestinations;

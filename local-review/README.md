@@ -299,7 +299,7 @@ metadata file, for example one written by
 [worktree-simulator](../worktree-simulator). It never falls back to another
 device.
 
-**Trigger Dev Menu** sends a shake event to that same worktree simulator using
+**Trigger Dev Menu** opens that same worktree simulator window, then sends a shake event using
 `simctl spawn <udid> notifyutil -p com.apple.UIKit.SimulatorShake`. Launch the
 app on the simulator first; the action reports an error if the simulator is
 not booted or is unavailable. The app must handle shake events to open its

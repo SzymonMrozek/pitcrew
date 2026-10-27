@@ -945,10 +945,12 @@ class ReviewTests(unittest.TestCase):
         ]}}
         success = subprocess.CompletedProcess([], 0, '', '')
         with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
-            subprocess.CompletedProcess([], 0, json.dumps(listed), ''), success,
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''), success, success,
         ]) as run:
             self.assertEqual(self.review.trigger_dev_menu()['id'], udid)
-            self.assertEqual(run.call_args_list[1].args[0],
+            self.assertEqual(run.call_args_list[2].args[0], ['/usr/bin/open', 'devices:///manage/select?id=' + udid])
+            self.assertEqual(run.call_args_list[3].args[0],
                              ['xcrun', 'simctl', 'spawn', udid, 'notifyutil', '-p', 'com.apple.UIKit.SimulatorShake'])
         listed['devices']['iOS'][1]['state'] = 'Shutdown'
         for devices, message in [(listed, 'not booted'), ({'devices': {}}, 'unavailable')]:
@@ -960,10 +962,19 @@ class ReviewTests(unittest.TestCase):
         listed['devices']['iOS'][1]['state'] = 'Booted'
         with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
             subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''), success,
             subprocess.CompletedProcess([], 1, '', 'Shake failed'),
         ]):
             with self.assertRaisesRegex(ValueError, 'Shake failed'):
                 self.review.trigger_dev_menu()
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 1, '', 'No URL handler'),
+        ]) as run:
+            with self.assertRaisesRegex(ValueError, 'No URL handler'):
+                self.review.trigger_dev_menu()
+            self.assertEqual(run.call_count, 3, 'Failure to open must not send a shake')
         (self.root / '.worktree-simulator/simulator.env').unlink()
         with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'no assigned'):
