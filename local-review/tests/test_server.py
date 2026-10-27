@@ -937,6 +937,50 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'No URL handler'):
                 self.review.open_simulator()
 
+    def test_trigger_dev_menu_shakes_only_the_assigned_booted_simulator(self):
+        udid = self.simulator_metadata()
+        listed = {'devices': {'iOS': [
+            {'udid': '11111111-2222-3333-4444-555555555555', 'state': 'Booted'},
+            {'udid': udid, 'state': 'Booted'},
+        ]}}
+        success = subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''), success, success,
+        ]) as run:
+            self.assertEqual(self.review.trigger_dev_menu()['id'], udid)
+            self.assertEqual(run.call_args_list[2].args[0], ['/usr/bin/open', 'devices:///manage/select?id=' + udid])
+            self.assertEqual(run.call_args_list[3].args[0],
+                             ['xcrun', 'simctl', 'spawn', udid, 'notifyutil', '-p', 'com.apple.UIKit.SimulatorShake'])
+        listed['devices']['iOS'][1]['state'] = 'Shutdown'
+        for devices, message in [(listed, 'not booted'), ({'devices': {}}, 'unavailable')]:
+            with self.subTest(message=message), patch.object(m.sys, 'platform', 'darwin'), \
+                    patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(devices), '')) as run:
+                with self.assertRaisesRegex(ValueError, message):
+                    self.review.trigger_dev_menu()
+                self.assertEqual(run.call_count, 1)
+        listed['devices']['iOS'][1]['state'] = 'Booted'
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''), success,
+            subprocess.CompletedProcess([], 1, '', 'Shake failed'),
+        ]):
+            with self.assertRaisesRegex(ValueError, 'Shake failed'):
+                self.review.trigger_dev_menu()
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run', side_effect=[
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 0, json.dumps(listed), ''),
+            subprocess.CompletedProcess([], 1, '', 'No URL handler'),
+        ]) as run:
+            with self.assertRaisesRegex(ValueError, 'No URL handler'):
+                self.review.trigger_dev_menu()
+            self.assertEqual(run.call_count, 3, 'Failure to open must not send a shake')
+        (self.root / '.worktree-simulator/simulator.env').unlink()
+        with patch.object(m.sys, 'platform', 'darwin'), patch.object(m.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'no assigned'):
+                self.review.trigger_dev_menu()
+            run.assert_not_called()
+
     def write_movie(self, name, seconds=2, **options):
         path = self.homes / name
         path.write_bytes(movie(seconds, **options))
@@ -2419,6 +2463,10 @@ if '--output-last-message' in sys.argv:
                 request('/api/simulator', {}, **headers)
             self.assertEqual(error.exception.code, 403)
             error.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                request('/api/simulator/dev-menu', {}, **headers)
+            self.assertEqual(error.exception.code, 403)
+            error.exception.close()
         for headers in [{'X-Review-Token': 'bad'}, {'Origin': 'http://evil.example'}]:
             with self.assertRaises(urllib.error.HTTPError) as error:
                 request('/api/feedback', {'text': 'Rejected feedback'}, **headers)
@@ -2448,6 +2496,14 @@ if '--output-last-message' in sys.argv:
         self.assertEqual(error.exception.code, 404, 'GET must not launch a native app')
         error.exception.close()
         client = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        with patch.object(self.review, 'trigger_dev_menu', return_value={'id': 'assigned', 'name': 'Worktree'}) as trigger:
+            with request('/api/simulator/dev-menu', {'id': 'untrusted-client-id'}) as response:
+                self.assertEqual(json.load(response)['simulator']['id'], 'assigned')
+            trigger.assert_called_once_with()
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            request('/api/simulator/dev-menu')
+        self.assertEqual(error.exception.code, 404, 'GET must not send a shake event')
+        error.exception.close()
         for headers in [{'X-Review-Token': 'bad'}, {'Origin': 'http://evil.example'}]:
             with self.assertRaises(urllib.error.HTTPError) as error:
                 request('/api/review-time', {'clientId': client, 'scope': 'full', 'elapsedMs': 400}, **headers)

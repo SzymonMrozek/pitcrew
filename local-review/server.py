@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.7.3'
+RELEASE = '0.8.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -854,6 +854,14 @@ class Review:
         result = subprocess.run(['/usr/bin/open', simulator['url']], capture_output=True, text=True, timeout=15)
         if result.returncode:
             raise ValueError('Could not open Xcode Devices: ' + result.stderr.strip()[-2000:])
+        return simulator
+
+    def trigger_dev_menu(self):
+        simulator, device = self.simulator_device()
+        if device.get('state') != 'Booted':
+            raise ValueError(f'{simulator["name"]} is not booted. Launch the app on it before triggering Dev Menu.')
+        simulator = self.open_simulator()
+        self.simctl('spawn', simulator['id'], 'notifyutil', '-p', 'com.apple.UIKit.SimulatorShake')
         return simulator
 
     def demo_directory(self):
@@ -2306,6 +2314,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if route == '/api/simulator':
                     self.send(200, {'simulator': review.open_simulator()})
+                    return
+                if route == '/api/simulator/dev-menu':
+                    self.send(200, {'simulator': review.trigger_dev_menu()})
                     return
 
                 if route == '/api/review/send':
