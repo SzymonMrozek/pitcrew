@@ -2,6 +2,7 @@ defmodule BuildDistroWeb.BuildPagesTest do
   use BuildDistroWeb.ConnCase
 
   alias BuildDistro.Builds
+  alias BuildDistro.Projects
   alias BuildDistro.Workers.ProcessBuild
 
   setup %{conn: conn} do
@@ -74,6 +75,69 @@ defmodule BuildDistroWeb.BuildPagesTest do
 
     assert public |> get(~p"/#{project.slug}/builds/#{main.number}/download/ipa") |> response(404)
     assert {:error, _} = live(public, ~p"/#{project.slug}")
+  end
+
+  test "build sharing and the QR code use the bucket's public link", %{
+    conn: conn,
+    project: project
+  } do
+    build = ready_build(project)
+    {:ok, link, token} = Projects.create_public_link(project, "main")
+    path = ~p"/#{project.slug}/p/#{token}/builds/#{build.number}"
+    url = BuildDistroWeb.Endpoint.url() <> path
+
+    expected_qr =
+      url
+      |> EQRCode.encode()
+      |> EQRCode.svg(width: 152, background_color: :transparent, color: "currentColor")
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("svg rect")
+      |> LazyHTML.to_tree()
+
+    private_path = ~p"/#{project.slug}/builds/#{build.number}"
+
+    for {viewer, page} <- [
+          {conn, private_path},
+          {sign_in_admin(build_conn()), private_path},
+          {build_conn(), path}
+        ] do
+      {:ok, view, html} = live(viewer, page)
+
+      assert has_element?(view, "#copy-build-link[data-copy='#{url}']", "Copy public link")
+
+      qr =
+        html |> LazyHTML.from_document() |> LazyHTML.query(".qr svg rect") |> LazyHTML.to_tree()
+
+      assert qr == expected_qr
+    end
+
+    :ok = Projects.revoke_public_link(project, link.id)
+    assert {:error, {:redirect, _}} = live(build_conn(), path)
+    {:ok, view, _} = live(conn, ~p"/#{project.slug}/builds/#{build.number}")
+
+    assert has_element?(
+             view,
+             "#copy-build-link[data-copy='#{BuildDistroWeb.Endpoint.url()}/#{project.slug}/builds/#{build.number}']",
+             "Copy link"
+           )
+  end
+
+  test "a link for another bucket does not make this build public", %{
+    conn: conn,
+    project: project
+  } do
+    build = ready_build(project)
+    {:ok, _, _} = Projects.create_public_link(project, "manual")
+    path = ~p"/#{project.slug}/builds/#{build.number}"
+    {:ok, view, _} = live(conn, path)
+
+    assert has_element?(
+             view,
+             "#copy-build-link[data-copy='#{BuildDistroWeb.Endpoint.url() <> path}']",
+             "Copy link"
+           )
+
+    assert {:error, {:redirect, _}} = live(build_conn(), path)
   end
 
   test "in-house builds say they install anywhere and how to trust them", %{

@@ -138,6 +138,16 @@ defmodule BuildDistro.Projects do
     )
   end
 
+  @doc "The oldest active link for a bucket, so shared build URLs stay stable as links are added."
+  def public_link_for_bucket(project, bucket) do
+    Repo.one(
+      from l in PublicLink,
+        where: l.project_id == ^project.id and l.bucket == ^bucket and is_nil(l.revoked_at),
+        order_by: [asc: l.id],
+        limit: 1
+    )
+  end
+
   @doc "Creates a link that shows one bucket to anyone who has it."
   def create_public_link(project, bucket) do
     if bucket in Build.buckets() do

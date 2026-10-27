@@ -8,7 +8,7 @@ defmodule BuildDistroWeb.BuildLive do
 
   alias BuildDistro.{Builds, Changelog}
   alias BuildDistro.Builds.Build
-  alias BuildDistroWeb.{InstallLinks, Viewer}
+  alias BuildDistroWeb.{InstallLinks, Links, Viewer}
 
   # Install links live for an hour; the page renews them well before that.
   @refresh_links_every :timer.minutes(10)
@@ -25,10 +25,7 @@ defmodule BuildDistroWeb.BuildLive do
     with {number, ""} <- Integer.parse(number),
          %{} = build <- Builds.get_build(project, number),
          true <- Viewer.can_see?(viewer, build) do
-      {:ok,
-       socket
-       |> assign(:page_url, BuildDistroWeb.Endpoint.url() <> Viewer.build_path(viewer, build))
-       |> assign_build(build)}
+      {:ok, assign_build(socket, build)}
     else
       _ ->
         {:ok,
@@ -77,19 +74,38 @@ defmodule BuildDistroWeb.BuildLive do
   end
 
   defp assign_links(socket) do
-    case socket.assigns.build do
-      %{state: "ready"} = build -> assign(socket, :install_url, InstallLinks.install_url(build))
-      _ -> assign(socket, :install_url, nil)
-    end
+    %{build: build, project: project, viewer: viewer} = socket.assigns
+    current_url = BuildDistroWeb.Endpoint.url() <> Viewer.build_path(viewer, build)
+
+    public_url =
+      if viewer.kind == :public, do: current_url, else: Links.public_build_url(project, build)
+
+    assign(socket,
+      page_url: public_url || current_url,
+      copy_label: if(public_url, do: "Copy public link", else: "Copy link"),
+      install_url: if(build.state == "ready", do: InstallLinks.install_url(build))
+    )
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} project={@project} admin?={@admin?} home={Viewer.home_path(@viewer)}>
-      <.link navigate={Viewer.bucket_path(@viewer, @build.bucket)} class="back">
-        {Build.bucket_label(@build.bucket)}
-      </.link>
+      <div class="card-header">
+        <.link navigate={Viewer.bucket_path(@viewer, @build.bucket)} class="back">
+          {Build.bucket_label(@build.bucket)}
+        </.link>
+        <button
+          type="button"
+          id="copy-build-link"
+          class="button button-small"
+          phx-hook="Copy"
+          data-copy={@page_url}
+          data-copy-label={@copy_label}
+        >
+          {@copy_label}
+        </button>
+      </div>
 
       <.link :if={@newer} navigate={Viewer.build_path(@viewer, @newer)} class="notice">
         A newer build of {@build.branch} is ready: {version_label(@newer)} #{@newer.number}

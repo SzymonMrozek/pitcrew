@@ -33,7 +33,7 @@
         this.el.addEventListener("click", async () => {
           await navigator.clipboard.writeText(this.el.dataset.copy)
           this.el.textContent = "Copied"
-          setTimeout(() => { this.el.textContent = "Copy" }, 1500)
+          setTimeout(() => { this.el.textContent = this.el.dataset.copyLabel || "Copy" }, 1500)
         })
       },
     },

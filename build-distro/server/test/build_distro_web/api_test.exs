@@ -89,4 +89,32 @@ defmodule BuildDistroWeb.ApiTest do
     assert other_conn |> get(~p"/api/v1/builds/#{created["id"]}") |> json_response(404)
     assert other.id != project.id
   end
+
+  test "CI receives public build URLs only for buckets with an active public link", %{
+    conn: conn,
+    project: project
+  } do
+    for {bucket, attrs} <- [
+          {"main", %{"branch" => "main"}},
+          {"manual", %{"branch" => "experiment"}},
+          {"pull_requests", %{"branch" => "feature", "pr_number" => 42}}
+        ] do
+      {:ok, link, token} = BuildDistro.Projects.create_public_link(project, bucket)
+      attrs = start_attrs([{"ipa", ipa_fixture()}], attrs)
+      created = conn |> post(~p"/api/v1/builds", attrs) |> json_response(200)
+      path = ~p"/#{project.slug}/p/#{token}/builds/#{created["number"]}"
+      assert created["url"] == BuildDistroWeb.Endpoint.url() <> path
+      assert {:ok, _, _} = live(build_conn(), path)
+
+      shown = conn |> get(~p"/api/v1/builds/#{created["id"]}") |> json_response(200)
+      assert shown["url"] == created["url"]
+
+      :ok = BuildDistro.Projects.revoke_public_link(project, link.id)
+      assert {:error, {:redirect, _}} = live(build_conn(), path)
+      shown = conn |> get(~p"/api/v1/builds/#{created["id"]}") |> json_response(200)
+
+      assert shown["url"] ==
+               BuildDistroWeb.Endpoint.url() <> ~p"/#{project.slug}/builds/#{created["number"]}"
+    end
+  end
 end
