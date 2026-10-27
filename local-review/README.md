@@ -115,7 +115,10 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   numbers for a range. **⌘Enter** saves. Comments and viewed marks are stored
   locally per scope. A file that changes loses its viewed mark, and its old
   comments are marked outdated. Unresolved comments don't block a merge. The
-  agent receives all of them with the approval.
+  agent receives all of them with the approval. Click a comment’s file and line
+  to jump to its location in **Changes**, revealing filtered files and collapsed
+  context. Outdated comments open the current file with a notice; files no
+  longer in the selected scope have no jump target.
 - **Code navigation.** Swift type names declared in the repository link to
   their definitions, closest first: same file, same module, nearest path.
   Method names in `func` declarations open their callers. **Search code**
