@@ -421,6 +421,7 @@ async function renderFile(file, main, current) {
       rows.forEach(pair => {
         if (pair.left?.type === 'hunk') {box.append(gapNode(file, main, pair.left, gapsByKey.get(pair.left.gap))); return;}
         const unified = $('#mode').value === 'unified', row = el('div', 'diff-row' + (unified ? ' unified' : ''));
+        if (pair.left?.old != null) row.dataset.old = pair.left.old;
         const newLine = (pair.right || pair.left)?.new; if (newLine != null && (!unified || pair.left.type !== 'delete')) row.dataset.new = newLine;
         const sides = unified ? [[pair.left, pair.left?.type === 'delete' ? 'old' : 'new']] : [[pair.left, 'old'], [pair.right, 'new']];
         sides.forEach(([part, side]) => {
@@ -452,7 +453,7 @@ async function renderFile(file, main, current) {
     if (scrollTarget === file.id) scrollTarget = null;
   }
   if (pendingLine?.file === file.id) {
-    const row = main.querySelector(`.line-number[data-side="${pendingLine.side}"][data-line="${pendingLine.line}"]`)?.closest('.diff-row');
+    const row = main.querySelector(`.diff-row[data-${pendingLine.side}="${pendingLine.line}"]`);
     pendingLine = null;
     if (row) {row.scrollIntoView({block: 'center'}); flash(row);}
   }
@@ -528,7 +529,14 @@ function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
   const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : ''));
   node.append(button(comment.resolved ? 'Reopen' : 'Resolve', async () => {state = await api('resolve', {id: comment.id, resolved: !comment.resolved}); await updateFileComments(comment.file);}));
-  node.append(el('small', '', `${comment.path} · ${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text)); return node;
+  const location = button(`${comment.path}${comment.line ? `:${comment.line}${comment.endLine && comment.endLine !== comment.line ? `–${comment.endLine}` : ''}` : ''}`, async () => {
+    await showInDiff(file, stale || comment.side === 'file' ? 0 : comment.line, comment.side);
+    if (stale) notice('This comment is outdated; opened the current file. Its original line may have moved.');
+  }, 'comment-location');
+  location.disabled = !file;
+  location.title = !file ? 'This file is no longer in the selected review scope' : stale ? 'Open the current file; the comment refers to an outdated revision' : 'Show this comment’s location in the diff';
+  node.append(location);
+  node.append(el('small', '', `${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text)); return node;
 }
 function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
 function statsTable(heading, rows, max) {
@@ -920,10 +928,12 @@ async function showInDiff(file, line, side = 'new') {
   if (tab !== 'all') tab = 'all';
   if (hidden(file)) $('#show-hidden').checked = true;
   $('#search').value = ''; $('#only-unviewed').checked = false;
-  await linesFor(file);
-  const data = await api('file?id=' + file.id);
-  expansions.set(expansionKey(file), expandAll(contextGaps(data.rows, data.oldCount, data.newCount)));
-  pendingLine = {file: file.id, line, side}; active = file.id;
+  if (line) {
+    await linesFor(file);
+    const data = await api('file?id=' + file.id);
+    expansions.set(expansionKey(file), expandAll(contextGaps(data.rows, data.oldCount, data.newCount)));
+  }
+  pendingLine = line ? {file: file.id, line, side} : null; active = file.id;
   await load();
 }
 $('#send-review').onclick = () => {

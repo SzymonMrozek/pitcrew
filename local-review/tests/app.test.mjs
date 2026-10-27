@@ -447,3 +447,64 @@ test('run dialog lists destinations, starts one and summarizes the result', asyn
   await context.loadRunDestinations();
   assert.equal(list()[0].textContent, 'Running the app is not configured.');
 });
+
+
+test('comment locations jump to their exact side and line and handle file, stale and missing comments', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function commentNode('), source.indexOf('function renderComments('));
+  const node = (tag, className, text) => ({tag, className, textContent: text, children: [], append(...items) {this.children.push(...items);}});
+  const jumps = [], notices = [];
+  const context = vm.createContext({state: {files: [{id: 'file', fingerprint: 'current'}]}, el: node,
+    button: (text, action, className) => ({...node('button', className, text), action}),
+    showInDiff: async (...args) => jumps.push(args), notice: text => notices.push(text)});
+  vm.runInContext(fn, context);
+  const comment = {file: 'file', path: '<file>.swift', fingerprint: 'current', side: 'old', line: 20, endLine: 23, text: 'Feedback'};
+  const location = data => context.commentNode(data).children.find(child => child.className === 'comment-location');
+  const link = location(comment);
+  assert.equal(link.textContent, '<file>.swift:20–23');
+  assert.equal(link.disabled, false);
+  await link.action();
+  assert.deepEqual(jumps.at(-1).slice(1), [20, 'old']);
+  await location({...comment, side: 'new', resolved: true}).action();
+  assert.deepEqual(jumps.at(-1).slice(1), [20, 'new']);
+  await location({...comment, side: 'file', line: 0, endLine: 0}).action();
+  assert.deepEqual(jumps.at(-1).slice(1), [0, 'file']);
+  await location({...comment, fingerprint: 'outdated'}).action();
+  assert.deepEqual(jumps.at(-1).slice(1), [0, 'old']);
+  assert.match(notices[0], /outdated/);
+  assert.equal(location({...comment, file: 'missing'}).disabled, true);
+});
+
+test('diff jumps reveal filtered and viewed files, expand context, and skip text APIs for file comments', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('async function showInDiff('), source.indexOf("$('#send-review').onclick"));
+  const nodes = {'#source-dialog': {close() {}}, '#search-dialog': {close() {}}, '#show-hidden': {checked: false}, '#only-unviewed': {checked: true}, '#search': {value: 'other'}};
+  const requests = [], expanded = new Map(); let loaded = 0;
+  const context = vm.createContext({$: selector => nodes[selector], tab: 'comments', hidden: () => true,
+    linesFor: async file => requests.push('lines:' + file.id), api: async path => {requests.push(path); return {rows: [], oldCount: 50, newCount: 51};},
+    expansions: expanded, expansionKey: file => file.id, contextGaps: () => ['gap'], expandAll: gaps => gaps, load: async () => loaded++});
+  vm.runInContext(fn, context);
+  const file = {id: 'code'};
+  await context.showInDiff(file, 40, 'old');
+  assert.equal(context.tab, 'all'); assert.equal(context.active, 'code');
+  assert.equal(nodes['#show-hidden'].checked, true); assert.equal(nodes['#only-unviewed'].checked, false); assert.equal(nodes['#search'].value, '');
+  assert.deepEqual(requests, ['lines:code', 'file?id=code']); assert.deepEqual(expanded.get('code'), ['gap']);
+  assert.equal(JSON.stringify(context.pendingLine), JSON.stringify({file: 'code', line: 40, side: 'old'}));
+  requests.length = 0;
+  await context.showInDiff({id: 'image', image: true}, 0, 'file');
+  assert.deepEqual(requests, []); assert.equal(context.pendingLine, null); assert.equal(context.active, 'image'); assert.equal(loaded, 2);
+});
+
+test('pending diff jumps scroll and flash the matching row on either side', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf("  if (pendingLine?.file === file.id)");
+  const fn = source.slice(start, source.indexOf('  requestAnimationFrame(syncSelection);', start));
+  for (const side of ['old', 'new']) {
+    let selector, scrolled = false, flashed;
+    const row = {scrollIntoView: options => {assert.equal(options.block, 'center'); scrolled = true;}};
+    const context = vm.createContext({file: {id: 'code'}, pendingLine: {file: 'code', line: 40, side},
+      main: {querySelector: value => {selector = value; return row;}}, flash: node => {flashed = node;}});
+    vm.runInContext(fn, context);
+    assert.equal(selector, `.diff-row[data-${side}="40"]`); assert.equal(scrolled, true); assert.equal(flashed, row); assert.equal(context.pendingLine, null);
+  }
+});
