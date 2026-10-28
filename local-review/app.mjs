@@ -970,6 +970,7 @@ $('#approve').onclick = () => {
   const form = $('#merge-form');
   form.elements.title.value = state.merge.draft.title;
   form.elements.description.value = state.merge.draft.description;
+  form.elements.instructions.value = '';
   $('#merge-dialog').showModal();
 };
 $('#merge-form').onsubmit = event => {
@@ -977,7 +978,7 @@ $('#merge-form').onsubmit = event => {
   run(async () => {
     const form = event.target, submit = form.querySelector('.primary'); submit.disabled = true;
     try {
-      state = await api('merge', {revision: mergeRevision, title: form.elements.title.value, description: form.elements.description.value});
+      state = await api('merge', {revision: mergeRevision, title: form.elements.title.value, description: form.elements.description.value, instructions: form.elements.instructions.value});
       $('#merge-dialog').close(); updateChrome(); notice('Approval saved. The merge request will be sent to the original agent conversation when its queue turn begins.');
     } finally {submit.disabled = false;}
   });

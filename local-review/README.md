@@ -198,7 +198,9 @@ handles the previous review, and once a merge is requested.
 **Approve & merge** shows a summary of the full branch. **Ask agent to merge**
 saves a durable approval and sends the request to the conversation that wrote
 the change, just like **Send to agent** for review comments. The button itself doesn't stage, commit or merge
-anything.
+anything. You can add optional **Additional merge instructions** in the confirmation
+dialog. They are saved with the approval and sent to the agent on delivery and
+retries, separately from the commit title and description.
 
 The delivery process waits for its turn in the [queue](#merge-queue), reserves
 it through cleanup, then queues the request into the original Codex chat or

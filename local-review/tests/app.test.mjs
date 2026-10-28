@@ -268,7 +268,7 @@ test('background ranking reorders the feed without replacing cards or moving the
 test('merge confirmation keeps the reviewed diff identity across background state updates', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const merge = source.slice(source.indexOf('let mergeRevision;'), source.indexOf("document.addEventListener('keydown', event =>"));
-  const form = {elements: {title: {}, description: {}}, querySelector: () => ({disabled: false})};
+  const form = {elements: {title: {}, description: {}, instructions: {}}, querySelector: () => ({disabled: false})};
   const nodes = {'#approve': {}, '#merge-description': {}, '#merge-summary': {}, '#merge-agent-note': {}, '#merge-form': form, '#merge-dialog': {showModal() {}, close() {}}};
   let submitted, pending;
   const state = {branch: 'feature', target: 'main', agent: {provider: 'codex'}, merge: {revision: 'reviewed-diff', fileCount: 3, draft: {title: '', description: ''}}};
@@ -278,14 +278,19 @@ test('merge confirmation keeps the reviewed diff identity across background stat
     run: action => {pending = action();}, api: async (path, body) => {submitted = body; return state;},
   });
   vm.runInContext(merge, context); nodes['#approve'].onclick();
+  assert.equal(form.elements.instructions.value, '');
+  form.elements.instructions.value = 'Check the release notes.\nKeep the worktree.';
   state.merge.revision = 'unreviewed-diff';
   nodes['#merge-form'].onsubmit({preventDefault() {}, target: form}); await pending;
   assert.equal(submitted.revision, 'reviewed-diff');
+  assert.equal(submitted.instructions, 'Check the release notes.\nKeep the worktree.');
+  assert.equal(submitted.description, '');
   assert.match(nodes['#merge-summary'].textContent, /first update from the latest main/);
   assert.doesNotMatch(nodes['#merge-summary'].textContent, /demo/);
   assert.match(nodes['#merge-agent-note'].textContent, /conversation that wrote this change, just like review comments/);
   state.demos = {uiPaths: ['App/Screen.swift', 'App/Row.swift'], total: 0, skipped: null};
   nodes['#approve'].onclick();
+  assert.equal(form.elements.instructions.value, '', 'A new confirmation clears instructions from an earlier approval');
   assert.match(nodes['#merge-summary'].textContent, /No demo recording is attached, although 2 changed files affect the app UI\.$/);
 });
 

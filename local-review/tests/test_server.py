@@ -1344,6 +1344,42 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(reopened.merge_request()['id'], request['id'])
         self.assertEqual(reopened.state()['mergeRequest']['revision'], self.review.revision)
 
+    def test_merge_instructions_survive_http_approval_reopen_and_retry(self):
+        self.write('.config/local-review.toml', '[merge]\ninstructions = "Repository merge guidance."\n')
+        self.review.refresh()
+        instructions = 'Check the release notes.\nKeep the worktree.'
+        server = self.serve(self.review)
+        api = {'X-Review-Token': 'test-token', 'Content-Type': 'application/json'}
+        status, _, body = self.request(server, f'/api/merge?review={self.review.session_id}', api,
+            json.dumps({'revision': self.review.approval_revision(), 'title': 'fix(test): change',
+                        'description': 'Commit description.', 'instructions': '  ' + instructions + '\n  '}).encode())
+        self.assertEqual(status, 200, body)
+        request = self.review.merge_request()
+        self.assertEqual(request['instructions'], instructions)
+        self.assertEqual(request['description'], 'Commit description.')
+        self.assertIn('Repository merge guidance.', request['prompt'])
+        self.assertTrue(request['prompt'].endswith('Additional merge instructions from the user:\n' + instructions))
+        reopened = m.Review(self.root, 'main', auto_rank=False)
+        self.assertEqual(reopened.merge_request()['instructions'], instructions)
+        duplicate = reopened.request_merge(reopened.approval_revision(), '', '', 'Different instructions')
+        self.assertEqual(duplicate['prompt'], request['prompt'])
+        self.notify.assert_called_once()
+        with patch('agent.agent_cli', return_value=('codex', 'Codex', '/fake/codex')), patch('agent.subprocess.run') as run:
+            run.return_value = subprocess.CompletedProcess([], 1, '', '')
+            deliver(request['path'])
+        self.assertIn(instructions, run.call_args.args[0][run.call_args.args[0].index('--message') + 1])
+
+    def test_merge_instructions_are_optional_and_validated(self):
+        for instructions in (None, [], {}, 42, 'x' * 10001):
+            with self.subTest(instructions=type(instructions).__name__):
+                with self.assertRaisesRegex(ValueError, 'Invalid merge instructions'):
+                    self.review.request_merge(self.review.approval_revision(), '', '', instructions)
+                self.assertIsNone(self.review.merge_request())
+        self.notify.assert_not_called()
+        request = self.review.request_merge(self.review.approval_revision(), '', '', ' \n ')
+        self.assertEqual(request['instructions'], '')
+        self.assertNotIn('Additional merge instructions from the user:', request['prompt'])
+
     def test_first_browser_approval_survives_main_advancing_and_server_refresh(self):
         reviewed = self.review.state()['merge']['revision']
         original = self.review.revision

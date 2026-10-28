@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.8.1'
+RELEASE = '0.8.2'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -1698,11 +1698,11 @@ class Review:
     def merge_queue(self):
         return merge_queue(self.store)
 
-    def request_merge(self, revision, title, description):
+    def request_merge(self, revision, title, description, instructions=''):
         with self.merge_request_lock():
-            return self.save_merge_request(revision, title, description)
+            return self.save_merge_request(revision, title, description, instructions)
 
-    def save_merge_request(self, revision, title, description):
+    def save_merge_request(self, revision, title, description, instructions=''):
         branch = self.branch
         if self.git('branch', '--show-current').strip() != self.branch:
             raise ValueError('The checked-out branch changed')
@@ -1719,6 +1719,8 @@ class Review:
             raise ValueError('The checked-out branch changed')
         if not isinstance(title, str) or len(title) > 250 or not isinstance(description, str) or len(description) > 20000:
             raise ValueError('Invalid merge notes')
+        if not isinstance(instructions, str) or len(instructions) > 10000:
+            raise ValueError('Invalid merge instructions')
         previous = self.merge_request()
         if previous and previous['status'] in ('pending', 'working'):
             expected = revision if 'reviewedRevision' in previous else self.revision
@@ -1738,7 +1740,7 @@ class Review:
                    'repo': str(self.repo), 'mergeRoot': str(self.common.parent), 'sessionId': self.session_id,
                    'threadId': agent.get('sessionId') if agent['provider'] == 'codex' else None,
                    'agent': agent,
-                   'title': title.strip(), 'description': description.strip(),
+                   'title': title.strip(), 'description': description.strip(), 'instructions': instructions.strip(),
                    'comments': self.session['comments'], 'summary': 'Approval saved. Waiting for an agent.'}
         # A private commit exposes the complete approved diff, including uncommitted files.
         tree = self.snapshot('queue-' + request['id'])
@@ -1793,6 +1795,8 @@ class Review:
             'If completion requires an external decision, mark the saved request blocked with a clear summary so the queue can continue. '
             'Report success only after the saved request status is merged, and reply in this conversation.'
             + (' ' + self.config['merge']['instructions'].strip() if self.config['merge']['instructions'].strip() else ''))
+        if request['instructions']:
+            request['prompt'] += '\n\nAdditional merge instructions from the user:\n' + request['instructions']
         write_json(path, request)
         self.notify_merge_request(request)
         return request
@@ -2371,7 +2375,7 @@ class Handler(BaseHTTPRequestHandler):
                             review.session['viewed'].pop(file['id'], None)
                     review.save_session()
                 elif route == '/api/merge':
-                    review.request_merge(body.get('revision'), body.get('title', ''), body.get('description', ''))
+                    review.request_merge(body.get('revision'), body.get('title', ''), body.get('description', ''), body.get('instructions', ''))
                 elif route == '/api/merge/cancel':
                     review.cancel_merge_request(body.get('id'))
                 else:
