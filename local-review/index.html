@@ -32,9 +32,14 @@
 </div>
 </header>
 <div class="iteration-bar">
+<div class="review-control">
 <label for="iteration">Review scope</label>
-<select id="iteration" aria-label="Review scope"><option value="">Full diff</option></select>
-<span>One iteration per user interaction</span>
+<select id="iteration" aria-label="Review scope"><option value="full">Full review</option></select>
+</div>
+<div class="review-control">
+<label for="comparison">Compare against</label>
+<select id="comparison" aria-label="Compare against"><option value="branch-start">Branch start</option></select>
+</div>
 </div>
 <div id="iteration-context" hidden></div>
 <div class="toolbar">
@@ -182,6 +187,7 @@
 <label id="title-label">Commit title<input name="title" placeholder="feat(review): add local review tool" maxlength="250">
 </label>
 <label>Commit description<textarea name="description" rows="7" maxlength="20000" placeholder="Describe the final behavior, why it changed, and validation."></textarea></label>
+<label>Additional merge instructions <small>Optional. Sent to the agent, separate from the commit message.</small><textarea name="instructions" rows="3" maxlength="10000" placeholder="Anything the agent should do while completing this merge…"></textarea></label>
 <p class="muted" id="merge-agent-note">Saves your approval and starts a local agent to handle checks and merging. The page will show its result. Commit notes are optional; the agent will finalize them.</p>
 <div class="dialog-footer">
 <button type="button" data-close>Cancel</button>

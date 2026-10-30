@@ -165,6 +165,67 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(m.diff_rows('', 'first\n')[-1]['new'], 1)
         self.assertIn('newline', m.diff_rows('a', 'a\n')[0]['text'])
 
+    def test_branch_start_survives_rebase_reflog_expiry_and_restart(self):
+        start = self.git('rev-parse', 'main')
+        self.assertEqual(self.review.state()['branchStart'], start)
+        self.git('add', '.')
+        self.git('commit', '-m', 'fix(test): feature')
+        self.git('checkout', 'main')
+        self.write('Upstream.swift', 'upstream\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'fix(test): upstream')
+        self.git('checkout', 'feature')
+        self.git('rebase', 'main')
+        self.git('reflog', 'expire', '--expire=now', '--all')
+        self.write('Untracked.swift', 'new\n')
+        self.review.refresh()
+        self.assertEqual(self.review.state()['branchStart'], start)
+        self.assertEqual(self.git('rev-parse', f'refs/local-review/{self.review.session_id}/branch-start'), start)
+        files, blobs, _, base = self.review.view('branch-start')
+        self.assertEqual(base, start)
+        self.assertEqual({f['path'] for f in files}, {'Interactor.swift', 'Upstream.swift', 'Untracked.swift'})
+        file = next(f for f in files if f['path'] == 'Interactor.swift')
+        self.assertEqual(blobs[file['id']], {'old': b'let value = 1\n', 'new': b'let value = 2\n'})
+        self.assertNotIn('Upstream.swift', {f['path'] for f in self.review.files})
+        self.review.record_review_time('a' * 36, 'branch-start', 1000)
+        m.register_review(self.review)
+        self.git('checkout', 'main')
+        restarted = m.ReviewRegistry(self.review.store).get(self.review.session_id)
+        self.assertEqual({f['path'] for f in restarted.view('branch-start')[0]}, {f['path'] for f in files})
+
+    def test_latest_target_compares_directly_with_current_local_tip(self):
+        self.git('add', '.')
+        self.git('commit', '-m', 'fix(test): feature')
+        self.git('checkout', 'main')
+        self.write('Upstream.swift', 'upstream\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'fix(test): upstream')
+        self.git('checkout', 'feature')
+        self.review.refresh()
+        approval = self.review.approval_revision()
+        state = self.review.state('target')
+        self.assertEqual(state['base'], self.git('rev-parse', 'main'))
+        self.assertEqual({f['path']: f['status'] for f in state['files']}, {'Interactor.swift': 'M', 'Upstream.swift': 'D'})
+        self.assertEqual(state['merge']['revision'], approval)
+        self.assertEqual({f['path'] for f in self.review.view('full')[0]}, {'Interactor.swift'})
+        self.git('update-ref', 'refs/heads/main', self.git('rev-parse', 'feature'))
+        self.review.refresh()
+        self.assertEqual(self.review.state('target')['files'], [])
+        self.review.record_review_time('a' * 36, 'target', 1000)
+
+    def test_missing_creation_history_never_guesses_a_branch_start(self):
+        self.review.session.pop('branchStart')
+        self.review.save_session('branchStart')
+        self.git('reflog', 'expire', '--expire=now', 'refs/heads/feature')
+        restarted = m.Review(self.root, 'main')
+        self.assertIsNone(restarted.state()['branchStart'])
+        with self.assertRaisesRegex(ValueError, 'creation commit is unavailable'):
+            restarted.view('branch-start')
+        self.assertTrue(restarted.view('target')[0])
+        for reserved in ('full', 'thread', 'target', 'branch-start'):
+            with self.assertRaises(ValueError):
+                restarted.begin_iteration(reserved, 'Reserved scope')
+
     def test_filters_keep_snapshots_visible_under_tests(self):
         self.assertEqual(m.category('Modules/Tests/__Snapshots__/a.tests/image.png'), 'snapshot')
         self.assertEqual(m.category('Modules/Sources/X.tests.swift'), 'test')
@@ -1343,6 +1404,42 @@ class ReviewTests(unittest.TestCase):
         reopened = m.Review(self.root, 'main', auto_rank=False)
         self.assertEqual(reopened.merge_request()['id'], request['id'])
         self.assertEqual(reopened.state()['mergeRequest']['revision'], self.review.revision)
+
+    def test_merge_instructions_survive_http_approval_reopen_and_retry(self):
+        self.write('.config/local-review.toml', '[merge]\ninstructions = "Repository merge guidance."\n')
+        self.review.refresh()
+        instructions = 'Check the release notes.\nKeep the worktree.'
+        server = self.serve(self.review)
+        api = {'X-Review-Token': 'test-token', 'Content-Type': 'application/json'}
+        status, _, body = self.request(server, f'/api/merge?review={self.review.session_id}', api,
+            json.dumps({'revision': self.review.approval_revision(), 'title': 'fix(test): change',
+                        'description': 'Commit description.', 'instructions': '  ' + instructions + '\n  '}).encode())
+        self.assertEqual(status, 200, body)
+        request = self.review.merge_request()
+        self.assertEqual(request['instructions'], instructions)
+        self.assertEqual(request['description'], 'Commit description.')
+        self.assertIn('Repository merge guidance.', request['prompt'])
+        self.assertTrue(request['prompt'].endswith('Additional merge instructions from the user:\n' + instructions))
+        reopened = m.Review(self.root, 'main', auto_rank=False)
+        self.assertEqual(reopened.merge_request()['instructions'], instructions)
+        duplicate = reopened.request_merge(reopened.approval_revision(), '', '', 'Different instructions')
+        self.assertEqual(duplicate['prompt'], request['prompt'])
+        self.notify.assert_called_once()
+        with patch('agent.agent_cli', return_value=('codex', 'Codex', '/fake/codex')), patch('agent.subprocess.run') as run:
+            run.return_value = subprocess.CompletedProcess([], 1, '', '')
+            deliver(request['path'])
+        self.assertIn(instructions, run.call_args.args[0][run.call_args.args[0].index('--message') + 1])
+
+    def test_merge_instructions_are_optional_and_validated(self):
+        for instructions in (None, [], {}, 42, 'x' * 10001):
+            with self.subTest(instructions=type(instructions).__name__):
+                with self.assertRaisesRegex(ValueError, 'Invalid merge instructions'):
+                    self.review.request_merge(self.review.approval_revision(), '', '', instructions)
+                self.assertIsNone(self.review.merge_request())
+        self.notify.assert_not_called()
+        request = self.review.request_merge(self.review.approval_revision(), '', '', ' \n ')
+        self.assertEqual(request['instructions'], '')
+        self.assertNotIn('Additional merge instructions from the user:', request['prompt'])
 
     def test_first_browser_approval_survives_main_advancing_and_server_refresh(self):
         reviewed = self.review.state()['merge']['revision']

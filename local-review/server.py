@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.8.1'
+RELEASE = '0.9.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -515,6 +515,8 @@ class Review:
             self.session = read_json(self.store / f'{self.session_id}.json', {'comments': [], 'viewed': {}, 'iterations': [], 'mergeDraft': {}})
             captured = self.capture(saved['base'], saved['tree'])
             self.base, self.files, self.blobs, self.revision = captured[2:]
+            if self.worktree_available():
+                self.remember_branch_start()
             self.apply_scores()
         else:
             self.git('rev-parse', '--verify', target + '^{commit}')
@@ -619,8 +621,22 @@ class Review:
             self.session = read_json(self.store / f'{self.session_id}.json', {'comments': [], 'viewed': {}})
             self.session.setdefault('iterations', [])
             self.session.setdefault('mergeDraft', {'title': '', 'description': ''})
+            self.remember_branch_start()
             self.apply_scores()
             self.start_ranking()
+
+    def remember_branch_start(self):
+        if self.session.get('branchStart') or not self.branch or self.branch == self.target:
+            return
+        entries = self.git('reflog', 'show', '--format=%H%x00%gs', 'refs/heads/' + self.branch, check=False).splitlines()
+        if not entries:
+            return
+        commit, _, message = entries[-1].partition('\0')
+        if not message.startswith('branch: Created from '):
+            return  # An expired creation entry cannot be reconstructed from today's merge base.
+        self.git('update-ref', f'refs/{self.config["name"]}/{self.session_id}/branch-start', commit)
+        self.session['branchStart'] = commit
+        self.save_session('branchStart')
 
     def worktree_created(self):
         # Merging removes a Worktrunk worktree; recreating it reuses the path and branch name but not this file.
@@ -680,8 +696,20 @@ class Review:
         files.sort(key=lambda file: (-file['score'], file['path']))
 
     def view(self, iteration=None):
-        if not iteration:
+        if not iteration or iteration == 'full':
             return self.files, self.blobs, self.revision, self.base
+        if iteration in ('branch-start', 'target'):
+            if iteration not in self.historical:
+                before = self.session.get('branchStart') if iteration == 'branch-start' else self.git('rev-parse', self.target + '^{commit}').strip()
+                if not before:
+                    raise ValueError('The branch creation commit is unavailable. Use Latest local target or Full diff.')
+                saved = read_json(self.store / 'reviews' / f'{self.session_id}.json', {})
+                after = self.snapshot('comparison-live') if self.worktree_available() else saved['tree']
+                self.historical[iteration] = self.capture(before, after)
+                self.start_ranking()
+            captured = self.historical[iteration]
+            self.apply_scores(captured[3])
+            return captured[3], captured[4], captured[5], captured[2]
         if iteration == 'thread':
             return self.thread_view()
         item = next((i for i in self.session['iterations'] if i['id'] == iteration), None)
@@ -758,6 +786,7 @@ class Review:
                     'settings': self.settings, 'session': {'comments': comments, 'viewed': viewed}, 'job': self.job, 'ranking': self.ranking,
                     'iterations': self.session['iterations'], 'pendingIteration': self.session.get('pendingIteration'),
                     'threadScopeAvailable': bool(self.thread_iterations()),
+                    'branchStart': self.session.get('branchStart'),
                     'sessionId': self.session_id,
                     'threadId': self.session.get('threadId'),
                     'agent': agent,
@@ -1048,7 +1077,7 @@ class Review:
         if iteration == 'thread':
             ids = {item['id'] for item in self.thread_iterations()}
             demos = [d for d in demos if d.get('iteration') in ids]
-        elif iteration:
+        elif iteration and iteration not in ('full', 'branch-start', 'target'):
             demos = [d for d in demos if d.get('iteration') == iteration]
         patterns = self.config['demos']['paths']
         ui_paths = [f['path'] for f in self.files if f['kind'] not in ('test', 'generated', 'manifest')
@@ -1345,7 +1374,7 @@ class Review:
             self.save_session('agent', 'threadId')
 
     def begin_iteration(self, iteration, request):
-        if iteration in ('full', 'thread') or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', iteration) or not isinstance(request, str) or not 1 <= len(request.strip()) <= 10000:
+        if iteration in ('full', 'thread', 'branch-start', 'target') or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', iteration) or not isinstance(request, str) or not 1 <= len(request.strip()) <= 10000:
             raise ValueError('Provide an iteration ID and a user-request summary of at most 10000 characters')
         pending = self.session.get('pendingIteration')
         if pending:
@@ -1424,7 +1453,7 @@ class Review:
         with (self.store / f'{self.session_id}.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             latest = read_json(path, self.session)
-            if scope not in ('full', 'thread') and not any(i['id'] == scope for i in latest.get('iterations', [])):
+            if scope not in ('full', 'thread', 'branch-start', 'target') and not any(i['id'] == scope for i in latest.get('iterations', [])):
                 raise ValueError('Unknown review time scope')
             clients = latest.setdefault('reviewTime', {}).setdefault(scope, {})
             # Cumulative counters make retries and out-of-order requests idempotent.
@@ -1698,11 +1727,11 @@ class Review:
     def merge_queue(self):
         return merge_queue(self.store)
 
-    def request_merge(self, revision, title, description):
+    def request_merge(self, revision, title, description, instructions=''):
         with self.merge_request_lock():
-            return self.save_merge_request(revision, title, description)
+            return self.save_merge_request(revision, title, description, instructions)
 
-    def save_merge_request(self, revision, title, description):
+    def save_merge_request(self, revision, title, description, instructions=''):
         branch = self.branch
         if self.git('branch', '--show-current').strip() != self.branch:
             raise ValueError('The checked-out branch changed')
@@ -1719,6 +1748,8 @@ class Review:
             raise ValueError('The checked-out branch changed')
         if not isinstance(title, str) or len(title) > 250 or not isinstance(description, str) or len(description) > 20000:
             raise ValueError('Invalid merge notes')
+        if not isinstance(instructions, str) or len(instructions) > 10000:
+            raise ValueError('Invalid merge instructions')
         previous = self.merge_request()
         if previous and previous['status'] in ('pending', 'working'):
             expected = revision if 'reviewedRevision' in previous else self.revision
@@ -1738,7 +1769,7 @@ class Review:
                    'repo': str(self.repo), 'mergeRoot': str(self.common.parent), 'sessionId': self.session_id,
                    'threadId': agent.get('sessionId') if agent['provider'] == 'codex' else None,
                    'agent': agent,
-                   'title': title.strip(), 'description': description.strip(),
+                   'title': title.strip(), 'description': description.strip(), 'instructions': instructions.strip(),
                    'comments': self.session['comments'], 'summary': 'Approval saved. Waiting for an agent.'}
         # A private commit exposes the complete approved diff, including uncommitted files.
         tree = self.snapshot('queue-' + request['id'])
@@ -1793,6 +1824,8 @@ class Review:
             'If completion requires an external decision, mark the saved request blocked with a clear summary so the queue can continue. '
             'Report success only after the saved request status is merged, and reply in this conversation.'
             + (' ' + self.config['merge']['instructions'].strip() if self.config['merge']['instructions'].strip() else ''))
+        if request['instructions']:
+            request['prompt'] += '\n\nAdditional merge instructions from the user:\n' + request['instructions']
         write_json(path, request)
         self.notify_merge_request(request)
         return request
@@ -1866,7 +1899,7 @@ class Review:
             where = 'whole file' if comment['side'] == 'file' else f"{comment['side']} side, line {comment['line']}" + (
                 f"–{comment['endLine']}" if comment.get('endLine', comment['line']) != comment['line'] else '')
             if comment.get('scope', 'full') != 'full':
-                where += ', reviewed in ' + ('this thread' if comment['scope'] == 'thread' else f"interaction {comment['scope']}")
+                where += ', reviewed in ' + ({'thread': 'this thread', 'branch-start': 'branch start', 'target': f'latest local {self.target}'}.get(comment['scope']) or f"interaction {comment['scope']}")
             if current.get(comment['path']) != comment['fingerprint']:
                 where += ', written against an earlier version of the file'
             return f"- [{comment['id']}] {comment['path']} ({where})\n" + '\n'.join('  ' + line for line in comment['text'].splitlines())
@@ -2371,7 +2404,7 @@ class Handler(BaseHTTPRequestHandler):
                             review.session['viewed'].pop(file['id'], None)
                     review.save_session()
                 elif route == '/api/merge':
-                    review.request_merge(body.get('revision'), body.get('title', ''), body.get('description', ''))
+                    review.request_merge(body.get('revision'), body.get('title', ''), body.get('description', ''), body.get('instructions', ''))
                 elif route == '/api/merge/cancel':
                     review.cancel_merge_request(body.get('id'))
                 else:

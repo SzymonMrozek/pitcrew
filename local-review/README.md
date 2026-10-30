@@ -198,7 +198,9 @@ handles the previous review, and once a merge is requested.
 **Approve & merge** shows a summary of the full branch. **Ask agent to merge**
 saves a durable approval and sends the request to the conversation that wrote
 the change, just like **Send to agent** for review comments. The button itself doesn't stage, commit or merge
-anything.
+anything. You can add optional **Additional merge instructions** in the confirmation
+dialog. They are saved with the approval and sent to the agent on delivery and
+retries, separately from the commit title and description.
 
 The delivery process waits for its turn in the [queue](#merge-queue), reserves
 it through cleanup, then queues the request into the original Codex chat or
@@ -278,11 +280,27 @@ a stopped worker in its original queue position.
 
 **Review scope** offers:
 
-- **Full diff:** the live branch against its merge base.
+- **Full review:** the live branch, using the selected comparison source.
 - **This thread:** only the edits recorded by this chat's interactions.
   Dependencies imported between interactions stay out of it.
 - **Each interaction:** immutable snapshots taken right before and after one
   user request, shown with that request and its summary.
+
+**Compare against** is a separate control for Full review:
+
+- **Branch start** (default): current contents against the commit recorded when
+  Git created the branch. The tool retains that commit even after a rebase or
+  reflog expiry. If the creation entry has already expired or was never present
+  locally, this option is disabled and the default falls back to Merge base.
+- **Latest local main** (or the configured target): current contents directly
+  against the target branch's latest local commit. Refresh picks up target
+  updates; this does not fetch the remote.
+- **Merge base:** the live branch against its current merge base.
+
+Thread and interaction views use their recorded before/after snapshots, so
+Compare against is disabled there. Returning to Full review restores the chosen
+comparison source. Links preserve both selections. Approval always covers the
+full branch diff against its merge base, regardless of the selected preview.
 
 Snapshots are Git tree objects written through a private index and kept under
 `refs/<name>/<review>/…`. They include untracked files, deletions, modes and
