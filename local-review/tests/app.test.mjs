@@ -78,19 +78,63 @@ test('a late response cannot overwrite a more recently selected iteration', asyn
 test('new review pages default to branch start while explicit scopes and missing history remain usable', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
-  for (const [requested, branchStart, expected] of [[null, 'abc', 'branch-start'], [null, null, 'full'], ['target', 'abc', 'target'], ['full', 'abc', 'full']]) {
+  const readSelection = source.slice(source.indexOf('function readSelection('), source.indexOf('function scopedPath('));
+  for (const [query, branchStart, expected, comparison] of [
+    ['', 'abc', 'branch-start', 'branch-start'], ['', null, 'full', 'full'],
+    ['iteration=full&compare=target', 'abc', 'target', 'target'], ['iteration=full', 'abc', 'full', 'full'],
+    ['iteration=one&compare=target', 'abc', 'one', 'target'], ['iteration=one', 'abc', 'one', 'branch-start'],
+  ]) {
     const scopes = [], displayed = [];
     const context = vm.createContext({
       loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
-      chooseInitialScope: requested === null, iteration: requested, $: () => ({}),
+      $: () => ({}), params: new URLSearchParams(query),
       api: async () => {scopes.push(context.iteration); return {branchStart, scope: context.iteration || 'full', settings: {diffMode: 'unified'}, job: {status: 'idle'}};},
       updateChrome: () => displayed.push(context.iteration), renderComments: () => {},
     });
-    vm.runInContext(load, context);
+    vm.runInContext(readSelection + '\nvar {scope: reviewScope, comparison, iteration} = readSelection(params); var chooseInitialScope = comparison === null;\n' + load, context);
     await context.load();
     assert.deepEqual(displayed, [expected]);
-    assert.equal(scopes.length, requested === null && branchStart ? 2 : 1);
+    assert.equal(context.comparison, comparison);
+    assert.equal(scopes.length, !query && branchStart ? 2 : 1);
   }
+});
+
+test('comparison links keep review scope separate and preserve older links', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const readSelection = source.slice(source.indexOf('function readSelection('), source.indexOf('function scopedPath('));
+  const context = vm.createContext({});
+  vm.runInContext(readSelection, context);
+  for (const [query, scope, comparison, effective] of [
+    ['iteration=branch-start', 'full', 'branch-start', 'branch-start'],
+    ['iteration=target', 'full', 'target', 'target'],
+    ['iteration=full&compare=branch-start', 'full', 'branch-start', 'branch-start'],
+    ['iteration=one&compare=target', 'one', 'target', 'one'],
+    ['iteration=thread&compare=branch-start', 'thread', 'branch-start', 'thread'],
+  ]) {
+    const selected = context.readSelection(new URLSearchParams(query));
+    assert.equal(selected.scope, scope); assert.equal(selected.comparison, comparison); assert.equal(selected.iteration, effective);
+  }
+});
+
+test('switching between full review and an iteration retains the comparison source in the URL', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("$('#iteration').onchange"), source.indexOf("window.addEventListener('popstate'"));
+  const controls = {'#iteration': {value: 'full'}, '#comparison': {value: 'target'}, '#content': {replaceChildren() {}}};
+  const loaded = [];
+  let pending;
+  const location = {href: 'http://localhost/?review=abc#token'};
+  const context = vm.createContext({
+    $: selector => controls[selector], URL, location, history: {replaceState: (_, __, url) => {location.href = String(url);}},
+    checkpointReviewTime() {}, sampleReviewTime() {}, run: action => {pending = action();}, load: async () => loaded.push(context.iteration),
+  });
+  vm.runInContext(handler, context);
+  controls['#iteration'].value = 'one'; controls['#iteration'].onchange(); await pending;
+  assert.equal(new URL(location.href).searchParams.get('iteration'), 'one');
+  assert.equal(new URL(location.href).searchParams.get('compare'), 'target');
+  controls['#iteration'].value = 'full'; controls['#iteration'].onchange(); await pending;
+  assert.deepEqual(loaded, ['one', 'target']);
+  assert.equal(new URL(location.href).searchParams.get('iteration'), 'full');
+  assert.equal(new URL(location.href).searchParams.get('compare'), 'target');
 });
 
 test('range comments normalize reverse selection and keep file comments accessible', () => {

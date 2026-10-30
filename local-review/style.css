@@ -663,20 +663,21 @@ main {
 .iteration-bar {
   min-height:47px;
   display:flex;
+  flex-wrap:wrap;
   align-items:center;
   gap:12px;
   padding:8px 25px;
   border-bottom:1px solid var(--border);
   background:#19191c;
 }
-.iteration-bar label {font-weight:600;color:#c8c8d1}
+.iteration-bar .review-control {display:flex;align-items:center;gap:12px;flex:1 1 320px;min-width:0}
+.iteration-bar label {font-weight:600;color:#c8c8d1;white-space:nowrap}
 .iteration-bar select {max-width:580px;flex:1;min-width:0}
-.iteration-bar span {color:var(--muted);font-size:11px}
 #iteration-context {padding:12px 25px;border-bottom:1px solid var(--border);background:#25252b}
 #iteration-context p {margin:5px 0;line-height:1.5}
 #iteration-context {max-height:22vh;overflow:auto;flex-shrink:0}
 header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
-@media(max-width:800px) {.iteration-bar {padding:8px 14px}.iteration-bar span {display:none}}
+@media(max-width:800px) {.iteration-bar {padding:8px 14px}}
 
 #merge-request-status {
   background:#25252b;

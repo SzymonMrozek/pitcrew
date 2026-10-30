@@ -15,8 +15,8 @@ const reviewId = new URLSearchParams(location.search).get('review');
 document.querySelector('.brand').href = location.pathname + location.search + '#' + token;
 document.querySelector('#queue-page').href = '/queue.html' + (reviewId ? '?review=' + encodeURIComponent(reviewId) : '') + '#' + token;
 document.querySelector('#queue').onclick = () => {document.querySelector('#queue-dialog').showModal(); void refreshQueue();};
-let iteration = new URLSearchParams(location.search).get('iteration');
-let chooseInitialScope = iteration === null;
+let {scope: reviewScope, comparison, iteration} = readSelection(new URLSearchParams(location.search));
+let chooseInitialScope = comparison === null;
 const watchedMerge = new URLSearchParams(location.search).get('merge');
 let mergeLogLoading = false, mergeLogRunning = false, mergeLogId;
 let definitionsRequested = false, state, active, tab = 'all', commentTarget, lineSelection, renderVersion = 0, loadVersion = 0, simulatorOpening = false, devMenuTriggering = false, claudeConversationOpening = false;
@@ -29,6 +29,12 @@ const el = (tag, className, text) => {const node = document.createElement(tag); 
 const button = (text, action, className) => {const node = el('button', className, text); node.type = 'button'; node.onclick = () => run(action); return node;};
 const notice = message => {$('#notice').textContent = message; $('#notice').hidden = !message;};
 async function run(action) {try {await action();} catch (error) {notice(error.message);}}
+function readSelection(params) {
+  let scope = params.get('iteration') || 'full', comparison = params.get('compare');
+  if (['branch-start', 'target'].includes(scope)) {comparison ||= scope; scope = 'full';}
+  else if (scope === 'full' && params.has('iteration')) comparison ||= 'full';
+  return {scope, comparison, iteration: scope === 'full' ? comparison : scope};
+}
 function scopedPath(path, scope = iteration) {if (reviewId) path += (path.includes('?') ? '&' : '?') + 'review=' + encodeURIComponent(reviewId); if (watchedMerge) path += (path.includes('?') ? '&' : '?') + 'merge=' + encodeURIComponent(watchedMerge); return path + (scope ? (path.includes('?') ? '&' : '?') + 'iteration=' + encodeURIComponent(scope) : '');}
 async function api(path, body) {
   const response = await fetch('/api/' + scopedPath(path), {headers: {'X-Review-Token': token || '', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {method: 'POST', body: JSON.stringify(body)})});
@@ -75,24 +81,30 @@ function updateChrome() {
   configureModules(state.tool?.modules);
   moduleColorMap = moduleColors(state.files.map(file => moduleFor(file.path)?.name).filter(Boolean));
   $('#branch').textContent = `${state.branch || 'Detached HEAD'} → ${state.target}`;
-  const current = state.iterations.find(i => i.id === iteration), lines = diffStats(state.files);
-  const scopeLabel = current ? `iteration ${current.number}` : {thread: 'this thread', 'branch-start': 'branch start', target: `latest local ${state.target}`}[iteration] || 'full diff';
+  const current = state.iterations.find(i => i.id === reviewScope), lines = diffStats(state.files);
+  const sourceLabel = {'branch-start': 'branch start', target: `latest local ${state.target}`, full: 'merge base'}[comparison];
+  const scopeLabel = current ? `iteration ${current.number}` : reviewScope === 'thread' ? 'this thread' : `full review · ${sourceLabel}`;
   $('#revision').textContent = `${state.head.slice(0, 8)} · ${scopeLabel} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
   const selector = $('#iteration');
   const branchStart = el('option', '', 'Branch start'); branchStart.value = 'branch-start'; branchStart.disabled = !state.branchStart;
   branchStart.title = state.branchStart ? `Branch creation commit ${state.branchStart}` : 'The branch creation reflog entry is unavailable';
   const target = el('option', '', `Latest local ${state.target}`); target.value = 'target';
-  const full = el('option', '', 'Full diff (merge base)'); full.value = 'full';
+  const full = el('option', '', 'Full review'); full.value = 'full';
   const thread = el('option', '', 'This thread'); thread.value = 'thread'; thread.disabled = !state.threadScopeAvailable;
-  selector.replaceChildren(branchStart, target, full, thread, ...state.iterations.map(i => {const option = el('option', '', `Iteration ${i.number} · ${i.request}`); option.value = i.id; return option;}));
-  selector.value = iteration || 'full';
+  selector.replaceChildren(full, thread, ...state.iterations.map(i => {const option = el('option', '', `Iteration ${i.number} · ${i.request}`); option.value = i.id; return option;}));
+  selector.value = reviewScope;
+  const compare = $('#comparison'), mergeBase = el('option', '', 'Merge base'); mergeBase.value = 'full';
+  compare.replaceChildren(branchStart, target, mergeBase);
+  compare.value = comparison;
+  compare.disabled = reviewScope !== 'full';
+  compare.title = compare.disabled ? 'Recorded interactions use their own before/after snapshots. Return to Full review to change the comparison source.' : 'Baseline for the full review';
   const context = $('#iteration-context');
   context.hidden = !current && !['thread', 'branch-start', 'target'].includes(iteration);
   context.replaceChildren();
   if (current) context.append(el('strong', '', `Iteration ${current.number}`), el('p', '', current.request), el('p', 'muted', current.summary));
-  if (iteration === 'thread') context.append(el('strong', '', 'This thread'), el('p', 'muted', 'Changes from recorded interactions in this chat. Imported changes remain visible in Full diff. Approval always covers the full diff.'));
-  if (iteration === 'branch-start') context.append(el('strong', '', 'Branch start'), el('p', 'muted', `Current contents compared with branch creation commit ${state.base.slice(0, 8)}. This baseline stays fixed after rebases. Approval covers Full diff (merge base).`));
-  if (iteration === 'target') context.append(el('strong', '', `Latest local ${state.target}`), el('p', 'muted', `Current contents compared directly with local ${state.target} at ${state.base.slice(0, 8)}. Refresh to pick up local target updates. Approval covers Full diff (merge base).`));
+  if (iteration === 'thread') context.append(el('strong', '', 'This thread'), el('p', 'muted', 'Changes from recorded interactions in this chat. Imported changes remain visible in Full review. Approval covers the full branch diff against its merge base.'));
+  if (iteration === 'branch-start') context.append(el('strong', '', 'Branch start'), el('p', 'muted', `Current contents compared with branch creation commit ${state.base.slice(0, 8)}. This baseline stays fixed after rebases. Approval covers the full branch diff against its merge base.`));
+  if (iteration === 'target') context.append(el('strong', '', `Latest local ${state.target}`), el('p', 'muted', `Current contents compared directly with local ${state.target} at ${state.base.slice(0, 8)}. Refresh to pick up local target updates. Approval covers the full branch diff against its merge base.`));
   $('#progress').textContent = `${state.files.filter(viewed).length} / ${state.files.length} reviewed`;
   $('#snapshot-count').textContent = state.files.filter(f => f.image).length;
   $('#demo-count').textContent = state.demos.items.length;
@@ -155,8 +167,11 @@ async function load(refresh = false) {
   if (version !== loadVersion) return;
   if (chooseInitialScope) {
     chooseInitialScope = false;
-    iteration = nextState.branchStart ? 'branch-start' : 'full';
-    if (iteration === 'branch-start') return load();
+    comparison = nextState.branchStart ? 'branch-start' : 'full';
+    if (reviewScope === 'full') {
+      iteration = comparison;
+      if (iteration === 'branch-start') return load();
+    }
   }
   state = nextState;
   $('#mode').value = state.settings.diffMode;
@@ -650,8 +665,21 @@ async function markAndNext(id = active) {
   if (!next) notice('Every shown file is reviewed.');
   if ($('#only-unviewed').checked) {active = next || id; await load();} else if (next) await selectFile(next);
 }
-$('#iteration').onchange = () => run(async () => {checkpointReviewTime(); iteration = $('#iteration').value || null; sampleReviewTime(); active = null; $('#content').replaceChildren(); const url = new URL(location.href); if (iteration) url.searchParams.set('iteration', iteration); else url.searchParams.delete('iteration'); history.replaceState(null, '', url); await load();});
-window.addEventListener('popstate', () => run(async () => {checkpointReviewTime(); iteration = new URLSearchParams(location.search).get('iteration'); chooseInitialScope = iteration === null; sampleReviewTime(); active = null; await load();}));
+$('#iteration').onchange = $('#comparison').onchange = () => run(async () => {
+  checkpointReviewTime();
+  reviewScope = $('#iteration').value; comparison = $('#comparison').value;
+  iteration = reviewScope === 'full' ? comparison : reviewScope;
+  sampleReviewTime(); active = null; $('#content').replaceChildren();
+  const url = new URL(location.href);
+  url.searchParams.set('iteration', reviewScope); url.searchParams.set('compare', comparison);
+  history.replaceState(null, '', url); await load();
+});
+window.addEventListener('popstate', () => run(async () => {
+  checkpointReviewTime();
+  ({scope: reviewScope, comparison, iteration} = readSelection(new URLSearchParams(location.search)));
+  chooseInitialScope = comparison === null;
+  sampleReviewTime(); active = null; await load();
+}));
 $('#refresh').onclick = () => run(() => load(true));
 $('#simulator').onclick = () => run(async () => {
   simulatorOpening = true; updateChrome(); notice('Opening worktree Simulator…');
