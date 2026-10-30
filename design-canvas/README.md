@@ -22,7 +22,7 @@ Status: early prototype. What works today:
   an inspector that edits properties or writes overrides, and comments: press C, tap
   anywhere, and the pin sticks to the node under it as layout changes.
 
-Not built yet: multiplayer sync, persistence and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
+Not built yet: multiplayer sync and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
 
 ## Run it
 
@@ -36,6 +36,20 @@ cd design-canvas/App && mise x xcodegen@latest -- xcodegen generate && open Canv
 
 Pick the *My Mac (Mac Catalyst)* or an iPhone simulator destination and run. The project
 is generated from [App/project.yml](App/project.yml) and not checked in.
+
+## Files
+
+The editor autosaves to one `.canvas` file, a JSON document with sorted keys, so it
+can sit in your app's repository and diff cleanly in review. It reloads when the file
+changes on disk, for example after `git pull` or when an agent edits the JSON.
+
+```bash
+CANVAS_FILE=~/Projects/MyApp/Design/App.canvas open "Canvas Editor.app"
+```
+
+Without `CANVAS_FILE` it reopens the last file, or starts `Untitled.canvas` in
+Documents from the sample. ⌘O opens another file and ⇧⌘S saves a copy and switches
+to it. Undo history isn't saved.
 
 ## Coding agents
 

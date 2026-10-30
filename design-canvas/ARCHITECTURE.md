@@ -33,6 +33,12 @@
   move the camera, so they cost one Metal frame and no SwiftUI layout. A snapshot is
   retaken when an item's resolved tree, tokens or appearance change, or when the zoom
   needs a sharper texture level.
+- A file is the document plus its comments, encoded deterministically: the same
+  document always writes the same bytes. The editor writes it atomically about 0.4 s
+  after the last change and whenever the app leaves the foreground.
+- The file on disk is the source of truth. An external change reloads the editor and
+  wins over an edit that hasn't been written yet; the editor ignores its own writes by
+  comparing bytes.
 - Tokens resolve per mode at render time. Apple semantic colors stay platform colors,
   so they keep adapting to appearance, contrast and the platform's own palette.
 
@@ -83,6 +89,13 @@ selection, inspector and commands.
 - Reassigning a hosting controller's `rootView` re-renders the whole screen. Compare
   first; SwiftUI calls `updateUIViewController` far more often than content changes.
 - sRGB render targets take clear colors in linear light; convert UIKit colors first.
+- The editor doesn't use `DocumentGroup`. Its autosave only fires on `UndoManager`
+  changes, which would put comments into undo history. A small file store does the
+  saving and watching instead.
+- An atomic write replaces the file, so a watch on the old file descriptor stops
+  firing. Re-watch after every write and every external rename.
+- Files from the document picker on iOS are readable only inside a security scope,
+  and the last file is remembered as a bookmark, not a path.
 - Canvas items must not size the canvas. Put them in an overlay with `fixedSize()`,
   or the editor toolbar is pushed off screen and rows get the wrong proposed width.
 - `ImageRenderer` draws placeholders for UIKit-backed views such as `List` and

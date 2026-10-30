@@ -29,7 +29,15 @@ final class EditorStore {
     private(set) var document: CanvasDocument
     private var history = History()
     private(set) var selection: Selection?
-    var comments = CommentStore()
+    private var commentStore = CommentStore()
+    /// Every change, from the UI or from MCP, is saved with the file.
+    var comments: CommentStore {
+        get { commentStore }
+        set {
+            commentStore = newValue
+            persist()
+        }
+    }
     /// Comment tool: a tap pins a new comment instead of selecting.
     var isCommenting = false
     private(set) var selectedThread: String?
@@ -46,10 +54,63 @@ final class EditorStore {
     /// Measured frames per canvas item. Not observed: views observe the registries.
     @ObservationIgnored private var registries: [String: FrameRegistry] = [:]
     @ObservationIgnored private var mcp: (server: CanvasMCPServer, transport: HTTPTransport)?
+    let file: CanvasFileStore
+    enum FilePicker { case open, saveAs }
+    var isPickingFile: FilePicker?
 
-    init(document: CanvasDocument = .sample()) {
-        self.document = document
+    /// Opens the file, or starts it from the sample document when it doesn't exist yet.
+    init(file: CanvasFileStore = CanvasFileStore(url: CanvasFileStore.initialURL())) {
+        self.file = file
+        do {
+            if let contents = try file.load() {
+                document = contents.document
+                commentStore = contents.comments
+            } else {
+                document = .sample()
+                persist()
+            }
+        } catch {
+            document = .sample()
+            lastError = "Couldn't open \(file.fileName): \(error.localizedDescription)"
+        }
+        file.onExternalChange = { [weak self] contents in self?.replaceContents(with: contents) }
     }
+
+    // MARK: - File
+
+    private func persist() {
+        file.scheduleSave { [unowned self] in CanvasFile(document: document, comments: commentStore) }
+    }
+
+    /// Replaces everything with another file's contents. Undo history doesn't carry over.
+    func replaceContents(with contents: CanvasFile) {
+        document = contents.document
+        commentStore = contents.comments
+        history = History()
+        selection = nil
+        selectedThread = nil
+        draft = nil
+        hovered = nil
+        revision += 1
+    }
+
+    func open(_ url: URL) {
+        do {
+            if let contents = try file.switchTo(url) { replaceContents(with: contents) }
+        } catch {
+            lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func saveAs(_ url: URL) {
+        do {
+            try file.switchTo(url, writing: CanvasFile(document: document, comments: commentStore))
+        } catch {
+            lastError = "Couldn't save \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    var snapshot: CanvasFile { CanvasFile(document: document, comments: commentStore) }
 
     func registry(for item: String) -> FrameRegistry {
         if let registry = registries[item] { return registry }
@@ -200,11 +261,13 @@ final class EditorStore {
     func undo() {
         try? history.undo(&document)
         revision += 1
+        persist()
     }
 
     func redo() {
         try? history.redo(&document)
         revision += 1
+        persist()
     }
 
     // MARK: - Canvas geometry
@@ -295,6 +358,7 @@ extension EditorStore: CanvasHost {
     func apply(_ edit: Edit) throws {
         try history.perform(edit, on: &document)
         revision += 1
+        persist()
     }
 
     var selected: (item: String, node: String)? {

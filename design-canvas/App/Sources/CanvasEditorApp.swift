@@ -1,16 +1,28 @@
+import CanvasCore
 import CanvasRender
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct CanvasEditorApp: App {
     @State private var store = EditorStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             EditorView(store: store)
                 .task { store.startMCP() }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { store.file.saveNow() }
+        }
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open…") { store.isPickingFile = .open }
+                    .keyboardShortcut("o")
+                Button("Save As…") { store.isPickingFile = .saveAs }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { store.undo() }
                     .keyboardShortcut("z")
@@ -42,6 +54,43 @@ struct EditorView: View {
             InspectorView(store: store)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
         }
+        .fileImporter(
+            isPresented: Binding(get: { store.isPickingFile == .open }, set: { if !$0 { store.isPickingFile = nil } }),
+            allowedContentTypes: [.canvas, .json]
+        ) { result in
+            if case .success(let url) = result { store.open(url) }
+        }
+        .fileExporter(
+            isPresented: Binding(get: { store.isPickingFile == .saveAs }, set: { if !$0 { store.isPickingFile = nil } }),
+            document: CanvasExport(file: store.snapshot),
+            contentType: .canvas,
+            defaultFilename: store.file.url.deletingPathExtension().lastPathComponent
+        ) { result in
+            // The exporter wrote the file; continue editing it there.
+            if case .success(let url) = result { store.open(url) }
+        }
+    }
+
+    private var fileStatus: some View {
+        let status: String = switch store.file.status {
+        case .saved: "Saved"
+        case .saving: "Saving…"
+        case .failed(let message): message
+        }
+        return Menu {
+            Button("Open…", systemImage: "folder") { store.isPickingFile = .open }
+            Button("Save As…", systemImage: "square.and.arrow.down") { store.isPickingFile = .saveAs }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(store.file.fileName).font(.subheadline.weight(.semibold))
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(store.file.status == .saved ? Color.secondary : store.file.status == .saving ? Color.secondary : Color.red)
+            }
+            .lineLimit(1)
+        }
+        .menuIndicator(.hidden)
+        .help(store.file.url.path(percentEncoded: false))
     }
 
     private var toolbar: some View {
@@ -50,6 +99,7 @@ struct EditorView: View {
                 .disabled(!store.canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward") { store.redo() }
                 .disabled(!store.canRedo)
+            if sizeClass != .compact { fileStatus }
             Spacer()
             Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
                 .labelStyle(sizeClass == .compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
@@ -94,4 +144,29 @@ private struct AnyLabelStyle: LabelStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View { make(configuration) }
+}
+
+extension UTType {
+    /// Declared by extension only; the file is JSON underneath.
+    static let canvas = UTType(filenameExtension: CanvasFile.fileExtension, conformingTo: .json) ?? .json
+}
+
+/// Hands the current contents to the system's save panel.
+struct CanvasExport: FileDocument {
+    static let readableContentTypes: [UTType] = [.canvas, .json]
+
+    let file: CanvasFile
+
+    init(file: CanvasFile) {
+        self.file = file
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        file = try CanvasFile.decode(data)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: try file.encoded())
+    }
 }

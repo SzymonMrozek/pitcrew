@@ -190,3 +190,39 @@ import Testing
         #expect(throws: CommentError.unknownThread("nope")) { try store.delete("nope") }
     }
 }
+
+@Suite struct CanvasFileTests {
+    private func sampleFile() throws -> CanvasFile {
+        var comments = CommentStore()
+        try comments.start(
+            at: CommentAnchor(x: 1, y: 2, node: .init(item: "settings#light", node: "settings.wifi/settingRow.title", dx: 3, dy: 4)),
+            author: "Designer", body: "Bold?", now: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        return CanvasFile(document: .sample(), comments: comments)
+    }
+
+    @Test func roundTripsDocumentAndComments() throws {
+        let file = try sampleFile()
+        let decoded = try CanvasFile.decode(try file.encoded())
+        #expect(decoded == file)
+        #expect(decoded.document.children(of: "settings.general").map(\.id) == file.document.children(of: "settings.general").map(\.id))
+    }
+
+    @Test func theSameDocumentWritesTheSameBytes() throws {
+        let file = try sampleFile()
+        let first = try file.encoded()
+        let second = try CanvasFile.decode(first).encoded()
+        #expect(first == second)
+        let text = String(decoding: first, as: UTF8.self)
+        #expect(text.contains("\"createdAt\" : \"2027-01-15T08:00:00Z\""))
+        #expect(text.contains("\"settings.wifi/settingRow.title\""))
+    }
+
+    @Test func rejectsOtherFilesAndNewerVersions() {
+        #expect(throws: CanvasFileError.notACanvasFile) { try CanvasFile.decode(Data(#"{"nodes": {}}"#.utf8)) }
+        #expect(throws: CanvasFileError.notACanvasFile) { try CanvasFile.decode(Data("not json".utf8)) }
+        #expect(throws: CanvasFileError.unsupportedVersion(2)) {
+            try CanvasFile.decode(Data(#"{"format": "design-canvas", "version": 2}"#.utf8))
+        }
+    }
+}
