@@ -49,7 +49,8 @@ private struct CanvasItemView: View {
     let item: CanvasItem
     let store: EditorStore
     let scale: CGFloat
-    @State private var frames = FrameRegistry()
+
+    private var frames: FrameRegistry { store.registry(for: item.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

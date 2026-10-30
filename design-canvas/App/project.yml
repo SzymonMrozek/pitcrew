@@ -16,6 +16,8 @@ targets:
         product: CanvasCore
       - package: DesignCanvas
         product: CanvasRender
+      - package: DesignCanvas
+        product: CanvasMCP
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.pitcrew.canvas-editor

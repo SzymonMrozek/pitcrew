@@ -7,10 +7,13 @@ let package = Package(
     products: [
         .library(name: "CanvasCore", targets: ["CanvasCore"]),
         .library(name: "CanvasRender", targets: ["CanvasRender"]),
+        .library(name: "CanvasMCP", targets: ["CanvasMCP"]),
     ],
     targets: [
         .target(name: "CanvasCore"),
         .target(name: "CanvasRender", dependencies: ["CanvasCore"]),
+        .target(name: "CanvasMCP", dependencies: ["CanvasCore"]),
         .testTarget(name: "CanvasCoreTests", dependencies: ["CanvasCore"]),
+        .testTarget(name: "CanvasMCPTests", dependencies: ["CanvasMCP", "CanvasCore"]),
     ]
 )

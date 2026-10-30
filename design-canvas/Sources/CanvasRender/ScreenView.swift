@@ -72,6 +72,20 @@ public final class FrameRegistry {
             .min { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?
             .key
     }
+
+    #if canImport(UIKit)
+    /// The screen's hosting view, for pixel snapshots.
+    @ObservationIgnored weak var hostView: UIView?
+
+    /// A PNG of the screen at device size, drawn by UIKit from the live hosted view.
+    /// `ImageRenderer` can't do this: it draws placeholders for UIKit-backed views like `List`.
+    public func snapshotPNG() -> Data? {
+        guard let view = hostView, view.window != nil else { return nil }
+        return UIGraphicsImageRenderer(bounds: view.bounds).pngData { _ in
+            _ = view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        }
+    }
+    #endif
 }
 
 extension EnvironmentValues {
@@ -154,6 +168,7 @@ private struct IsolatedHost: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIHostingController<ScreenRoot> {
         let host = UIHostingController(rootView: root)
         host.view.backgroundColor = .clear
+        root.frames?.hostView = host.view
         configure(host)
         return host
     }

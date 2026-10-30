@@ -7,6 +7,7 @@ struct CanvasEditorApp: App {
     var body: some Scene {
         WindowGroup {
             EditorView(store: store)
+                .task { store.startMCP() }
         }
         .commands {
             CommandGroup(replacing: .undoRedo) {
@@ -48,6 +49,15 @@ struct EditorView: View {
             Button("Redo", systemImage: "arrow.uturn.forward") { store.redo() }
                 .disabled(!store.canRedo)
             Spacer()
+            Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            Button("Copy node ID", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = store.selection?.node
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .disabled(store.selection == nil)
             Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
                 .toggleStyle(.button)
             Button("Zoom out", systemImage: "minus.magnifyingglass") { scale = max(scale / 1.25, 0.1) }

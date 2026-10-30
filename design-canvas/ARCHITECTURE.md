@@ -19,13 +19,18 @@
   component node ID. Expansion happens at resolve time, so a component edit reaches
   every instance on the next render. Resolved IDs are `instance/node` paths, unique per
   tree; edits inside an instance become overrides on the nearest instance.
+- Agents edit through the same history as the designer. Every MCP write is one undo
+  step, and a batch that fails part way changes nothing. Agents see the live document,
+  never a copy that could drift from the canvas.
 - Tokens resolve per mode at render time. Apple semantic colors stay platform colors,
   so they keep adapting to appearance, contrast and the platform's own palette.
 
 ## Boundaries
 
 `CanvasCore` owns the model, edits, history, token and instance resolution. It has no UI
-dependency, so the future MCP server and sync server can link it. `CanvasRender` owns the
+dependency, so the MCP server and the future sync server link it. `CanvasMCP` owns
+JSON-RPC, the tools and a minimal HTTP transport; it reaches the editor only through
+the `CanvasHost` protocol, which is what its tests fake. `CanvasRender` owns the
 SwiftUI interpreter, per-screen hosting and frame measurement. The app owns the canvas,
 selection, inspector and commands.
 
@@ -40,8 +45,8 @@ selection, inspector and commands.
 3. **Sync.** A Phoenix server with one process per document: clients send edits, the
    server assigns order and broadcasts, clients rebase pending local edits on top.
    Postgres keeps the edit log, snapshots go to object storage.
-4. **MCP server.** Tools to read the tree, inspect a node with measured frames and
-   resolved tokens, render a screenshot, list and resolve comments, and write edits.
+4. **MCP, continued.** Comment tools (list, reply, resolve) once comments exist, and a
+   headless mode that renders a document file without the editor open.
 5. **Code export.** Components become `View` structs, overrides become init arguments,
    tokens become a Swift package.
 
@@ -61,6 +66,13 @@ selection, inspector and commands.
   overrides and `overrideUserInterfaceStyle` on the hosting controller too.
 - Canvas items must not size the canvas. Put them in an overlay with `fixedSize()`,
   or the editor toolbar is pushed off screen and rows get the wrong proposed width.
+- `ImageRenderer` draws placeholders for UIKit-backed views such as `List` and
+  `NavigationStack`. Screenshots draw the live hosting view with `drawHierarchy`;
+  only components, which are plain SwiftUI, use `ImageRenderer`.
+- The MCP server holds its host weakly, because the editor owns the server. A host
+  that nothing else retains disappears and every tool answers "not running".
+- MCP edit requests use document node IDs, while reads return resolved instance
+  paths. `set_property` maps a path back to an override; `apply_edits` doesn't.
 - `Document` and `Operation` clash with SwiftUI and Foundation types in app code; the
   model uses `CanvasDocument` and `Edit`.
 
@@ -71,5 +83,8 @@ selection, inspector and commands.
   still needs a side-by-side check against the simulator under Catalyst.
 - The large title sits at the screen's left edge instead of the 16 pt margin. Likely
   layout margins from the hosting controller; not investigated yet.
+- Measured frames of deleted nodes stay in the registry until the screen re-renders
+  them away. Lookups go through resolved IDs, so they are never returned, but the
+  registry should prune on resolve.
 - Every node reports its window frame on every pan and zoom frame. Fine for a prototype;
   the Metal canvas removes it, because pan and zoom stop moving the live views.

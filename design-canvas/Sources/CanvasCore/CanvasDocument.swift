@@ -63,6 +63,19 @@ public struct CanvasDocument: Hashable, Codable, Sendable {
         FractionalIndex.between(childIndex[parent]?.last.flatMap { nodes[$0]?.order }, nil)
     }
 
+    /// An order key that places a child at `index` among the current children, or last
+    /// when `index` is nil or past the end. `excluding` leaves out a node being moved.
+    public func orderKey(in parent: NodeID, at index: Int?, excluding: NodeID? = nil) -> String {
+        let siblings = children(of: parent).filter { $0.id != excluding }
+        let position = min(max(index ?? siblings.count, 0), siblings.count)
+        let lower = position > 0 ? siblings[position - 1].order : nil
+        let upper = position < siblings.count ? siblings[position].order : nil
+        // Equal neighbouring keys (concurrent inserts) leave no key between them;
+        // append after the lower one and let the ID tiebreak decide.
+        if let lower, let upper, lower >= upper { return FractionalIndex.between(lower, nil) }
+        return FractionalIndex.between(lower, upper)
+    }
+
     public func isDescendant(_ id: NodeID, of ancestor: NodeID) -> Bool {
         var current = nodes[id]?.parent
         while let parent = current {
