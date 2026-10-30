@@ -280,7 +280,15 @@ a stopped worker in its original queue position.
 
 **Review scope** offers:
 
-- **Full diff:** the live branch against its merge base.
+- **Branch start** (default): current contents against the commit recorded when
+  Git created the branch. The tool retains that commit even after a rebase or
+  reflog expiry. If the creation entry has already expired or was never present
+  locally, this option is disabled and the default falls back to Full diff.
+- **Latest local main** (or the configured target): current contents directly
+  against the target branch's latest local commit. Refresh picks up target
+  updates; this does not fetch the remote.
+- **Full diff (merge base):** the live branch against its current merge base.
+  Approval always covers this diff, regardless of the selected preview.
 - **This thread:** only the edits recorded by this chat's interactions.
   Dependencies imported between interactions stay out of it.
 - **Each interaction:** immutable snapshots taken right before and after one

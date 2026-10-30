@@ -60,7 +60,7 @@ test('a late response cannot overwrite a more recently selected iteration', asyn
   const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
   const pending = [], displayed = [];
   const context = vm.createContext({
-    loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
+    loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true, chooseInitialScope: false,
     $: () => ({}),
     api: () => new Promise(resolve => pending.push(resolve)),
     updateChrome: () => displayed.push(context.state.scope), renderComments: () => {},
@@ -73,6 +73,24 @@ test('a late response cannot overwrite a more recently selected iteration', asyn
   await first;
   assert.deepEqual(displayed, ['iteration-2']);
   assert.equal(context.state.scope, 'iteration-2');
+});
+
+test('new review pages default to branch start while explicit scopes and missing history remain usable', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
+  for (const [requested, branchStart, expected] of [[null, 'abc', 'branch-start'], [null, null, 'full'], ['target', 'abc', 'target'], ['full', 'abc', 'full']]) {
+    const scopes = [], displayed = [];
+    const context = vm.createContext({
+      loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
+      chooseInitialScope: requested === null, iteration: requested, $: () => ({}),
+      api: async () => {scopes.push(context.iteration); return {branchStart, scope: context.iteration || 'full', settings: {diffMode: 'unified'}, job: {status: 'idle'}};},
+      updateChrome: () => displayed.push(context.iteration), renderComments: () => {},
+    });
+    vm.runInContext(load, context);
+    await context.load();
+    assert.deepEqual(displayed, [expected]);
+    assert.equal(scopes.length, requested === null && branchStart ? 2 : 1);
+  }
 });
 
 test('range comments normalize reverse selection and keep file comments accessible', () => {

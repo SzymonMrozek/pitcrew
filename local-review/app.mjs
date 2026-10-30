@@ -16,6 +16,7 @@ document.querySelector('.brand').href = location.pathname + location.search + '#
 document.querySelector('#queue-page').href = '/queue.html' + (reviewId ? '?review=' + encodeURIComponent(reviewId) : '') + '#' + token;
 document.querySelector('#queue').onclick = () => {document.querySelector('#queue-dialog').showModal(); void refreshQueue();};
 let iteration = new URLSearchParams(location.search).get('iteration');
+let chooseInitialScope = iteration === null;
 const watchedMerge = new URLSearchParams(location.search).get('merge');
 let mergeLogLoading = false, mergeLogRunning = false, mergeLogId;
 let definitionsRequested = false, state, active, tab = 'all', commentTarget, lineSelection, renderVersion = 0, loadVersion = 0, simulatorOpening = false, devMenuTriggering = false, claudeConversationOpening = false;
@@ -75,17 +76,23 @@ function updateChrome() {
   moduleColorMap = moduleColors(state.files.map(file => moduleFor(file.path)?.name).filter(Boolean));
   $('#branch').textContent = `${state.branch || 'Detached HEAD'} → ${state.target}`;
   const current = state.iterations.find(i => i.id === iteration), lines = diffStats(state.files);
-  $('#revision').textContent = `${state.head.slice(0, 8)} · ${current ? `iteration ${current.number}` : iteration === 'thread' ? 'this thread' : 'full diff'} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
+  const scopeLabel = current ? `iteration ${current.number}` : {thread: 'this thread', 'branch-start': 'branch start', target: `latest local ${state.target}`}[iteration] || 'full diff';
+  $('#revision').textContent = `${state.head.slice(0, 8)} · ${scopeLabel} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
   const selector = $('#iteration');
-  const full = el('option', '', 'Full diff'); full.value = '';
+  const branchStart = el('option', '', 'Branch start'); branchStart.value = 'branch-start'; branchStart.disabled = !state.branchStart;
+  branchStart.title = state.branchStart ? `Branch creation commit ${state.branchStart}` : 'The branch creation reflog entry is unavailable';
+  const target = el('option', '', `Latest local ${state.target}`); target.value = 'target';
+  const full = el('option', '', 'Full diff (merge base)'); full.value = 'full';
   const thread = el('option', '', 'This thread'); thread.value = 'thread'; thread.disabled = !state.threadScopeAvailable;
-  selector.replaceChildren(full, thread, ...state.iterations.map(i => {const option = el('option', '', `Iteration ${i.number} · ${i.request}`); option.value = i.id; return option;}));
-  selector.value = iteration || '';
+  selector.replaceChildren(branchStart, target, full, thread, ...state.iterations.map(i => {const option = el('option', '', `Iteration ${i.number} · ${i.request}`); option.value = i.id; return option;}));
+  selector.value = iteration || 'full';
   const context = $('#iteration-context');
-  context.hidden = !current && iteration !== 'thread';
+  context.hidden = !current && !['thread', 'branch-start', 'target'].includes(iteration);
   context.replaceChildren();
   if (current) context.append(el('strong', '', `Iteration ${current.number}`), el('p', '', current.request), el('p', 'muted', current.summary));
   if (iteration === 'thread') context.append(el('strong', '', 'This thread'), el('p', 'muted', 'Changes from recorded interactions in this chat. Imported changes remain visible in Full diff. Approval always covers the full diff.'));
+  if (iteration === 'branch-start') context.append(el('strong', '', 'Branch start'), el('p', 'muted', `Current contents compared with branch creation commit ${state.base.slice(0, 8)}. This baseline stays fixed after rebases. Approval covers Full diff (merge base).`));
+  if (iteration === 'target') context.append(el('strong', '', `Latest local ${state.target}`), el('p', 'muted', `Current contents compared directly with local ${state.target} at ${state.base.slice(0, 8)}. Refresh to pick up local target updates. Approval covers Full diff (merge base).`));
   $('#progress').textContent = `${state.files.filter(viewed).length} / ${state.files.length} reviewed`;
   $('#snapshot-count').textContent = state.files.filter(f => f.image).length;
   $('#demo-count').textContent = state.demos.items.length;
@@ -146,6 +153,11 @@ async function load(refresh = false) {
   const version = ++loadVersion; ++renderVersion;
   const nextState = await api(refresh ? 'refresh' : 'state', refresh ? {} : undefined);
   if (version !== loadVersion) return;
+  if (chooseInitialScope) {
+    chooseInitialScope = false;
+    iteration = nextState.branchStart ? 'branch-start' : 'full';
+    if (iteration === 'branch-start') return load();
+  }
   state = nextState;
   $('#mode').value = state.settings.diffMode;
   if (refresh) {fileLines.clear(); sources.clear();}
@@ -639,7 +651,7 @@ async function markAndNext(id = active) {
   if ($('#only-unviewed').checked) {active = next || id; await load();} else if (next) await selectFile(next);
 }
 $('#iteration').onchange = () => run(async () => {checkpointReviewTime(); iteration = $('#iteration').value || null; sampleReviewTime(); active = null; $('#content').replaceChildren(); const url = new URL(location.href); if (iteration) url.searchParams.set('iteration', iteration); else url.searchParams.delete('iteration'); history.replaceState(null, '', url); await load();});
-window.addEventListener('popstate', () => run(async () => {checkpointReviewTime(); iteration = new URLSearchParams(location.search).get('iteration'); sampleReviewTime(); active = null; await load();}));
+window.addEventListener('popstate', () => run(async () => {checkpointReviewTime(); iteration = new URLSearchParams(location.search).get('iteration'); chooseInitialScope = iteration === null; sampleReviewTime(); active = null; await load();}));
 $('#refresh').onclick = () => run(() => load(true));
 $('#simulator').onclick = () => run(async () => {
   simulatorOpening = true; updateChrome(); notice('Opening worktree Simulator…');
