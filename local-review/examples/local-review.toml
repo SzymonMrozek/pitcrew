@@ -25,11 +25,20 @@ view = ['(^|/)(views|navigation)/', '(view|coordinator|router)\.swift$']
 model = ['(^|/)models?/', '(model|content|state)\.swift$']
 # Without an evaluator, code paths matching this rank above other code.
 important = 'interactor|service|repository|provider|cache|auth'
+# A Phoenix server next to the app: the defaults already treat _test.exs and test/ as tests,
+# mix.exs as a manifest and mix.lock as generated. Add its views and Ecto schemas to the lists above:
+# view = [..., '_(html|json|live|component)\.ex$', '\.heex$']
+# model = [..., '^server/lib/my_app/[^/]+/[^/]+\.ex$']
 
-# Code and view changes on these paths never score below 95.
+# Code and view changes on these paths never score below 95. Setting any replaces the default,
+# which covers Ecto migrations (priv/repo/migrations/); repeat it when the repository has them.
 [[priority]]
 pattern = '^Modules/[^/]+/[^/]+/Interface/'
 label = "Interface target"
+
+[[priority]]
+pattern = '^server/priv/repo/migrations/'
+label = "Migration"
 
 # Module tags: JavaScript regular expressions with named groups name, and optionally group and target.
 [[modules]]
@@ -37,6 +46,10 @@ pattern = '^Modules/(?<group>[^/]+)/(?<name>[^/]+)/(?:(?<target>Interface|Implem
 
 [[modules]]
 pattern = '^Packages/(?<name>[^/]+)/.'
+
+# Elixir: one module per OTP application, grouped by umbrella or monorepo directory.
+[[modules]]
+pattern = '^(?<group>server)/lib/(?<name>[^/]+?)(?:/(?<target>[^/]+))?/.'
 
 # Where Open Simulator finds this worktree's device (see worktree-simulator).
 [simulator]

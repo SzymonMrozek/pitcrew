@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.9.1'
+RELEASE = '0.10.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -71,11 +71,11 @@ CONFIG = {
     'files': {
         'snapshot': [r'/__snapshots__/', r'\.(png|jpe?g|webp)$'],
         'localization': [r'\.lproj/', r'\.(strings|stringsdict|xcstrings)$', r'/generated/strings', r'(^|/)l10n\.swift$'],
-        # Protocol Buffers and gRPC output; review the .proto change instead.
+        # Protocol Buffers and gRPC output (review the .proto change instead) and the Mix lockfile.
         'generated': [r'\.(pb|grpc)\.swift$', r'\.pb(\.gw)?\.go$', r'_pb2(_grpc)?\.pyi?$', r'\.pb\.(h|cc)$',
-                      r'\.pbobjc\.[hm]$', r'\.pb(json|enum|server)?\.dart$', r'_pb\.(js|d\.ts)$'],
-        'manifest': [r'(^|/)Project\.swift$'],
-        'test': [r'tests\.swift$', r'(^|/)tests/', r'\.test\.mjs$', r'(^|/)test[_-][^/]*$'],
+                      r'\.pbobjc\.[hm]$', r'\.pb(json|enum|server)?\.dart$', r'_pb\.(js|d\.ts)$', r'(^|/)mix\.lock$'],
+        'manifest': [r'(^|/)Project\.swift$', r'(^|/)mix\.exs$'],
+        'test': [r'tests\.swift$', r'(^|/)tests?/', r'\.test\.mjs$', r'(^|/)test[_-][^/]*$', r'_test\.exs$'],
         'view': [r'(^|/)(views|navigation)/', r'(view|coordinator|router)\.swift$'],
         # Code on these paths is a data model and never scores below MODEL_SCORE.
         'model': [r'(^|/)(models?|entities|dto)/', r'(model|content|state|entity|dto)\.(swift|kt|java|ts|py|go|rs)$'],
@@ -83,7 +83,8 @@ CONFIG = {
         'important': r'interactor|service|repository|resource|provider|stream|cache|auth',
     },
     # [{pattern, label}]: code changes on matching paths never score below PRIORITY_SCORE.
-    'priority': [],
+    # Ecto migrations change production data.
+    'priority': [{'pattern': r'(^|/)priv/repo/migrations/', 'label': 'Migration'}],
     # [{pattern}]: JavaScript regular expressions with named groups name, and optionally group and target.
     'modules': [],
     'simulator': {'metadata': '.worktree-simulator/simulator.env',
@@ -186,6 +187,109 @@ def launcher(config):
     return config['launcher'] or shlex.join([Path(sys.executable).name, str(ASSETS / 'server.py')])
 # Type declarations that jump-to-definition can open; nested types are indexed by their own name.
 SWIFT_DECLARATION = re.compile(r'^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|package|final|indirect|nonisolated|static|(?:public|private|fileprivate|internal|package)\(set\))\s+)*(class|struct|enum|protocol|actor|typealias)\s+([A-Z]\w*)')
+ELIXIR_MODULE = re.compile(r'\s*(defmodule|defprotocol|defimpl)\s+([A-Z][\w.]*)(?:\s*,\s*for:\s*([A-Z][\w.]*))?')
+ELIXIR_FUNCTION = re.compile(r'\s*(defp?|defmacrop?|defguardp?|defdelegate)\s+([a-z_]\w*[?!]?)')
+ELIXIR_PRIVATE = ('defp', 'defmacrop', 'defguardp')
+
+
+class SwiftNavigation:
+    """Type declarations for jump-to-definition, and calls by method name; nested types are indexed by their own name."""
+    paths = ('*.swift',)
+    name = re.compile(r'[A-Z]\w{0,200}')
+    caller = re.compile(r'[A-Za-z_]\w{0,200}')
+
+    def index(self, grep):
+        index = {}
+        for path, number, text in grep(r'(class|struct|enum|protocol|actor|typealias)[[:space:]]+[A-Z]', *self.paths):
+            if match := SWIFT_DECLARATION.match(text):
+                index.setdefault(match[2], []).append({'path': path, 'line': number, 'kind': match[1]})
+        return index
+
+    def callers(self, grep, name, path, index, read):
+        declaration = re.compile(rf'\bfunc\s+{name}\b')
+        for found, number, text in grep(rf'(^|[^[:alnum:]_]){name}[[:space:]]*[({{]', *self.paths):
+            if not declaration.search(text) and not text.lstrip().startswith('//'):
+                yield found, number, text
+
+
+def elixir_scopes(lines):
+    """Yield (number, text, module) with the innermost module open at each numbered line.
+
+    Formatted Elixir indents a module's body deeper than its defmodule line, so a line indented no deeper
+    than an open module closes it. A defimpl opens a scope named like the module Elixir generates."""
+    stack = []
+    for number, text in lines:
+        if text.strip():
+            indent = len(text) - len(text.lstrip())
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            if match := ELIXIR_MODULE.match(text):
+                parent = stack[-1][1] if stack else None
+                if match[1] == 'defimpl':
+                    module = f'{match[2]}.{match[3] or parent}'
+                else:
+                    module = f'{parent}.{match[2]}' if parent else match[2]
+                stack.append((indent, module))
+        yield number, text, stack[-1][1] if stack else None
+
+
+def dotted_suffixes(module):
+    parts = module.split('.')
+    return ['.'.join(parts[start:]) for start in range(len(parts))]
+
+
+class ElixirNavigation:
+    """Modules and functions for jump-to-definition, and calls by name within the declaring module.
+
+    Aliases resolve by dotted suffix, so Articles.create finds Later.Articles.create. Text matching cannot
+    follow `alias ..., as:` or `import`; private functions are only reachable without a module."""
+    paths = ('*.ex', '*.exs')
+    name = re.compile(r'(?:[A-Z]\w*\.)*(?:[A-Z]\w*|[a-z_]\w*[?!]?)')
+    caller = re.compile(r'[a-z_]\w{0,200}[?!]?')
+
+    def index(self, grep):
+        index, seen, lines = {}, set(), {}
+        for path, number, text in grep(r'^[[:space:]]*def(module|protocol|impl|p?|macrop?|guardp?|delegate)[[:space:]]', *self.paths):
+            lines.setdefault(path, []).append((number, text))
+        for path, numbered in lines.items():
+            for number, text, module in elixir_scopes(numbered):
+                if (match := ELIXIR_MODULE.match(text)) and match[1] != 'defimpl':
+                    for key in dotted_suffixes(module):
+                        index.setdefault(key, []).append({'path': path, 'line': number, 'kind': match[1].removeprefix('def')})
+                elif (match := ELIXIR_FUNCTION.match(text)) and (path, module, match[2]) not in seen:
+                    # Multi-clause functions link to their first clause.
+                    seen.add((path, module, match[2]))
+                    keys = [match[2]] if match[1] in ELIXIR_PRIVATE or not module else [match[2], *(f'{alias}.{match[2]}' for alias in dotted_suffixes(module))]
+                    for key in keys:
+                        index.setdefault(key, []).append({'path': path, 'line': number, 'kind': match[1], 'module': module})
+        return index
+
+    def callers(self, grep, name, path, index, read):
+        # The modules declaring this function in the reading file; without one, any module's call counts.
+        modules = {entry['module'] for entry in index.get(name, []) if entry['path'] == path and entry.get('module')}
+        escaped = re.escape(name)
+        remote = re.compile(rf'(?<![\w.])((?:[A-Z]\w*\.)*[A-Z]\w*|__MODULE__)\.{escaped}(?![\w?!])')
+        local = re.compile(rf'(?<![\w.:@?!]){escaped}(?![\w?!:])\s*\(|&{escaped}/\d|\|>\s*{escaped}(?![\w?!(])')
+        skipped = re.compile(rf'\s*(?:#|@(?:spec|callback|macrocallback)\b|(?:defp?|defmacrop?|defguardp?|defdelegate)\s+{escaped}(?![\w?!]))')
+        scopes = {}
+        def scope(found, number):
+            if found not in scopes:
+                scopes[found] = [module for _, _, module in elixir_scopes(enumerate(read(found), 1))]
+            return scopes[found][number - 1] if number <= len(scopes[found]) else None
+        def own(found, number):
+            return scope(found, number) in modules if modules else found == path
+        ere = name.replace('?', '\\?')
+        for found, number, text in grep(rf'(^|[^[:alnum:]_]){ere}([^[:alnum:]_?!]|$)', *self.paths):
+            if skipped.match(text):
+                continue
+            qualified = any(own(found, number) if alias == '__MODULE__' else not modules or any(module == alias or module.endswith('.' + alias) for module in modules)
+                            for alias in (match[1] for match in remote.finditer(text)))
+            if qualified or (local.search(text) and own(found, number)):
+                yield found, number, text
+
+
+# Code navigation by the language the page highlights; see definitions.mjs for which tokens link.
+NAVIGATION = {'swift': SwiftNavigation(), 'elixir': ElixirNavigation()}
 
 
 def digest(data):
@@ -508,7 +612,7 @@ class Review:
         self.media_secret = None
         self.ranking = {'status': 'idle', 'fallbacks': 0}
         self.rank_again = False
-        self.definitions = None
+        self.definitions = {}
         if saved:
             self.branch, self.session_id = saved['branch'], saved['sessionId']
             self.head, self.target_head = saved['head'], saved['targetHead']
@@ -611,7 +715,7 @@ class Review:
             self.settings = {**DEFAULTS, **read_json(self.store / 'settings.json', {})}
             self.cache = read_json(self.store / 'scores.json', {})
             self.head, self.target_head, self.base, self.files, self.blobs, self.revision = self.capture()
-            self.definitions = None
+            self.definitions = {}
             self.historical.clear()
             if self.job['status'] == 'failed':
                 self.job = {'status': 'idle', 'log': ''}
@@ -1259,30 +1363,35 @@ class Review:
         blobs = self.view(iteration)[1][file['id']]
         return {side: blobs[side].decode(errors='replace').splitlines() for side in ('old', 'new')}
 
-    def definition_index(self):
+    def grep(self, pattern, *paths):
+        """Yield (path, line, text) for extended-regex matches; the worktree, including untracked files, matches the review's new side."""
+        if not self.repo.exists():
+            return
+        for line in self.git('grep', '-n', '-I', '-E', '--untracked', '--null', pattern, '--', *paths, check=False).splitlines():
+            parts = line.split('\0', 2)
+            if len(parts) == 3 and parts[1].isdigit():
+                yield parts[0], int(parts[1]), parts[2]
+
+    def navigation(self, language):
+        if language not in NAVIGATION:
+            raise ValueError('Code navigation does not support this language')
+        return NAVIGATION[language]
+
+    def definition_index(self, language='swift'):
+        navigation = self.navigation(language)
         with self.lock:
-            if self.definitions is not None:
-                return self.definitions
-        index = {}
-        if self.repo.exists():
-            # The worktree, including untracked files, matches what the review shows on the new side.
-            output = self.git('grep', '-n', '-I', '-E', '--untracked', '--null',
-                              r'(class|struct|enum|protocol|actor|typealias)[[:space:]]+[A-Z]', '--', '*.swift', check=False)
-            for line in output.splitlines():
-                parts = line.split('\0', 2)
-                if len(parts) != 3 or not parts[1].isdigit():
-                    continue
-                match = SWIFT_DECLARATION.match(parts[2])
-                if match:
-                    index.setdefault(match[2], []).append({'path': parts[0], 'line': int(parts[1]), 'kind': match[1]})
+            if language in self.definitions:
+                return self.definitions[language]
+        index = navigation.index(self.grep)
         with self.lock:
-            self.definitions = index
+            self.definitions[language] = index
         return index
 
-    def definition(self, name):
-        if not isinstance(name, str) or not re.fullmatch(r'[A-Z]\w{0,200}', name):
-            raise ValueError('Unknown type name')
-        return {'name': name, 'locations': self.definition_index().get(name, [])}
+    def definition(self, name, language='swift'):
+        navigation = self.navigation(language)
+        if not isinstance(name, str) or len(name) > 300 or not navigation.name.fullmatch(name):
+            raise ValueError('Unknown declaration name')
+        return {'name': name, 'locations': self.definition_index(language).get(name, [])}
 
     def source(self, path):
         # Only files Git would show (tracked or untracked but not ignored) are readable.
@@ -1328,21 +1437,18 @@ class Review:
                     break
         return {'query': query, 'scope': scope, 'results': results[:MAX_SEARCH_RESULTS], 'truncated': len(results) > MAX_SEARCH_RESULTS}
 
-    def callers(self, name):
+    def callers(self, name, language='swift', path=''):
         # Text matching cannot resolve overloads or receivers; the page ranks call sites nearest the declaration first.
-        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_]\w{0,200}', name):
+        # path is the file declaring the function, which tells languages with modules whose calls to count.
+        navigation = self.navigation(language)
+        if not isinstance(name, str) or not navigation.caller.fullmatch(name):
             raise ValueError('Unknown method name')
         results = []
-        if self.repo.exists():
-            output = self.git('grep', '-n', '-I', '-E', '--untracked', '--null', rf'(^|[^[:alnum:]_]){name}[[:space:]]*[({{]', '--', '*.swift', check=False)
-            declaration = re.compile(rf'\bfunc\s+{name}\b')
-            for line in output.splitlines():
-                parts = line.split('\0', 2)
-                if len(parts) != 3 or not parts[1].isdigit() or declaration.search(parts[2]) or parts[2].lstrip().startswith('//'):
-                    continue
-                results.append({'path': parts[0], 'line': int(parts[1]), 'text': parts[2].strip()[:500]})
-                if len(results) > MAX_SEARCH_RESULTS:
-                    break
+        read = lambda found: self.work_blob(found).decode(errors='replace').splitlines()
+        for found, number, text in navigation.callers(self.grep, name, path if isinstance(path, str) else '', self.definition_index(language), read):
+            results.append({'path': found, 'line': number, 'text': text.strip()[:500]})
+            if len(results) > MAX_SEARCH_RESULTS:
+                break
         return {'name': name, 'results': results[:MAX_SEARCH_RESULTS], 'truncated': len(results) > MAX_SEARCH_RESULTS}
 
     def snapshot(self, name):
@@ -2254,16 +2360,18 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == '/api/file-lines':
                 self.send(200, review.file_lines(parse_qs(url.query).get('id', [''])[0], iteration))
             elif url.path == '/api/definitions':
-                self.send(200, {'names': sorted(review.definition_index())})
+                self.send(200, {'languages': {language: sorted(review.definition_index(language)) for language in NAVIGATION}})
             elif url.path == '/api/definition':
-                self.send(200, review.definition(parse_qs(url.query).get('name', [''])[0]))
+                query = parse_qs(url.query)
+                self.send(200, review.definition(query.get('name', [''])[0], query.get('language', ['swift'])[0]))
             elif url.path == '/api/source':
                 self.send(200, review.source(parse_qs(url.query).get('path', [''])[0]))
             elif url.path == '/api/search':
                 query = parse_qs(url.query)
                 self.send(200, review.search(query.get('q', [''])[0], query.get('scope', ['diff'])[0], query.get('case', [''])[0] == '1', iteration))
             elif url.path == '/api/callers':
-                self.send(200, review.callers(parse_qs(url.query).get('name', [''])[0]))
+                query = parse_qs(url.query)
+                self.send(200, review.callers(query.get('name', [''])[0], query.get('language', ['swift'])[0], query.get('path', [''])[0]))
             elif url.path == '/api/image':
                 query = parse_qs(url.query)
                 file = review.file(query.get('id', [''])[0], iteration)

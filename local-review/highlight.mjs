@@ -1,7 +1,8 @@
 // Dependency-free highlighting for the languages this repository uses. Tokens are
 // rendered as text nodes, so highlighting never interprets diff content as HTML.
 const words = list => new Set(list.split(' '));
-const block = (type, start, end, escape = false) => ({type, start, end, escape});
+// A block opens with a fixed string or a pattern, such as an Elixir sigil heredoc, and closes with a fixed string.
+const block = (type, start, end, escape = false) => ({type, start: typeof start === 'string' ? start : new RegExp(start.source, 'y'), end, escape});
 const rule = (type, pattern, options = {}) => ({type, pattern: new RegExp(pattern.source, 'y'), ...options});
 const NUMBER = rule('number', /-?(?:0x[\da-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b/);
 const WORD = rule('word', /[A-Za-z_][\w]*/);
@@ -10,6 +11,8 @@ const SINGLE_STRING = rule('string', /'(?:[^'\\]|\\.)*'?/);
 const HASH_COMMENT = rule('comment', /#.*/);
 const SLASH_COMMENT = rule('comment', /\/\/.*/);
 const BLOCK_COMMENT = block('comment', '/*', '*/');
+// Elixir sigils: one lowercase letter or uppercase letters, any of the eight delimiters, then modifiers.
+const SIGIL = rule('string', /~(?:[a-z]|[A-Z][A-Z\d]*)(?:\/(?:[^\/\\]|\\.)*\/|\|(?:[^|\\]|\\.)*\||"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^)\\]|\\.)*\)|\[(?:[^\]\\]|\\.)*\]|\{(?:[^}\\]|\\.)*\}|<(?:[^>\\]|\\.)*>)[a-zA-Z]*/);
 const XML = {rules: [block('comment', '<!--', '-->'), rule('keyword', /<\/?[\w:.-]+|\/?>/), rule('property', /[\w:.-]+(?==)/), DOUBLE_STRING, SINGLE_STRING, rule('literal', /&#?\w+;/)]};
 
 export const LANGUAGES = {
@@ -64,6 +67,15 @@ export const LANGUAGES = {
   conf: {
     rules: [rule('comment', /[#;].*/, {lineStart: true}), rule('type', /\[[^\]]+\]/, {lineStart: true}), rule('property', /[\w.-]+(?=\s*=)/, {lineStart: true}), DOUBLE_STRING, SINGLE_STRING],
   },
+  elixir: {
+    rules: [HASH_COMMENT, block('string', /(?:~(?:[a-z]|[A-Z][A-Z\d]*))?"""/, '"""', true), block('string', /(?:~(?:[a-z]|[A-Z][A-Z\d]*))?'''/, "'''", true), SIGIL, DOUBLE_STRING, SINGLE_STRING,
+      rule('attribute', /@[a-z_]\w*/), rule('literal', /:(?:[A-Za-z_][\w@]*[?!]?|"(?:[^"\\]|\\.)*")/), rule('property', /[a-z_]\w*[?!]?:(?=\s)/),
+      // Aliases stay whole, so Later.Articles.Article is one name; function names may end in ? or !.
+      rule('type', /[A-Z]\w*(?:\.[A-Z]\w*)*/), rule('function', /(?<=\bdef(?:p|macrop?|guardp?|delegate)?[ \t]+)[a-z_]\w*[?!]?/),
+      rule('function', /(?<=[A-Z]\w*\.)[a-z_]\w*[?!]?/), rule('number', /\?(?:\\.|\S)/), NUMBER, rule('word', /[A-Za-z_]\w*[?!]?/)],
+    keywords: words('defmodule def defp defmacro defmacrop defguard defguardp defdelegate defstruct defexception defprotocol defimpl defoverridable do end fn case cond with if else unless when in and or not try catch rescue after raise reraise throw receive quote unquote unquote_splicing import alias require use for'),
+    literals: words('true false nil __MODULE__ __ENV__ __DIR__ __CALLER__ __STACKTRACE__'), calls: true,
+  },
   proto: {
     rules: [BLOCK_COMMENT, SLASH_COMMENT, DOUBLE_STRING, NUMBER, WORD],
     keywords: words('syntax package import option message enum service rpc returns stream repeated optional required oneof map reserved extend public weak to max'),
@@ -76,12 +88,13 @@ const EXTENSIONS = {
   sh: 'shell', bash: 'shell', zsh: 'shell', yml: 'yaml', yaml: 'yaml', toml: 'toml', json: 'json', resolved: 'json',
   css: 'css', html: 'xml', xml: 'xml', plist: 'xml', entitlements: 'xml', stringsdict: 'xml', svg: 'xml',
   storyboard: 'xml', xib: 'xml', md: 'markdown', xcconfig: 'xcconfig', strings: 'strings', proto: 'proto',
-  ini: 'conf', gitignore: 'conf', gitattributes: 'conf', gitmodules: 'conf', dockerignore: 'conf', swiftformat: 'conf', swiftlint: 'yaml',
+  ex: 'elixir', exs: 'elixir', heex: 'elixir', eex: 'elixir', ini: 'conf', gitignore: 'conf', gitattributes: 'conf', gitmodules: 'conf', dockerignore: 'conf', swiftformat: 'conf', swiftlint: 'yaml',
 };
 
 export function languageFor(path, firstLine = '') {
   const name = path.split('/').pop(), extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   if (/^dockerfile$/i.test(name)) return 'dockerfile';
+  if (name === 'mix.lock') return 'elixir';
   if (EXTENSIONS[extension]) return EXTENSIONS[extension];
   const shebang = firstLine.match(/^#!.*\b(sh|bash|zsh|python3?|node)\b/);
   return shebang ? {sh: 'shell', bash: 'shell', zsh: 'shell', python: 'python', python3: 'python', node: 'javascript'}[shebang[1]] : null;
@@ -126,8 +139,9 @@ export function createHighlighter(language) {
         for (const candidate of spec.rules) {
           if (candidate.lineStart && text.slice(0, i).trim()) continue;
           if (candidate.start) {
-            if (!text.startsWith(candidate.start, i)) continue;
-            push(candidate.start, candidate.type); i += candidate.start.length; open = candidate; matched = true; break;
+            const start = typeof candidate.start === 'string' ? text.startsWith(candidate.start, i) && candidate.start : (candidate.start.lastIndex = i, candidate.start.exec(text)?.[0]);
+            if (!start) continue;
+            push(start, candidate.type); i += start.length; open = candidate; matched = true; break;
           }
           candidate.pattern.lastIndex = i;
           const match = candidate.pattern.exec(text)?.[0];
