@@ -3,7 +3,7 @@ import {ReviewTime, formatReviewTime} from './review-time.mjs';
 import {languageFor, highlightRows, highlightLines} from './highlight.mjs';
 import {configureModules, moduleFor, moduleLabel, moduleColors} from './modules.mjs';
 import {CONTEXT_STEP, contextGaps, expandGap, expandAll, fullyExpanded, withContext} from './context.mjs';
-import {rankDefinitions} from './definitions.mjs';
+import {NAVIGATION, navigationLinks, rankDefinitions} from './definitions.mjs';
 import {mountQueue} from './queue.mjs';
 import {isMarkdown, renderMarkdown} from './markdown.mjs';
 import {diffStats, signed} from './stats.mjs';
@@ -23,7 +23,7 @@ let definitionsRequested = false, state, active, tab = 'all', commentTarget, lin
 const images = new Map();
 // Expanded context survives lazy remounting; keyed by scope, file and fingerprint so edits reset it.
 const expansions = new Map(), fileLines = new Map(), sources = new Map();
-let definitionNames = new Set(), definitionMenu, sourceHistory = [], pendingLine, feedbackTab = 'open';
+let definitionNames = new Map(), definitionMenu, sourceHistory = [], pendingLine, feedbackTab = 'open';
 let feedObserver, scrollFrame, scrollTarget, moduleColorMap = new Map();
 const el = (tag, className, text) => {const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;};
 const button = (text, action, className) => {const node = el('button', className, text); node.type = 'button'; node.onclick = () => run(action); return node;};
@@ -469,7 +469,7 @@ async function renderFile(file, main, current) {
         box.append(row);
         for (const comment of state.session.comments.filter(c => c.file === file.id && c.fingerprint === file.fingerprint && c.side !== 'file' && ((c.side === 'old' && pair.left?.old === (c.endLine ?? c.line)) || (c.side === 'new' && (pair.right || pair.left)?.new === (c.endLine ?? c.line))))) box.append(commentNode(comment));
       }); main.append(box);
-      markDefinitionLinks(box); markCallerLinks(box);
+      markNavigationLinks(box);
     }
   }
   // Comments on collapsed context lines stay visible below the diff until their lines are expanded.
@@ -805,23 +805,21 @@ $('#feedback-export').onclick = () => run(async () => {
 });
 function flash(node) {node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');}
 async function loadDefinitions() {
-  definitionNames = new Set((await api('definitions')).names);
-  markDefinitionLinks(document);
+  definitionNames = new Map(Object.entries((await api('definitions')).languages).map(([language, names]) => [language, new Set(names)]));
+  markNavigationLinks(document);
 }
-// Only Swift type names declared somewhere in this repository become links; imports name modules, not types.
-function markDefinitionLinks(root) {
-  for (const node of root.querySelectorAll('code[data-language="swift"] .tok-type')) {
-    if (!definitionNames.has(node.textContent) || node.classList.contains('definition-link') || /^\s*(?:@\w+\s+)*import\s/.test(node.parentElement.textContent)) continue;
-    node.classList.add('definition-link'); node.title = `Click for Jump to Definition · ${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}-click to jump`;
-  }
-}
-// Method declarations offer their call sites; names alone cannot tell overloads or receivers apart.
-function markCallerLinks(root) {
-  for (const node of root.querySelectorAll('code[data-language="swift"] .tok-function')) {
-    let previous = node.previousSibling;
-    while (previous?.nodeType === Node.TEXT_NODE && !previous.textContent.trim()) previous = previous.previousSibling;
-    if (node.classList.contains('caller-link') || !previous?.classList?.contains('tok-keyword') || previous.textContent !== 'func') continue;
-    node.classList.add('caller-link'); node.title = 'Click to show callers';
+// Names declared somewhere in this repository link to their declarations, and declarations list their call
+// sites; the language's provider decides which tokens qualify. Names alone cannot tell overloads or receivers apart.
+function markNavigationLinks(root) {
+  const languages = Object.keys(NAVIGATION).map(language => `code[data-language="${language}"]`).join(',');
+  for (const code of root.querySelectorAll(languages)) {
+    const nodes = [...code.childNodes], tokens = nodes.map(node => ({text: node.textContent, type: node.nodeType === Node.TEXT_NODE ? null : node.className.match(/\btok-(\w+)/)?.[1] ?? null}));
+    for (const link of navigationLinks(code.dataset.language, tokens, definitionNames.get(code.dataset.language))) {
+      const node = nodes[link.index];
+      node.dataset.name = link.name;
+      if (link.kind === 'caller') {node.classList.add('caller-link'); node.title = 'Click to show callers';}
+      else {node.classList.add('definition-link'); node.title = `Click for Jump to Definition · ${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}-click to jump`;}
+    }
   }
 }
 function closeDefinitionMenu() {definitionMenu?.remove(); definitionMenu = null;}
@@ -830,17 +828,17 @@ function placeMenu(menu, link) {
   menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))}px`;
   menu.style.top = `${rect.bottom + menu.offsetHeight + 8 > window.innerHeight ? Math.max(8, rect.top - menu.offsetHeight - 4) : rect.bottom + 4}px`;
 }
-async function showCallersMenu(link, name, fromPath) {
+async function showCallersMenu(link, name, language, fromPath) {
   closeDefinitionMenu();
-  const menu = definitionMenu = el('div', 'definition-menu'), status = el('small', '', 'Searching Swift files…');
+  const label = NAVIGATION[language].label, menu = definitionMenu = el('div', 'definition-menu'), status = el('small', '', `Searching ${label} files…`);
   menu.setAttribute('role', 'menu');
   menu.append(el('strong', '', `Callers of ${name}`), status);
   (link.closest('dialog') || document.body).append(menu);
   placeMenu(menu, link);
-  const result = await api('callers?name=' + encodeURIComponent(name));
+  const result = await api(`callers?${new URLSearchParams({name, language, path: fromPath})}`);
   if (menu !== definitionMenu) return;
   const callers = rankDefinitions(result.results, fromPath);
-  status.textContent = callers.length ? `${callers.length}${result.truncated ? '+' : ''} call site${callers.length === 1 ? '' : 's'} by name · closest first` : `No calls to ${name} found in Swift files`;
+  status.textContent = callers.length ? `${callers.length}${result.truncated ? '+' : ''} call site${callers.length === 1 ? '' : 's'} by name · closest first` : `No calls to ${name} found in ${label} files`;
   menu.append(...callers.map(caller => {
     const option = button('', async () => {closeDefinitionMenu(); await openSource(caller.path, caller.line);}, 'definition-option');
     option.setAttribute('role', 'menuitem'); option.title = caller.path;
@@ -850,20 +848,20 @@ async function showCallersMenu(link, name, fromPath) {
   placeMenu(menu, link);
   menu.querySelector('.definition-option')?.focus();
 }
-async function definitionLocations(name, fromPath) {return rankDefinitions((await api('definition?name=' + encodeURIComponent(name))).locations, fromPath);}
-async function jumpToDefinition(name, fromPath) {
-  const locations = await definitionLocations(name, fromPath);
+async function definitionLocations(name, language, fromPath) {return rankDefinitions((await api(`definition?${new URLSearchParams({name, language})}`)).locations, fromPath);}
+async function jumpToDefinition(name, language, fromPath) {
+  const locations = await definitionLocations(name, language, fromPath);
   if (!locations.length) throw new Error(`No declaration of ${name} found in this repository`);
   await openSource(locations[0].path, locations[0].line);
   if (locations.length > 1) notice(`${name} is declared ${locations.length} times; opened the one closest to ${fromPath.split('/').pop()}. Click the name for the full list.`);
 }
-function showDefinitionMenu(link, name, fromPath) {
+function showDefinitionMenu(link, name, language, fromPath) {
   closeDefinitionMenu();
   const menu = definitionMenu = el('div', 'definition-menu');
   menu.setAttribute('role', 'menu');
   menu.append(el('strong', '', name));
   const jump = button('Jump to definition', async () => {
-    const locations = await definitionLocations(name, fromPath);
+    const locations = await definitionLocations(name, language, fromPath);
     if (menu !== definitionMenu) return;
     if (locations.length === 1) {closeDefinitionMenu(); await openSource(locations[0].path, locations[0].line); return;}
     jump.remove();
@@ -884,10 +882,10 @@ document.addEventListener('click', event => {
   const link = event.target.closest?.('.definition-link, .caller-link');
   if (!link) {if (definitionMenu && !definitionMenu.contains(event.target)) closeDefinitionMenu(); return;}
   event.preventDefault(); event.stopPropagation();
-  const fromPath = link.closest('[data-path]')?.dataset.path || '';
-  if (link.classList.contains('caller-link')) {run(() => showCallersMenu(link, link.textContent, fromPath)); return;}
-  if (event.metaKey || event.ctrlKey) {closeDefinitionMenu(); run(() => jumpToDefinition(link.textContent, fromPath));}
-  else showDefinitionMenu(link, link.textContent, fromPath);
+  const fromPath = link.closest('[data-path]')?.dataset.path || '', name = link.dataset.name, language = link.closest('code').dataset.language;
+  if (link.classList.contains('caller-link')) {run(() => showCallersMenu(link, name, language, fromPath)); return;}
+  if (event.metaKey || event.ctrlKey) {closeDefinitionMenu(); run(() => jumpToDefinition(name, language, fromPath));}
+  else showDefinitionMenu(link, name, language, fromPath);
 });
 function closeDefinitionMenuOnEscape(event) {if (event.key === 'Escape' && definitionMenu) {event.preventDefault(); closeDefinitionMenu();}}
 document.addEventListener('keydown', closeDefinitionMenuOnEscape, true);
@@ -964,7 +962,7 @@ async function openSource(path, line, remember = true) {
     row.append(el('span', 'source-number', index + 1), codeNode(highlighted[index], text, language));
     return row;
   }));
-  markDefinitionLinks(body); markCallerLinks(body);
+  markNavigationLinks(body);
   if (!dialog.open) dialog.showModal();
   body.querySelector('.target-line')?.scrollIntoView({block: 'center'});
 }

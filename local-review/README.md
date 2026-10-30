@@ -26,7 +26,7 @@ build step, no dependency to install, and no hosting.
   QuickTime Player.
 - **Run:** build and launch the worktree's app on a device or simulator you
   pick, without leaving the review.
-- **Code navigation:** search, jump to definition and callers, for Swift.
+- **Code navigation:** search, jump to definition and callers, for Swift and Elixir.
 - **A merge queue** with private snapshots of pending approvals. Agents starting
   new work can see what's about to land and build on it.
 - **Active review time:** counted only while you're actually interacting with
@@ -89,8 +89,8 @@ trigger actions you didn't take. The tool doesn't open browsers either.
 
 ## Reviewing
 
-- **Filters.** Localization, tests, project manifests and generated Protocol Buffers
-  and gRPC code are hidden by default.
+- **Filters.** Localization, tests, project manifests, generated Protocol Buffers
+  and gRPC code, and `mix.lock` are hidden by default.
   **Defaults** can also hide views or match extra exclusion globs (`*` and `?`
   match across slashes). Expand **Filtered out** in the sidebar to see what's
   hidden and why. Snapshot images stay visible, even when they live next to tests.
@@ -119,10 +119,15 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   to jump to its location in **Changes**, revealing filtered files and collapsed
   context. Outdated comments open the current file with a notice; files no
   longer in the selected scope have no jump target.
-- **Code navigation.** Swift type names declared in the repository link to
-  their definitions, closest first: same file, same module, nearest path.
-  Method names in `func` declarations open their callers. **Search code**
-  (⇧⌘F) searches the diff, the changed files or the whole project.
+- **Code navigation.** Names declared in the repository link to their
+  definitions, closest first: same file, same module, nearest path. Declared
+  function names open their callers. **Search code** (⇧⌘F) searches the diff,
+  the changed files or the whole project.
+
+  | Language | Jump to definition | Callers |
+  | --- | --- | --- |
+  | Swift | Type names, except in `import` lines | Names in `func` declarations: calls by name |
+  | Elixir | Modules, and functions called as `Alias.fun(` or `fun(`; partial aliases such as `Articles` match `Later.Articles` | Names in `def`, `defp` and `defmacro`: `Alias.fun` calls to that module, captures and pipes, and unqualified calls inside it |
 - **Modules.** When you configure module patterns, each file shows its module
   and target, with one stable color per module.
 - **Markdown** files offer **Preview Markdown**. Raw HTML is shown as text, and
@@ -159,7 +164,8 @@ Results are cached by content and by your evaluation preferences, which you
 edit under **Defaults**.
 
 **Priority paths** never score below 95, whatever the evaluator says. Use them
-for code that defines contracts, such as module interfaces.
+for code that defines contracts, such as module interfaces. Ecto migrations
+under `priv/repo/migrations/` are priority paths by default.
 
 **Data models** never score below 85. A diff of plain type declarations can look
 routine to an evaluator, but every screen and service built on those types
@@ -413,8 +419,8 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `name` | `local-review` | State directory in the Git common dir, ref namespace, and `<NAME>_HANDOFF`/`<NAME>_QUEUE_PID` variables |
 | `title` | `Local` | Brand word in the page header and tab |
 | `launcher` | `python3 <path>/server.py` | Command given to agents and on the queue page |
-| `[files]` | iOS defaults | Regexes for snapshot, localization, generated, manifest, test and view files, `model` and `important` |
-| `[[priority]]` | none | `pattern` and `label` for paths that never score below 95 |
+| `[files]` | iOS and Elixir defaults | Regexes for snapshot, localization, generated, manifest, test and view files, `model` and `important` |
+| `[[priority]]` | Ecto migrations | `pattern` and `label` for paths that never score below 95; setting any replaces the default |
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |
 | `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
@@ -444,7 +450,8 @@ so keep it local.
 - A rename shows as a deletion and an addition.
 - Text files over 2 MB and other binary files need an editor.
 - Pixel diffs are exact, not perceptual.
-- Definitions and callers are text-based and Swift-only.
+- Definitions and callers are text-based, for Swift and Elixir. They don't
+  follow `alias ..., as:` or `import`, and can't tell overloads or arities apart.
 
 ## Tests
 

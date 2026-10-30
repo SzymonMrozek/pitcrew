@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {highlightLines} from '../highlight.mjs';
+import {NAVIGATION, navigationLinks} from '../definitions.mjs';
 
 test('comment keyboard submission validates through the form and ignores plain Enter and duplicate saves', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
@@ -409,19 +411,23 @@ test('code search results mark every match without interpreting the line as HTML
   assert.deepEqual(parts(context.markedText('Load load', 'load', true)), [['#text', 'Load '], ['mark', 'load']]);
 });
 
-test('only Swift method declarations become caller links', () => {
+test('navigation links follow each language provider and carry the name they resolve', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
-  const mark = source.slice(source.indexOf('// Method declarations offer'), source.indexOf('function closeDefinitionMenu()'));
-  const text = value => ({nodeType: 3, textContent: value});
-  const token = (type, value, previousSibling) => {const classes = new Set(['tok-' + type]); return {nodeType: 1, textContent: value, previousSibling, classList: {contains: name => classes.has(name), add: name => classes.add(name)}};};
-  const declaration = token('function', 'load', text(' ')); declaration.previousSibling.previousSibling = token('keyword', 'func', null);
-  const call = token('function', 'load', text(' = ')); call.previousSibling.previousSibling = token('keyword', 'let', null);
-  const first = token('function', 'start', null);
-  const context = vm.createContext({Node: {TEXT_NODE: 3}});
+  const mark = source.slice(source.indexOf('// Names declared somewhere'), source.indexOf('function closeDefinitionMenu()'));
+  const code = (language, line) => ({dataset: {language}, childNodes: highlightLines([line], language)[0].map(({text, type}) => {
+    if (!type) return {nodeType: 3, textContent: text};
+    const classes = new Set(['tok-' + type]);
+    return {nodeType: 1, textContent: text, dataset: {}, get className() {return [...classes].join(' ');}, classList: {contains: name => classes.has(name), add: name => classes.add(name)}};
+  })});
+  const swift = code('swift', 'func load(store: Store) { let x = make() }'), elixir = code('elixir', '  def create(a), do: Articles.create(a)'), python = code('python', 'def load(): Store()');
+  const context = vm.createContext({Node: {TEXT_NODE: 3}, navigator: {platform: 'MacIntel'}, NAVIGATION, navigationLinks,
+    definitionNames: new Map([['swift', new Set(['Store'])], ['elixir', new Set(['Articles', 'Articles.create'])], ['python', new Set(['Store'])]])});
   vm.runInContext(mark, context);
-  context.markCallerLinks({querySelectorAll: () => [declaration, call, first]});
-  assert.deepEqual([declaration, call, first].map(node => node.classList.contains('caller-link')), [true, false, false]);
-  assert.equal(declaration.title, 'Click to show callers');
+  context.markNavigationLinks({querySelectorAll: selector => [swift, elixir, python].filter(node => selector.includes(`"${node.dataset.language}"`))});
+  const linked = node => node.childNodes.filter(child => child.nodeType === 1 && /-link/.test(child.className)).map(child => [child.className.split(' ')[1], child.dataset.name]);
+  assert.deepEqual(linked(swift), [['caller-link', 'load'], ['definition-link', 'Store']]);
+  assert.deepEqual(linked(elixir), [['caller-link', 'create'], ['definition-link', 'Articles'], ['definition-link', 'Articles.create']]);
+  assert.deepEqual(linked(python), []);
 });
 
 test('demos tab plays recordings inline, keeps QuickTime as an option and flags UI changes without one', async () => {

@@ -693,6 +693,60 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=path):
                 self.review.source(path)
 
+    def test_elixir_definitions_index_modules_and_functions(self):
+        self.write('lib/later/articles.ex', 'defmodule Later.Articles do\n  @moduledoc "Articles."\n  alias Later.Repo\n\n'
+                   '  def create(attrs), do: insert(attrs)\n  def create(attrs, opts), do: insert(attrs)\n\n  defp insert(attrs), do: Repo.insert(attrs)\n\n'
+                   '  defmodule Draft do\n    defstruct [:title]\n    def valid?(draft), do: draft.title != nil\n  end\n\n  defmacro schema, do: nil\nend\n')
+        self.write('lib/later/printable.ex', 'defprotocol Later.Printable do\n  def print(value)\nend\n\ndefimpl Later.Printable, for: Later.Articles.Draft do\n  def print(draft), do: draft.title\nend\n')
+        self.review.refresh()
+        index = self.review.definition_index('elixir')
+        articles = {'path': 'lib/later/articles.ex', 'line': 1, 'kind': 'module'}
+        self.assertEqual((index['Later.Articles'], index['Articles']), ([articles], [articles]))
+        self.assertEqual(index['Later.Articles.Draft'], [{'path': 'lib/later/articles.ex', 'line': 10, 'kind': 'module'}])
+        self.assertEqual(index['Draft'], index['Later.Articles.Draft'])
+        create = {'path': 'lib/later/articles.ex', 'line': 5, 'kind': 'def', 'module': 'Later.Articles'}
+        self.assertEqual((index['create'], index['Articles.create'], index['Later.Articles.create']), ([create], [create], [create]), 'Later clauses repeat no location')
+        self.assertEqual(index['insert'], [{'path': 'lib/later/articles.ex', 'line': 8, 'kind': 'defp', 'module': 'Later.Articles'}])
+        self.assertNotIn('Articles.insert', index, 'Private functions are only called without a module')
+        self.assertEqual(index['Draft.valid?'][0]['module'], 'Later.Articles.Draft', 'Nested modules carry their parent name')
+        self.assertEqual(index['Articles.schema'][0]['kind'], 'defmacro', 'Functions after a nested module belong to the outer one')
+        self.assertEqual(index['Later.Printable'][0]['kind'], 'protocol')
+        self.assertEqual({entry['module'] for entry in index['print']}, {'Later.Printable', 'Later.Printable.Later.Articles.Draft'})
+        self.assertNotIn('Later.Articles', self.review.definition_index('swift'), 'Each language keeps its own names')
+        self.assertEqual(self.review.definition('Articles.create', 'elixir')['locations'], [create])
+        for name, language in (('lower case', 'elixir'), ('Articles.', 'elixir'), ('create', 'swift'), ('Articles', 'cobol')):
+            with self.assertRaises(ValueError, msg=(name, language)):
+                self.review.definition(name, language)
+
+    def test_elixir_callers_match_module_calls_and_local_calls_in_the_declaring_module(self):
+        self.write('lib/later/articles.ex', 'defmodule Later.Articles do\n  @spec create(map()) :: :ok\n  def create(attrs), do: attrs\n'
+                   '  def import_all(list), do: Enum.map(list, &create/1)\n  def again(attrs), do: attrs |> create()\n  def self(attrs), do: __MODULE__.create(attrs)\n'
+                   '  # create(attrs) is a comment\n\n  defmodule Draft do\n    def create(draft), do: draft\n    def copy(draft), do: create(draft)\n  end\nend\n')
+        self.write('lib/later_web/controllers/article_controller.ex', 'defmodule LaterWeb.ArticleController do\n  alias Later.Articles\n\n'
+                   '  def create(conn, params) do\n    Articles.create(params)\n    Later.Articles.create(params)\n    Other.create(params)\n    Articles.created(params)\n    create(conn)\n  end\nend\n')
+        self.write('lib/later/notes.md', 'Articles.create(params)\n')
+        self.review.refresh()
+        result = self.review.callers('create', 'elixir', 'lib/later/articles.ex')
+        self.assertEqual([(r['path'], r['line']) for r in result['results']], [
+            ('lib/later/articles.ex', 4), ('lib/later/articles.ex', 5), ('lib/later/articles.ex', 6),
+            # The file declares create in both modules, so the nested module's local call counts too.
+            ('lib/later/articles.ex', 11),
+            ('lib/later_web/controllers/article_controller.ex', 5), ('lib/later_web/controllers/article_controller.ex', 6)])
+        self.assertEqual([(r['path'], r['line']) for r in self.review.callers('create', 'elixir', 'lib/later_web/controllers/article_controller.ex')['results']],
+                         [('lib/later_web/controllers/article_controller.ex', 9)])
+        for name in ('', 'Create', 'create??', None):
+            with self.assertRaises(ValueError, msg=name):
+                self.review.callers(name, 'elixir')
+
+    def test_elixir_file_kinds(self):
+        self.assertEqual(m.category('server/test/later/articles_test.exs'), 'test')
+        self.assertEqual(m.category('server/test/support/data_case.ex'), 'test')
+        self.assertEqual(m.category('server/mix.lock'), 'generated')
+        self.assertEqual(m.category('server/mix.exs'), 'manifest')
+        self.assertEqual(m.category('server/lib/later/articles.ex'), 'code')
+        migration = 'server/priv/repo/migrations/20261030120000_create_articles.exs'
+        self.assertEqual((m.category(migration), m.priority(migration), m.fallback_score(migration)), ('code', ('Migration', m.PRIORITY_SCORE), m.PRIORITY_SCORE))
+
     def test_code_search_covers_changed_files_or_the_whole_project(self):
         self.git('checkout', 'main')
         self.write('Old.swift', 'let removedNeedle = 1\nlet kept = 2\n')
@@ -839,6 +893,15 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(json.load(response)['entries'][0]['status'], 'implemented')
         with request('/api/definition?name=Missing') as response:
             self.assertEqual(json.load(response), {'name': 'Missing', 'locations': []})
+        self.write('lib/thing.ex', 'defmodule Thing do\n  def run, do: :ok\n  def again, do: run()\nend\n')
+        self.review.refresh()
+        with request('/api/definitions') as response:
+            names = json.load(response)['languages']
+            self.assertEqual((names['elixir'], 'Thing' in names['swift']), (['Thing', 'Thing.again', 'Thing.run', 'again', 'run'], False))
+        with request('/api/definition?name=Thing.run&language=elixir') as response:
+            self.assertEqual(json.load(response)['locations'], [{'path': 'lib/thing.ex', 'line': 2, 'kind': 'def', 'module': 'Thing'}])
+        with request('/api/callers?name=run&language=elixir&path=lib/thing.ex') as response:
+            self.assertEqual([r['line'] for r in json.load(response)['results']], [3])
         with request('/api/source?path=Long.swift') as response:
             self.assertEqual(len(json.load(response)['lines']), 40)
 

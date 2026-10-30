@@ -88,8 +88,12 @@ Replace these freely:
   committed branch works.
 - **Jev for ranking.** Any evaluator that returns a 0–1 likelihood per question
   fits. The path-based fallback is always there.
-- **Swift for code navigation.** Definitions and callers come from `git grep`
-  and regular expressions. Another language needs its own patterns.
+- **Swift and Elixir for code navigation.** Definitions and callers come from
+  `git grep` and regular expressions, one provider per language on each side:
+  `NAVIGATION` in `server.py` indexes declarations and finds calls, and
+  `NAVIGATION` in `definitions.mjs` picks which highlighted tokens link. Another
+  language needs a grammar in `highlight.mjs` and both providers. Elixir finds
+  the module around a line from indentation, which `mix format` guarantees.
 - **Codex and Claude.** Supporting another agent means detecting its session,
   delivering the prompt to its originating conversation.
 
