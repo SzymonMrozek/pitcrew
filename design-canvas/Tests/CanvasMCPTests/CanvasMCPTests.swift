@@ -10,6 +10,9 @@ private final class FakeHost: CanvasHost {
     var document = CanvasDocument.sample()
     var history = History()
     var selected: (item: String, node: String)?
+    var comments = CommentStore()
+
+    func canvasOrigin(item: String) -> CGPoint? { item == "settings#light" ? .zero : nil }
 
     func apply(_ edit: Edit) throws { try history.perform(edit, on: &document) }
 
@@ -65,7 +68,7 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         let host = FakeHost()
         let server = CanvasMCPServer(host: host)
         let tools = try #require(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"])?["result"]?["tools"]?.array)
-        #expect(tools.count == 8)
+        #expect(tools.count == 11)
         for tool in tools { #expect(tool["inputSchema"]?["type"] == "object") }
     }
 }
@@ -157,6 +160,44 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
     }
 }
 
+@MainActor
+@Suite struct CommentToolTests {
+    @Test func agentsWorkThroughCommentsAsTasks() throws {
+        let host = FakeHost()
+        let server = CanvasMCPServer(host: host)
+        _ = server.handle(["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["clientInfo": ["name": "claude-code"]]])
+        let request = try host.comments.start(
+            at: CommentAnchor(x: 0, y: 0, node: .init(item: "settings#light", node: "settings.wifi/settingRow.title", dx: 5, dy: 5)),
+            author: "Designer", body: "Make this bold"
+        )
+        try host.comments.start(at: CommentAnchor(x: 900, y: 40), author: "Designer", body: "Too much space here")
+
+        let (open, _) = try call(server, "list_comments")
+        let first = try #require(open.array?.first)
+        #expect(first["pinned_to"]?["node_id"] == "settings.wifi/settingRow.title")
+        #expect(first["pinned_to"]?["text"] == "Wi-Fi")
+        #expect(open.array?.last?["pinned_at"]?["x"] == 900)
+
+        _ = try call(server, "resolve_comment", ["thread_id": .string(request.id), "reply": "Set weight to semibold"])
+        #expect(host.comments.threads[request.id]?.isResolved == true)
+        #expect(host.comments.threads[request.id]?.comments.last?.author == "claude-code")
+        #expect(try call(server, "list_comments").0.array?.count == 1)
+        #expect(try call(server, "list_comments", ["include_resolved": true]).0.array?.count == 2)
+    }
+
+    @Test func agentCommentsPinToTheNodesTopRightCorner() throws {
+        let host = FakeHost()
+        let server = CanvasMCPServer(host: host)
+        let (result, _) = try call(server, "add_comment", ["body": "Is this label final?", "node_id": "settings.wifi/settingRow.title"])
+        let threadID = try #require(result["thread_id"]?.string)
+        let thread = try #require(host.comments.threads[threadID])
+        #expect(thread.anchor.node?.dx == Double(CGFloat(40.7)))
+        #expect(thread.anchor.node?.item == "settings#light")
+        #expect(thread.comments.first?.author == "agent")
+        #expect(try call(server, "add_comment", ["body": "x"]).1)
+    }
+}
+
 @Suite struct HTTPTests {
     @Test func parsesRequestsAcrossChunks() {
         let request = Data("POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nOrigin: http://localhost:3000\r\n\r\n{}".utf8)
@@ -196,7 +237,7 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
         let json = try JSONDecoder().decode(JSON.self, from: data)
         #expect(json["id"] == 7)
-        #expect(json["result"]?["tools"]?.array?.count == 8)
+        #expect(json["result"]?["tools"]?.array?.count == 11)
 
         request.httpBody = Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)
         let (_, accepted) = try await URLSession.shared.data(for: request)

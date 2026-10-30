@@ -163,3 +163,30 @@ import Testing
         #expect(throws: ResolveError.componentCycle("component.settingRow")) { try document.resolve("settings") }
     }
 }
+
+@Suite struct CommentTests {
+    @Test func threadsNumberOldestFirstAndCollectReplies() throws {
+        var store = CommentStore()
+        let early = Date(timeIntervalSince1970: 100)
+        let pinned = CommentAnchor(
+            x: 10, y: 20, node: .init(item: "settings#light", node: "settings.wifi/settingRow.title", dx: 30, dy: 0)
+        )
+        let second = try store.start(at: CommentAnchor(x: 900, y: 40), author: "designer", body: "Spacing?", now: early.addingTimeInterval(60))
+        let first = try store.start(at: pinned, author: "designer", body: "  Make this bold  ", now: early)
+        #expect(store.ordered.map(\.id) == [first.id, second.id])
+        #expect(store.number(of: second.id) == 2)
+        #expect(first.title == "Make this bold")
+
+        try store.reply(to: first.id, author: "claude-code", body: "Done")
+        try store.setResolved(first.id, true)
+        #expect(store.threads[first.id]?.comments.map(\.author) == ["designer", "claude-code"])
+        #expect(store.threads[first.id]?.isResolved == true)
+    }
+
+    @Test func rejectsEmptyBodiesAndUnknownThreads() {
+        var store = CommentStore()
+        #expect(throws: CommentError.emptyBody) { try store.start(at: CommentAnchor(x: 0, y: 0), author: "a", body: " \n") }
+        #expect(throws: CommentError.unknownThread("nope")) { try store.reply(to: "nope", author: "a", body: "x") }
+        #expect(throws: CommentError.unknownThread("nope")) { try store.delete("nope") }
+    }
+}

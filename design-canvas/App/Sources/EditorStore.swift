@@ -24,9 +24,17 @@ struct Selection: Equatable {
 
 @MainActor @Observable
 final class EditorStore {
+    static let designer = "Designer"
+
     private(set) var document: CanvasDocument
     private var history = History()
-    var selection: Selection?
+    private(set) var selection: Selection?
+    var comments = CommentStore()
+    /// Comment tool: a tap pins a new comment instead of selecting.
+    var isCommenting = false
+    private(set) var selectedThread: String?
+    /// The anchor of a comment being written.
+    private(set) var draft: CommentAnchor?
     var showsDarkCopies = true
     private(set) var lastError: String?
     private(set) var mcpStatus = "MCP off"
@@ -79,6 +87,92 @@ final class EditorStore {
         }
         return tree.first { $0.id == selection.node }
     }
+
+    func canvasOrigin(item: String) -> CGPoint? {
+        items.first { $0.id == item }?.origin
+    }
+
+    // MARK: - Selection
+
+    func select(_ selection: Selection?) {
+        self.selection = selection
+        selectedThread = nil
+    }
+
+    func selectThread(_ id: String) {
+        selectedThread = id
+        selection = nil
+        draft = nil
+    }
+
+    func clearSelection() {
+        selection = nil
+        selectedThread = nil
+        draft = nil
+    }
+
+    // MARK: - Comments
+
+    /// Unresolved threads, plus the selected one even when resolved.
+    var visibleThreads: [CommentThread] {
+        comments.ordered.filter { !$0.isResolved || $0.id == selectedThread }
+    }
+
+    /// Where a pin's tip sits in page coordinates. A node pin follows its node's measured
+    /// frame and falls back to its last known point when the node isn't rendered.
+    func pinPoint(for anchor: CommentAnchor) -> CGPoint {
+        if let node = anchor.node, let origin = canvasOrigin(item: node.item),
+            let frame = registries[node.item]?.frames[node.node]
+        {
+            return CGPoint(x: origin.x + frame.minX + node.dx, y: origin.y + frame.minY + node.dy)
+        }
+        return CGPoint(x: anchor.x, y: anchor.y)
+    }
+
+    func startDraft(at anchor: CommentAnchor) {
+        draft = anchor
+        selection = nil
+        selectedThread = nil
+    }
+
+    /// Starts a comment on a tap inside a canvas item, pinned to the node under the tap.
+    func startDraft(in item: CanvasItem, at point: CGPoint, on node: String?, frame: CGRect?) {
+        let page = CGPoint(x: item.origin.x + point.x, y: item.origin.y + point.y)
+        var pinned: CommentAnchor.NodeAnchor?
+        if let node, let frame {
+            pinned = .init(item: item.id, node: node, dx: point.x - frame.minX, dy: point.y - frame.minY)
+        }
+        startDraft(at: CommentAnchor(x: page.x, y: page.y, node: pinned))
+    }
+
+    func postDraft(_ body: String) {
+        guard let draft else { return }
+        do {
+            let thread = try comments.start(at: draft, author: Self.designer, body: body)
+            self.draft = nil
+            isCommenting = false
+            selectedThread = thread.id
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    func cancelDraft() { draft = nil }
+
+    func reply(to thread: String, _ body: String) {
+        do { try comments.reply(to: thread, author: Self.designer, body: body) } catch { lastError = String(describing: error) }
+    }
+
+    func setResolved(_ thread: String, _ isResolved: Bool) {
+        try? comments.setResolved(thread, isResolved)
+    }
+
+    func deleteThread(_ thread: String) {
+        try? comments.delete(thread)
+        if selectedThread == thread { selectedThread = nil }
+    }
+
+    // MARK: - Editing
 
     /// Edits a property of a resolved node. Inside an instance the edit becomes an
     /// override on that instance, like editing an instance layer in Figma.

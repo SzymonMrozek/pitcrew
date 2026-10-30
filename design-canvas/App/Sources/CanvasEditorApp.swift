@@ -26,6 +26,7 @@ struct EditorView: View {
     @Bindable var store: EditorStore
     @State private var scale: CGFloat = 0.75
     @State private var showsInspector = UIDevice.current.userInterfaceIdiom != .phone
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     // No NavigationStack here: SwiftUI would hand its navigation controller to every
     // rendered screen's NavigationStack, and their titles would land in the editor's bar.
@@ -43,14 +44,15 @@ struct EditorView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: sizeClass == .compact ? 12 : 16) {
             Button("Undo", systemImage: "arrow.uturn.backward") { store.undo() }
                 .disabled(!store.canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward") { store.redo() }
                 .disabled(!store.canRedo)
             Spacer()
             Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
-                .labelStyle(.titleAndIcon)
+                .labelStyle(sizeClass == .compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
+                .lineLimit(1)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
             Button("Copy node ID", systemImage: "doc.on.doc") {
@@ -58,6 +60,9 @@ struct EditorView: View {
             }
             .keyboardShortcut("c", modifiers: [.command, .shift])
             .disabled(store.selection == nil)
+            Toggle("Comment", systemImage: "bubble.left", isOn: $store.isCommenting)
+                .toggleStyle(.button)
+                .keyboardShortcut("c", modifiers: [])
             Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
                 .toggleStyle(.button)
             Button("Zoom out", systemImage: "minus.magnifyingglass") { scale = max(scale / 1.25, 0.1) }
@@ -74,4 +79,14 @@ struct EditorView: View {
         .padding(.vertical, 10)
         .background(.bar)
     }
+}
+
+private struct AnyLabelStyle: LabelStyle {
+    private let make: (Configuration) -> AnyView
+
+    init(_ style: some LabelStyle) {
+        make = { AnyView(style.makeBody(configuration: $0)) }
+    }
+
+    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }

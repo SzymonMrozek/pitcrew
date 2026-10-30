@@ -17,10 +17,11 @@ Status: early prototype. What works today:
   live document, the designer's selection, measured frames and native screenshots, and
   write edits the designer can undo.
 - `App/`: a Mac Catalyst and iOS editor. Screens in light and dark side by side, a
-  components area, tap to select any node (inside instances too), and an inspector that
-  edits properties or writes overrides.
+  components area, tap to select any node (inside instances too), an inspector that
+  edits properties or writes overrides, and comments: press C, tap anywhere, and the
+  pin sticks to the node under it as layout changes.
 
-Not built yet: the Metal canvas, comments, multiplayer sync and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
+Not built yet: the Metal canvas, multiplayer sync, persistence and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
 
 ## Run it
 
@@ -54,6 +55,14 @@ claude mcp add --transport http design-canvas http://127.0.0.1:7341/mcp
 | `screenshot` | A PNG drawn from the live SwiftUI render, light or dark. |
 | `set_property` | Sets one prop; inside an instance it writes an override. |
 | `apply_edits` | Inserts, sets, overrides, moves and deletes as one undo step. |
+| `list_comments` | Open threads with the node each is pinned to. |
+| `add_comment` | Starts a thread on a node or page point, or replies. |
+| `resolve_comment` | Resolves or reopens a thread, optionally replying first. |
+
+Comments work as a task list: a designer pins "make this semibold" on a row, the agent
+reads it with `list_comments`, edits the node and resolves the thread with a reply.
+Agent comments are signed with the client's name from `initialize` and show as purple
+pins.
 
 The server listens on loopback only and rejects requests with a non-local `Origin`.
 

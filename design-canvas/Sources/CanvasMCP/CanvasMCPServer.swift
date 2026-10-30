@@ -14,6 +14,9 @@ public protocol CanvasHost: AnyObject {
     /// Measured frames in screen points for one rendered canvas item.
     func measuredFrames(item: String) -> [String: CGRect]
     func snapshotPNG(item: String) -> Data?
+    /// Page position of a canvas item's top-left corner.
+    func canvasOrigin(item: String) -> CGPoint?
+    var comments: CommentStore { get set }
 }
 
 /// MCP over JSON-RPC: `initialize`, `ping`, `tools/list` and `tools/call`.
@@ -23,6 +26,8 @@ public final class CanvasMCPServer {
     public static let supportedVersions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
     private weak var host: (any CanvasHost)?
+    /// Author name for agent comments, from the client's `initialize`.
+    private var clientName = "agent"
 
     public init(host: any CanvasHost) {
         self.host = host
@@ -38,6 +43,7 @@ public final class CanvasMCPServer {
 
         switch method {
         case "initialize":
+            if let name = params["clientInfo"]?["name"]?.string, !name.isEmpty { clientName = name }
             let requested = params["protocolVersion"]?.string ?? ""
             let version = Self.supportedVersions.contains(requested) ? requested : Self.supportedVersions[0]
             return success(id: id, [
@@ -84,6 +90,9 @@ public final class CanvasMCPServer {
             case "screenshot": return try screenshot(host, arguments)
             case "set_property": return text(try setProperty(host, arguments))
             case "apply_edits": return text(try applyEdits(host, arguments))
+            case "list_comments": return text(listComments(host, arguments))
+            case "add_comment": return text(try addComment(host, arguments))
+            case "resolve_comment": return text(try resolveComment(host, arguments))
             default: return toolError("Unknown tool \(name)")
             }
         } catch let error as ToolError {
@@ -271,6 +280,73 @@ public final class CanvasMCPServer {
         }
         try host.apply(.batch(edits))
         return ["applied": .number(Double(edits.count)), "created": .array(created), "undo": "One undo step in the editor"]
+    }
+
+    // MARK: - Comments
+
+    private func listComments(_ host: any CanvasHost, _ arguments: JSON) -> JSON {
+        let includeResolved = arguments["include_resolved"]?.bool ?? false
+        let store = host.comments
+        return .array(store.ordered.filter { includeResolved || !$0.isResolved }.map { thread in
+            var entry: [String: JSON] = [
+                "thread_id": .string(thread.id),
+                "number": .number(Double(store.number(of: thread.id) ?? 0)),
+                "resolved": .bool(thread.isResolved),
+                "comments": .array(thread.comments.map { comment in
+                    ["author": .string(comment.author), "body": .string(comment.body),
+                     "created_at": .string(comment.createdAt.ISO8601Format())]
+                }),
+            ]
+            if let anchor = thread.anchor.node {
+                var pinned: [String: JSON] = ["node_id": .string(anchor.node), "item": .string(anchor.item)]
+                if let (node, _, _) = try? find(anchor.node, in: host.document) {
+                    pinned["kind"] = .string(node.kind.rawValue)
+                    for prop in [Prop.text, .title, .symbol] { if let value = node[prop] { pinned[prop.rawValue] = Self.json(value) } }
+                } else {
+                    pinned["missing"] = "The node no longer exists; the pin shows at its last position."
+                }
+                entry["pinned_to"] = .object(pinned)
+            } else {
+                entry["pinned_at"] = ["x": .number(thread.anchor.x.rounded()), "y": .number(thread.anchor.y.rounded())]
+            }
+            return .object(entry)
+        })
+    }
+
+    private func addComment(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
+        guard let body = arguments["body"]?.string else { throw ToolError("body is required") }
+        if let threadID = arguments["thread_id"]?.string {
+            try host.comments.reply(to: threadID, author: clientName, body: body)
+            return ["thread_id": .string(threadID), "replied": true]
+        }
+        let anchor: CommentAnchor
+        if let id = arguments["node_id"]?.string {
+            let (node, _, root) = try find(id, in: host.document)
+            let item = item(root, appearance: arguments["appearance"]?.string)
+            // Pin at the node's top-right corner, like a designer would.
+            let frame = host.measuredFrames(item: item)[node.id] ?? .zero
+            let origin = host.canvasOrigin(item: item) ?? .zero
+            anchor = CommentAnchor(
+                x: Double(origin.x + frame.maxX), y: Double(origin.y + frame.minY),
+                node: .init(item: item, node: node.id, dx: Double(frame.width), dy: 0)
+            )
+        } else if let x = arguments["x"]?.number, let y = arguments["y"]?.number {
+            anchor = CommentAnchor(x: x, y: y)
+        } else {
+            throw ToolError("Pass thread_id to reply, node_id to pin to a node, or x and y for a page point")
+        }
+        let thread = try host.comments.start(at: anchor, author: clientName, body: body)
+        return ["thread_id": .string(thread.id), "number": .number(Double(host.comments.number(of: thread.id) ?? 0))]
+    }
+
+    private func resolveComment(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
+        guard let threadID = arguments["thread_id"]?.string else { throw ToolError("thread_id is required") }
+        if let reply = arguments["reply"]?.string, !reply.isEmpty {
+            try host.comments.reply(to: threadID, author: clientName, body: reply)
+        }
+        let resolved = arguments["resolved"]?.bool ?? true
+        try host.comments.setResolved(threadID, resolved)
+        return ["thread_id": .string(threadID), "resolved": .bool(resolved)]
     }
 
     // MARK: - Mapping

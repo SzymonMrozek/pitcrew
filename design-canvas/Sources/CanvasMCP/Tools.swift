@@ -13,6 +13,10 @@ extension CanvasMCPServer {
         Frames are measured from the rendered SwiftUI, in screen points from the device's \
         top-left corner. The designer can undo every edit you make. When implementing a \
         screen in code, map kinds and props one-to-one and use the token names.
+
+        Comments are the designer's requests. list_comments shows open threads with the \
+        node each is pinned to; after acting on one, resolve_comment with a short reply \
+        saying what changed.
         """
 
     static let tools: [JSON] = [
@@ -88,6 +92,36 @@ extension CanvasMCPServer {
                 ],
             ],
             required: ["edits"]
+        ),
+        tool(
+            "list_comments",
+            "List comment threads on the canvas, oldest first, with the node each is pinned to.",
+            properties: [
+                "include_resolved": ["type": "boolean", "description": "Include resolved threads. Defaults to false."],
+            ]
+        ),
+        tool(
+            "add_comment",
+            "Start a comment thread pinned to a node or a page point, or reply to a thread.",
+            properties: [
+                "body": ["type": "string"],
+                "thread_id": ["type": "string", "description": "Reply to this thread instead of starting one."],
+                "node_id": ["type": "string", "description": "A resolved node ID to pin the new thread to."],
+                "appearance": appearanceSchema,
+                "x": ["type": "number", "description": "Page x for a thread not pinned to a node."],
+                "y": ["type": "number", "description": "Page y for a thread not pinned to a node."],
+            ],
+            required: ["body"]
+        ),
+        tool(
+            "resolve_comment",
+            "Resolve or reopen a thread, optionally replying first.",
+            properties: [
+                "thread_id": ["type": "string"],
+                "resolved": ["type": "boolean", "description": "Defaults to true."],
+                "reply": ["type": "string", "description": "A reply to post before resolving."],
+            ],
+            required: ["thread_id"]
         ),
     ]
 

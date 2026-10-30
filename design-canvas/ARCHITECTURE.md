@@ -22,6 +22,12 @@
 - Agents edit through the same history as the designer. Every MCP write is one undo
   step, and a batch that fails part way changes nothing. Agents see the live document,
   never a copy that could drift from the canvas.
+- Comments live outside the document in `CommentStore`. They never enter undo history
+  or conflict with design edits. A node pin stores the canvas item, the resolved node
+  path and an offset from the node's corner, so it follows layout; its page point is
+  the fallback when the node stops rendering.
+- An item's origin is the top-left of its rendered content. Titles and pins are
+  overlays, so page point = item origin + measured local point at any zoom.
 - Tokens resolve per mode at render time. Apple semantic colors stay platform colors,
   so they keep adapting to appearance, contrast and the platform's own palette.
 
@@ -40,13 +46,14 @@ selection, inspector and commands.
    pan, zoom and trackpad gestures. Keep a live hosted view only for the screen being
    edited; snapshot the others and redraw them when an edit touches their resolved
    tree. Selection, guides, cursors and comment pins draw in an overlay above.
-2. **Comments.** Pins anchored to a resolved node path plus an offset, or to a page
-   point, kept in their own stream so they never conflict with document edits.
-3. **Sync.** A Phoenix server with one process per document: clients send edits, the
-   server assigns order and broadcasts, clients rebase pending local edits on top.
-   Postgres keeps the edit log, snapshots go to object storage.
-4. **MCP, continued.** Comment tools (list, reply, resolve) once comments exist, and a
-   headless mode that renders a document file without the editor open.
+2. **Comments, continued.** Mentions, drag to re-pin, a resolved filter, and showing
+   a pin on every copy of its screen rather than the one it was placed on.
+3. **Sync.** Comments sync as a second stream on the same channel. A Phoenix server with
+   one process per document: clients send edits, the server assigns order and
+   broadcasts, clients rebase pending local edits on top. Postgres keeps the edit log,
+   snapshots go to object storage.
+4. **MCP, continued.** A headless mode that renders a document file without the editor
+   open, and a notification when the designer adds a comment.
 5. **Code export.** Components become `View` structs, overrides become init arguments,
    tokens become a Swift package.
 
