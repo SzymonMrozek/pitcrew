@@ -1,3 +1,4 @@
+import CanvasRender
 import SwiftUI
 
 @main
@@ -24,7 +25,7 @@ struct CanvasEditorApp: App {
 
 struct EditorView: View {
     @Bindable var store: EditorStore
-    @State private var scale: CGFloat = 0.75
+    @State private var scene = CanvasScene()
     @State private var showsInspector = UIDevice.current.userInterfaceIdiom != .phone
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -34,7 +35,7 @@ struct EditorView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            CanvasView(store: store, scale: $scale)
+            CanvasView(store: store, scene: scene)
                 .ignoresSafeArea(edges: .bottom)
         }
         .inspector(isPresented: $showsInspector) {
@@ -65,12 +66,16 @@ struct EditorView: View {
                 .keyboardShortcut("c", modifiers: [])
             Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
                 .toggleStyle(.button)
-            Button("Zoom out", systemImage: "minus.magnifyingglass") { scale = max(scale / 1.25, 0.1) }
+            Button("Zoom out", systemImage: "minus.magnifyingglass") { scene.camera.zoom(by: 1 / 1.25) }
                 .keyboardShortcut("-")
-            Text("\(Int((scale * 100).rounded()))%")
+            Button("\(Int((scene.camera.scale * 100).rounded()))%") { scene.camera.fit(store.contentBounds) }
+                .keyboardShortcut("1", modifiers: .shift)
                 .monospacedDigit()
-                .frame(minWidth: 44)
-            Button("Zoom in", systemImage: "plus.magnifyingglass") { scale = min(scale * 1.25, 4) }
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 52)
+                .help("Zoom to fit (⇧1)")
+            Button("Zoom in", systemImage: "plus.magnifyingglass") { scene.camera.zoom(by: 1.25) }
                 .keyboardShortcut("=")
             Button("Inspector", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }

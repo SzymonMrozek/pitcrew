@@ -16,12 +16,13 @@ Status: early prototype. What works today:
 - `CanvasMCP`: an MCP server for coding agents, embedded in the editor. Agents read the
   live document, the designer's selection, measured frames and native screenshots, and
   write edits the designer can undo.
-- `App/`: a Mac Catalyst and iOS editor. Screens in light and dark side by side, a
-  components area, tap to select any node (inside instances too), an inspector that
-  edits properties or writes overrides, and comments: press C, tap anywhere, and the
-  pin sticks to the node under it as layout changes.
+- `App/`: a Mac Catalyst and iOS editor on a Metal canvas: trackpad pan, pinch and
+  ⌘-scroll zoom around the pointer, ⇧1 to fit, sharp at any zoom. Screens in light and
+  dark side by side, a components area, tap to select any node (inside instances too),
+  an inspector that edits properties or writes overrides, and comments: press C, tap
+  anywhere, and the pin sticks to the node under it as layout changes.
 
-Not built yet: the Metal canvas, multiplayer sync, persistence and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
+Not built yet: multiplayer sync, persistence and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
 
 ## Run it
 

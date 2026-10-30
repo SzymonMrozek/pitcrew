@@ -38,6 +38,10 @@ final class EditorStore {
     var showsDarkCopies = true
     private(set) var lastError: String?
     private(set) var mcpStatus = "MCP off"
+    /// Bumped by every document change, so views can refresh derived state.
+    private(set) var revision = 0
+    /// The node under the pointer, for the hover outline.
+    var hovered: Selection?
 
     /// Measured frames per canvas item. Not observed: views observe the registries.
     @ObservationIgnored private var registries: [String: FrameRegistry] = [:]
@@ -193,8 +197,75 @@ final class EditorStore {
         }
     }
 
-    func undo() { try? history.undo(&document) }
-    func redo() { try? history.redo(&document) }
+    func undo() {
+        try? history.undo(&document)
+        revision += 1
+    }
+
+    func redo() {
+        try? history.redo(&document)
+        revision += 1
+    }
+
+    // MARK: - Canvas geometry
+
+    func size(of item: CanvasItem) -> CGSize {
+        switch item.content {
+        case .screen(let screen, _): return Device.named(screen[.device]?.string).size
+        case .component:
+            let measured = registries[item.id]?.size ?? .zero
+            return measured.width > 0 ? measured : CGSize(width: 360, height: 60)
+        }
+    }
+
+    func pageRect(of item: CanvasItem) -> CGRect {
+        CGRect(origin: item.origin, size: size(of: item))
+    }
+
+    var contentBounds: CGRect {
+        items.map(pageRect(of:)).reduce(CGRect.null) { $0.union($1) }
+    }
+
+    /// The canvas item and node under a page point.
+    func hit(atPage page: CGPoint) -> (item: CanvasItem, local: CGPoint, node: String?)? {
+        guard let item = items.last(where: { pageRect(of: $0).contains(page) }) else { return nil }
+        let local = CGPoint(x: page.x - item.origin.x, y: page.y - item.origin.y)
+        return (item, local, registry(for: item.id).hitTest(local))
+    }
+
+    func handleTap(atPage page: CGPoint) {
+        if let (item, local, node) = hit(atPage: page) {
+            if isCommenting {
+                startDraft(in: item, at: local, on: node, frame: node.flatMap { registry(for: item.id).frames[$0] })
+            } else {
+                select(node.map { Selection(item: item.id, node: $0) })
+            }
+        } else if isCommenting {
+            startDraft(at: CommentAnchor(x: page.x, y: page.y))
+        } else {
+            clearSelection()
+        }
+    }
+
+    func hover(atPage page: CGPoint?) {
+        let hit = page.flatMap { self.hit(atPage: $0) }
+        let next = hit.flatMap { hit in hit.node.map { Selection(item: hit.item.id, node: $0) } }
+        if hovered != next { hovered = next }
+    }
+
+    /// Changes whenever the pixels of an item would.
+    func contentKey(of item: CanvasItem) -> Int {
+        var hasher = Hasher()
+        hasher.combine(document.tokens)
+        switch item.content {
+        case .screen(let screen, let scheme):
+            hasher.combine(screen)
+            hasher.combine(scheme == .dark)
+        case .component(_, let root):
+            hasher.combine(root)
+        }
+        return hasher.finalize()
+    }
 
     /// Serves MCP on `127.0.0.1:<port>/mcp`. `CANVAS_MCP_PORT` overrides the port.
     func startMCP(defaultPort: UInt16 = 7341) {
@@ -223,6 +294,7 @@ final class EditorStore {
 extension EditorStore: CanvasHost {
     func apply(_ edit: Edit) throws {
         try history.perform(edit, on: &document)
+        revision += 1
     }
 
     var selected: (item: String, node: String)? {

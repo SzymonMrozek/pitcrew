@@ -61,6 +61,14 @@ public final class FrameRegistry {
         if windowFrames[id] != frame { windowFrames[id] = frame }
     }
 
+    /// The rendered root's size in points: the device for a screen, the measured
+    /// content for a component.
+    public var size: CGSize {
+        guard rootFrame.width > 0 else { return .zero }
+        let scale = rootWidth / rootFrame.width
+        return CGSize(width: rootFrame.width * scale, height: rootFrame.height * scale)
+    }
+
     func reportRoot(_ frame: CGRect, width: CGFloat) {
         if rootFrame != frame { rootFrame = frame }
         if rootWidth != width { rootWidth = width }
@@ -77,13 +85,22 @@ public final class FrameRegistry {
     /// The screen's hosting view, for pixel snapshots.
     @ObservationIgnored weak var hostView: UIView?
 
-    /// A PNG of the screen at device size, drawn by UIKit from the live hosted view.
-    /// `ImageRenderer` can't do this: it draws placeholders for UIKit-backed views like `List`.
-    public func snapshotPNG() -> Data? {
-        guard let view = hostView, view.window != nil else { return nil }
-        return UIGraphicsImageRenderer(bounds: view.bounds).pngData { _ in
+    /// The screen at device size and `scale` pixels per point, drawn by UIKit from the
+    /// live hosted view. `ImageRenderer` can't do this: it draws placeholders for
+    /// UIKit-backed views like `List`. Standard range keeps pixels in sRGB.
+    public func snapshot(scale: CGFloat) -> UIImage? {
+        guard let view = hostView, view.window != nil, view.bounds.width > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.preferredRange = .standard
+        format.opaque = true
+        return UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
             _ = view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
         }
+    }
+
+    public func snapshotPNG() -> Data? {
+        snapshot(scale: hostView?.window?.screen.scale ?? 3)?.pngData()
     }
     #endif
 }
@@ -130,7 +147,6 @@ public struct ScreenView: View {
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [frames] in
             frames?.reportRoot($0, width: device.size.width)
         }
-        .overlay(alignment: .top) { StatusBar(colorScheme: colorScheme, height: device.safeArea.top) }
         .clipShape(RoundedRectangle(cornerRadius: device.cornerRadius, style: .continuous))
     }
 }
@@ -142,6 +158,13 @@ private struct ScreenRoot: View {
     let frames: FrameRegistry?
     let device: Device
 
+    /// The hosting controller gets a new root only when something it draws changed;
+    /// reassigning `rootView` re-renders the whole screen.
+    func drawsSame(as other: ScreenRoot) -> Bool {
+        screen == other.screen && tokens == other.tokens && colorScheme == other.colorScheme
+            && frames === other.frames && device.name == other.device.name
+    }
+
     var body: some View {
         // The root ignores the safe area so measured frames start at the device's
         // top-left corner; navigation and list content still inset for the bars.
@@ -149,6 +172,10 @@ private struct ScreenRoot: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Styling.systemColor("systemBackground") ?? .white)
             .ignoresSafeArea()
+            // Inside the hosted root, so snapshots include it.
+            .overlay(alignment: .top) {
+                StatusBar(colorScheme: colorScheme, height: device.safeArea.top).ignoresSafeArea()
+            }
             .environment(\.canvasTokens, tokens)
             .environment(\.canvasFrames, frames)
             .environment(\.colorScheme, colorScheme)
@@ -174,7 +201,7 @@ private struct IsolatedHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ host: UIHostingController<ScreenRoot>, context: Context) {
-        host.rootView = root
+        if !host.rootView.drawsSame(as: root) { host.rootView = root }
         configure(host)
     }
 

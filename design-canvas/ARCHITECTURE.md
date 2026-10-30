@@ -28,6 +28,11 @@
   the fallback when the node stops rendering.
 - An item's origin is the top-left of its rendered content. Titles and pins are
   overlays, so page point = item origin + measured local point at any zoom.
+- The canvas never transforms live views. Every item renders with real SwiftUI at 1:1
+  behind an opaque Metal view; Metal draws texture snapshots of them. Pan and zoom only
+  move the camera, so they cost one Metal frame and no SwiftUI layout. A snapshot is
+  retaken when an item's resolved tree, tokens or appearance change, or when the zoom
+  needs a sharper texture level.
 - Tokens resolve per mode at render time. Apple semantic colors stay platform colors,
   so they keep adapting to appearance, contrast and the platform's own palette.
 
@@ -37,15 +42,15 @@
 dependency, so the MCP server and the future sync server link it. `CanvasMCP` owns
 JSON-RPC, the tools and a minimal HTTP transport; it reaches the editor only through
 the `CanvasHost` protocol, which is what its tests fake. `CanvasRender` owns the
-SwiftUI interpreter, per-screen hosting and frame measurement. The app owns the canvas,
+SwiftUI interpreter, per-screen hosting, frame measurement, the camera and the Metal
+renderer. The app owns the canvas,
 selection, inspector and commands.
 
 ## Next steps
 
-1. **Metal canvas.** Composite cached screen textures in a tiled Metal layer with its own
-   pan, zoom and trackpad gestures. Keep a live hosted view only for the screen being
-   edited; snapshot the others and redraw them when an edit touches their resolved
-   tree. Selection, guides, cursors and comment pins draw in an overlay above.
+1. **Canvas, continued.** A texture array with instanced drawing for hundreds of
+   screens, snapshotting only the dirty region of a screen, unloading renderers for
+   screens far off screen, marquee selection, snapping and guides.
 2. **Comments, continued.** Mentions, drag to re-pin, a resolved filter, and showing
    a pin on every copy of its screen rather than the one it was placed on.
 3. **Sync.** Comments sync as a second stream on the same channel. A Phoenix server with
@@ -71,6 +76,13 @@ selection, inspector and commands.
   is already inset by the safe area, which shifts every hit test by the status bar.
 - SwiftUI environment size classes are not enough for UIKit-backed views. Set trait
   overrides and `overrideUserInterfaceStyle` on the hosting controller too.
+- Never scale a hosted screen. Under a scale transform the navigation bar's large
+  title lost its 16 pt margin and every node re-reported its frame on each pan frame.
+- `drawHierarchy` only draws views that are in a window and not hidden. The renderers
+  stay visible, covered by the opaque Metal view, instead of being hidden.
+- Reassigning a hosting controller's `rootView` re-renders the whole screen. Compare
+  first; SwiftUI calls `updateUIViewController` far more often than content changes.
+- sRGB render targets take clear colors in linear light; convert UIKit colors first.
 - Canvas items must not size the canvas. Put them in an overlay with `fixedSize()`,
   or the editor toolbar is pushed off screen and rows get the wrong proposed width.
 - `ImageRenderer` draws placeholders for UIKit-backed views such as `List` and
@@ -88,10 +100,8 @@ selection, inspector and commands.
 - Fidelity on the Mac. The editor runs "scaled to match iPad" and sets the phone idiom
   as a trait override on each screen. This is verified on the iOS simulator only; it
   still needs a side-by-side check against the simulator under Catalyst.
-- The large title sits at the screen's left edge instead of the 16 pt margin. Likely
-  layout margins from the hosting controller; not investigated yet.
 - Measured frames of deleted nodes stay in the registry until the screen re-renders
   them away. Lookups go through resolved IDs, so they are never returned, but the
   registry should prune on resolve.
-- Every node reports its window frame on every pan and zoom frame. Fine for a prototype;
-  the Metal canvas removes it, because pan and zoom stop moving the live views.
+- Texture levels stop at 4 px per point: a 402×874 screen is ~22 MB with mipmaps at that
+  level. Deep zoom on a large file needs tiles instead of whole-screen textures.
