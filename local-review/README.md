@@ -21,6 +21,8 @@ build step, no dependency to install, and no hosting.
   as one feed.
 - **Per-interaction history:** each user request to an agent is saved as an
   immutable before/after snapshot you can review on its own.
+- **Agent review:** before you see a change, a different agent reviews it in a
+  fresh, read-only session, and the author fixes and answers each finding.
 - **Demo recordings:** agents record the running app on the worktree's
   simulator, one movie per scenario, and you play them on the page or in
   QuickTime Player.
@@ -172,6 +174,62 @@ routine to an evaluator, but every screen and service built on those types
 depends on it. `files.model` matches `models/`, `entities/` and `dto/`
 directories, and files named like `*Model`, `*Content`, `*State`, `*Entity` or
 `*DTO`. Views, tests and generated code are never data models.
+
+## Agent review
+
+You shouldn't be the first to read an agent's diff. Before finishing an
+interaction, the authoring agent runs:
+
+```bash
+review --agent-review          # this interaction's changes
+review --agent-review full     # the whole branch against its merge base
+```
+
+It starts a reviewer agent in a new session that knows nothing about how the
+change was written. Changed submodules are expanded into the diff it gets. By default it's the other provider: Codex reviews Claude's
+changes and Claude reviews Codex's, because a different model misses
+different things. The reviewer gets the diff, the user's request for the
+interaction and the repository's review policy, `REVIEW.md` at the root (or
+three built-in passes: bugs, security and compliance with the request). It can
+read the diff and the worktree, but can't edit, stage, build or run the
+review tool. Claude runs in restricted mode with only Read, Glob and Grep, and
+ignores your settings files, so their allow rules can't widen that. Codex runs
+in its read-only sandbox. Both return findings through a JSON schema.
+
+Each finding becomes a comment on the Full review, tagged with the reviewer,
+**important** or **nit**, and its pass. Nits are capped (5 by default). A
+finding about a file outside the diff, such as a caller, is a file comment
+marked **not in this diff**. The command waits up to `--wait` seconds (540 by default) and prints
+the result as JSON. The reviewer runs detached, so a shell timeout doesn't stop
+it; run the command again to keep waiting. Identical content reuses the
+previous review instead of starting another.
+
+The author then fixes what's needed and answers every finding:
+
+```bash
+review --reply-comment <id> --reply "Guarded the transfer." --resolve
+review --reply-comment <id> --reply "Kept: the API requires it."
+```
+
+Replies appear under each comment on the page. `--finish-iteration` refuses
+to finish while a review is still running or any finding has no reply. When
+the repository has review instructions, it also refuses an interaction that
+changed files unless its latest agent review finished and saw every changed
+file except generated code and images, and says why the last one failed.
+Fixing files the review saw needs no new review, or answering findings would
+never end; a file it never saw does. If
+no reviewer can run, `review --skip-agent-review "<reason>"` records why, and
+the interaction keeps the reason. Findings never approve or block a merge, and
+**Send to agent** leaves them out: they're the author's to answer. Your own
+comments work as before.
+
+The reviewer CLI is `CODEX_CLI_PATH` for Codex, otherwise the executable this
+repository's agents last ran from, such as a desktop app's bundled Codex, then
+`PATH`. If
+the reviewer's CLI isn't installed, the command fails rather than falling back
+to the author's provider, whose blind spots it shares; set `reviewer` to choose
+one explicitly. Logs, diffs and reports are kept in
+`<git-common-dir>/<name>/agent-reviews/`.
 
 ## Send a review to the agent
 
@@ -426,6 +484,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
 | `[demos]` | dark, no paths | `paths` whose changes should come with a demo recording, and the recording `appearance` |
 | `[run]` | none | `destinations` and `command` for **Run…** |
+| `[agent-review]` | `opposite`, `REVIEW.md`, 5 | `reviewer` (`opposite`, `claude` or `codex`), review `instructions` path and the `nits` cap for `--agent-review` |
 
 An unknown key is an error for the tool checked out in that repository. A
 shared server or merge worker from another build skips it with a warning, so

@@ -556,7 +556,8 @@ async function updateFileComments(fileId) {
 }
 function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
-  const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : ''));
+  const finding = comment.author?.kind === 'agent-review', speaker = provider => provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Agent';
+  const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : '') + (finding ? ` agent-finding ${comment.severity}` : ''));
   node.append(button(comment.resolved ? 'Reopen' : 'Resolve', async () => {state = await api('resolve', {id: comment.id, resolved: !comment.resolved}); await updateFileComments(comment.file);}));
   const location = button(`${comment.path}${comment.line ? `:${comment.line}${comment.endLine && comment.endLine !== comment.line ? `–${comment.endLine}` : ''}` : ''}`, async () => {
     await showInDiff(file, stale || comment.side === 'file' ? 0 : comment.line, comment.side);
@@ -565,7 +566,9 @@ function commentNode(comment) {
   location.disabled = !file;
   location.title = !file ? 'This file is no longer in the selected review scope' : stale ? 'Open the current file; the comment refers to an outdated revision' : 'Show this comment’s location in the diff';
   node.append(location);
-  node.append(el('small', '', `${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text)); return node;
+  node.append(el('small', '', `${finding ? `${speaker(comment.author.provider)} review · ${comment.severity} · ${comment.category} · ` : ''}${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${!file ? ' · not in this diff' : stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text));
+  for (const reply of comment.replies || []) {const answer = el('div', 'comment-reply'); answer.append(el('small', '', `${speaker(reply.provider)} replied`), el('p', '', reply.text)); node.append(answer);}
+  return node;
 }
 function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
 function statsTable(heading, rows, max) {

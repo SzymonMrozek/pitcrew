@@ -85,3 +85,11 @@ appearance = "dark"
 [run]
 destinations = ["scripts/run-app.py", "--list-destinations"]
 command = ["scripts/run-app.py", "--destination", "{destination}"]
+
+# --agent-review has a fresh, read-only reviewer agent review the diff before you do. "opposite" picks
+# the provider other than the change's author, so Codex reviews Claude's work and the other way round;
+# "claude" or "codex" always uses that one. instructions is your review policy; nits caps minor findings.
+[agent-review]
+reviewer = "opposite"
+instructions = "REVIEW.md"
+nits = 5

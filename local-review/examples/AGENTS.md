@@ -61,6 +61,33 @@ configured UI paths change without any visible effect, run
 `review --skip-demo "<reason>"` instead. List the recorded scenarios in your
 reply.
 
+## Agent review
+
+Before finishing an interaction that changed files, have a fresh reviewer
+agent review it:
+
+```bash
+review --agent-review
+```
+
+It runs a different agent in a new, read-only session with the repository's
+`REVIEW.md`, waits for it and prints its findings as JSON. Each finding is
+also a comment on the review. If it prints that the reviewer is still running,
+run the same command again to keep waiting. Fix every important finding, then
+answer every finding:
+
+```bash
+review --reply-comment <id> --reply "<what changed>" --resolve
+review --reply-comment <id> --reply "<why it stays as it is>"
+```
+
+Run `review --agent-review` again after substantial fixes. Mention findings
+you disagreed with in your reply. `--finish-iteration` refuses to finish while
+a review is running or a finding has no answer, and, when the repository has a
+`REVIEW.md`, when the interaction changed files without a finished review. If
+no reviewer can run, for example both CLIs are over quota, record why with
+`review --skip-agent-review "<reason>"` and tell the user.
+
 ## Review links and interaction history
 
 For every user interaction that involves repository work, record one review

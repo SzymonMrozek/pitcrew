@@ -17,7 +17,7 @@ import threading
 import unittest
 import urllib.request
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 TOOL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOL))
@@ -2750,6 +2750,263 @@ if '--output-last-message' in sys.argv:
             self.assertEqual(json.load(response)['mergeRequest']['status'], 'cancelled')
         with request('/api/shutdown', {}) as response:
             self.assertEqual(json.load(response)['status'], 'stopping')
+
+
+class AgentReviewTests(unittest.TestCase):
+    """A fresh reviewer agent reviews an interaction before the person; its findings become comments the author answers."""
+    git, write = ReviewTests.git, ReviewTests.write
+
+    def setUp(self):
+        ReviewTests.setUp(self)
+        self.review.begin_iteration('turn-1', 'Make the value configurable')
+        self.write('Interactor.swift', 'let value = 2\nlet limit = 10\nlet name = "x"\n')
+        self.review.refresh()
+        self.launches = []
+        real_popen = subprocess.Popen
+        def launch(command, **options):
+            if '--agent-review-worker' not in command:
+                return real_popen(command, **options)
+            self.launches.append(command)
+            return Mock(pid=os.getpid())
+        popen = patch.object(m.subprocess, 'Popen', side_effect=launch)
+        popen.start()
+        self.addCleanup(popen.stop)
+
+    def report(self, *findings, summary='Looks mostly fine.'):
+        return {'summary': summary, 'findings': [{'path': 'Interactor.swift', 'line': None, 'endLine': None, 'severity': 'nit',
+                                                  'category': 'bugs', 'text': 'Finding', **finding} for finding in findings]}
+
+    def run_reviewer(self, record, report, provider='claude'):
+        calls, real_run = [], subprocess.run
+        def reviewer(command, **options):
+            if command[0] == 'git':
+                return real_run(command, **options)
+            calls.append((command, options))
+            if provider == 'codex':
+                Path(command[command.index('--output-last-message') + 1]).write_text(json.dumps(report))
+                return subprocess.CompletedProcess(command, 0, '', '')
+            return subprocess.CompletedProcess(command, 0, json.dumps({'type': 'result', 'result': '', 'structured_output': report}), '')
+        with patch.object(m.subprocess, 'run', side_effect=reviewer):
+            self.review.run_agent_review(record['path'])
+        return calls[0], read_json_safely(Path(record['path']))
+
+    def test_the_opposite_provider_reviews_the_interaction_read_only_and_its_findings_become_comments(self):
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.assertEqual((record['reviewer'], record['author'], record['status']), ('claude', 'codex', 'running'))
+        self.assertIn('--agent-review-worker', self.launches[0])
+        self.assertIn('+let limit = 10', Path(record['diff']).read_text())
+        (command, options), record = self.run_reviewer(record, self.report(
+            {'line': 2, 'severity': 'important', 'text': 'The limit is never read.'},
+            {'line': 40, 'text': 'Out-of-range lines attach to the file.'},
+            {'path': 'Elsewhere.swift', 'text': 'A caller outside the diff.'}))
+        self.assertEqual(command[0], '/fake/claude')
+        self.assertEqual(command[command.index('--permission-mode') + 1], 'dontAsk')
+        self.assertIn('--restricted', command)
+        self.assertEqual(command[command.index('--tools') + 1:command.index('--allowedTools')], ['Read', 'Glob', 'Grep'])
+        self.assertEqual(command[command.index('--allowedTools') + 1:], ['Read', 'Glob', 'Grep'])
+        self.assertNotIn('CODEX_THREAD_ID', options['env'])
+        self.assertEqual(options['env']['LOCAL_REVIEW_HANDOFF'], '1')
+        self.assertIn('Make the value configurable', options['input'])
+        self.assertEqual((record['status'], record['summary']), ('finished', 'Looks mostly fine.'))
+        comments = self.review.session['comments']
+        self.assertEqual([(c['path'], c['severity'], c['side'], c['line'], c['scope']) for c in comments],
+                         [('Interactor.swift', 'important', 'new', 2, 'branch-start'), ('Interactor.swift', 'nit', 'file', 0, 'branch-start'),
+                          ('Elsewhere.swift', 'nit', 'file', 0, 'branch-start')])
+        self.assertEqual(comments[2]['fingerprint'], '')
+        self.assertEqual(comments[0]['author'], {'kind': 'agent-review', 'provider': 'claude', 'review': record['id']})
+        self.assertEqual(comments[0]['fingerprint'], self.review.file(comments[0]['file'], 'branch-start')['fingerprint'])
+        self.assertEqual(len(self.review.state('branch-start')['session']['comments']), 3)
+        self.assertEqual(self.review.handoff_state()['unsent'], 0)
+
+    def test_finishing_waits_for_the_reviewer_and_an_answer_to_every_finding(self):
+        description = 'Configurable value, reviewed by an agent.'
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        with self.assertRaisesRegex(ValueError, 'still running'):
+            self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', description)
+        _, record = self.run_reviewer(record, self.report({'line': 1, 'severity': 'important'}, {'line': 3}))
+        important, nit = record['findings']
+        with self.assertRaisesRegex(ValueError, f'{important["id"]}, {nit["id"]}'):
+            self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', description)
+        self.assertTrue(self.review.reply_comment(important['id'], 'Read the limit in the interactor.', resolve=True)['resolved'])
+        answered = self.review.reply_comment(nit['id'], 'Kept: the name matches the API.')
+        self.assertEqual((answered['resolved'], answered['replies'][0]['provider']), (False, 'codex'))
+        self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', description)
+        with self.assertRaisesRegex(ValueError, 'Unknown comment'):
+            self.review.reply_comment('missing', 'Text')
+
+    def test_identical_content_reuses_the_review_and_codex_reviews_in_a_read_only_sandbox(self):
+        self.review.config['agent-review']['reviewer'] = 'codex'
+        first = self.review.start_agent_review()
+        self.assertEqual(self.review.start_agent_review()['id'], first['id'])
+        self.assertEqual(len(self.launches), 1)
+        (command, _), record = self.run_reviewer(first, self.report(), provider='codex')
+        self.assertEqual(command[:2], ['/fake/codex', 'exec'])
+        self.assertEqual(command[command.index('--sandbox') + 1], 'read-only')
+        self.assertIn('--output-schema', command)
+        self.assertEqual((record['status'], record['findings']), ('finished', []))
+        self.assertEqual(self.review.start_agent_review()['id'], first['id'])
+        self.write('Interactor.swift', 'let value = 3\n')
+        self.review.refresh()
+        self.assertNotEqual(self.review.start_agent_review()['id'], first['id'])
+
+    def test_a_missing_reviewer_cli_is_an_error_never_a_same_provider_review_and_failures_are_reported(self):
+        with patch.object(m.shutil, 'which', return_value=None), self.assertRaisesRegex(ValueError, 'claude CLI is unavailable.*--skip-agent-review'):
+            self.review.start_agent_review()
+        self.review.config['agent-review']['reviewer'] = 'codex'
+        record = self.review.start_agent_review()
+        self.assertEqual((record['reviewer'], record['cli']), ('codex', '/fake/codex'))
+        real_run = subprocess.run
+        failing = lambda command, **options: real_run(command, **options) if command[0] == 'git' else subprocess.CompletedProcess(command, 1, '', 'prompt echo\nERROR: quota exceeded')
+        with patch.object(m.subprocess, 'run', side_effect=failing):
+            self.review.run_agent_review(record['path'])
+        record = read_json_safely(Path(record['path']))
+        self.assertEqual((record['status'], record['summary']), ('failed', 'The reviewer exited with status 1: ERROR: quota exceeded'))
+
+    def test_the_reviewer_diff_expands_changed_submodules(self):
+        library = self.root.parent / (self.root.name + '-library')
+        self.addCleanup(shutil.rmtree, library, True)
+        library.mkdir()
+        for args in (('init', '-q', '-b', 'main'), ('config', 'user.email', 'test@example.com'), ('config', 'user.name', 'Test')):
+            subprocess.run(['git', *args], cwd=library, check=True)
+        (library / 'Guard.swift').write_text('func guardTransfer() {}\n')
+        subprocess.run(['git', 'add', '.'], cwd=library, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'feat(test): guard'], cwd=library, check=True)
+        self.git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', str(library), 'Library')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        diff = Path(record['diff']).read_text()
+        self.assertIn('Library/Guard.swift', diff)
+        self.assertIn('+func guardTransfer() {}', diff)
+
+    def test_the_reviewer_runs_the_cli_this_repositorys_agents_last_used_before_path(self):
+        self.review.config['agent-review']['reviewer'] = 'codex'
+        os.environ.pop('CODEX_CLI_PATH')
+        m.write_json(self.review.store / ('a' * 24 + '.json'), {'agent': {'provider': 'codex', 'sessionId': 'chat', 'cli': sys.executable}})
+        with patch.object(m.shutil, 'which', return_value='/path/codex'):
+            self.assertEqual(self.review.agent_reviewer('claude')[1], sys.executable)
+            (self.review.store / ('a' * 24 + '.json')).unlink()
+            self.assertEqual(self.review.agent_reviewer('claude')[1], '/path/codex')
+
+    def test_nits_are_capped_and_the_full_scope_reviews_the_branch(self):
+        self.review.config['agent-review']['nits'] = 1
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review('full')
+        self.assertEqual(record['scope'], 'full')
+        _, record = self.run_reviewer(record, self.report({'text': 'First nit'}, {'text': 'Second nit'}, {'severity': 'important', 'text': 'Bug'}))
+        self.assertEqual([f['text'] for f in record['findings']], ['Bug', 'First nit'])
+
+    def test_reports_are_parsed_from_either_cli_and_malformed_findings_are_dropped(self):
+        report = {'summary': 'Two findings.', 'findings': [{'path': 'A.swift', 'line': 3, 'endLine': None, 'severity': 'important', 'category': 'security', 'text': 'Leak'},
+                                                           {'path': 'A.swift', 'line': 'three', 'endLine': None, 'severity': 'nit', 'category': 'bugs', 'text': 'Bad line'}]}
+        wrapped = json.dumps({'type': 'result', 'result': 'Here it is:\n```json\n' + json.dumps(report) + '\n```'})
+        for text, provider in ((wrapped, 'claude'), (json.dumps(report), 'codex')):
+            self.assertEqual([f['text'] for f in m.parse_agent_review(text, provider)['findings']], ['Leak'])
+        for text in ('not json', json.dumps({'summary': 'No findings key'})):
+            with self.assertRaises(ValueError):
+                m.parse_agent_review(text, 'codex')
+
+    def test_with_review_instructions_a_changed_interaction_needs_a_finished_review_or_a_reason(self):
+        finish = lambda: self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', 'Configurable value.')
+        self.write('REVIEW.md', '# Review\n')
+        with self.assertRaisesRegex(ValueError, 'without a finished agent review'):
+            finish()
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.assertIn('REVIEW.md', self.review.agent_review_prompt(record))
+        real_run = subprocess.run
+        failing = lambda command, **options: real_run(command, **options) if command[0] == 'git' else subprocess.CompletedProcess(command, 1, '', 'ERROR: quota exceeded')
+        with patch.object(m.subprocess, 'run', side_effect=failing):
+            self.review.run_agent_review(record['path'])
+        with self.assertRaisesRegex(ValueError, 'last review failed: .*quota exceeded'):
+            finish()
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.run_reviewer(record, self.report())
+        self.write('Interactor.swift', 'let value = 2\nlet limit = 20\n')
+        self.review.refresh()
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            replacement = self.review.start_agent_review()
+        with patch.object(m.subprocess, 'run', side_effect=failing):
+            self.review.run_agent_review(replacement['path'])
+        with self.assertRaisesRegex(ValueError, 'last review failed'):
+            finish()
+        self.review.skip_agent_review('Both reviewer CLIs are over quota.')
+        finish()
+        self.assertEqual(self.review.session['iterations'][0]['agentReviewSkipped'], 'Both reviewer CLIs are over quota.')
+        with self.assertRaisesRegex(ValueError, 'Begin the user interaction'):
+            self.review.skip_agent_review('No interaction')
+
+    def test_an_interaction_without_changes_or_with_a_finished_review_finishes(self):
+        finish = lambda iteration: self.review.finish_iteration(iteration, 'Done', 'feat(test): configure value', 'Configurable value.')
+        self.write('REVIEW.md', '# Review\n')
+        self.review.skip_agent_review('Set up before the reviewer existed.')
+        finish('turn-1')
+        self.review.begin_iteration('turn-2', 'Explain the change')
+        finish('turn-2')
+        self.review.begin_iteration('turn-3', 'Rename the limit')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            empty = self.review.start_agent_review()
+        self.assertEqual((empty['status'], empty['reviewed']), ('finished', []))
+        self.write('Interactor.swift', 'let value = 2\nlet maximum = 10\n')
+        with self.assertRaisesRegex(ValueError, 'changed Interactor.swift without a finished agent review of it'):
+            finish('turn-3')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.run_reviewer(record, self.report())
+        self.write('Interactor.swift', 'let value = 2\nlet maximum = 12\n')
+        self.write('Snapshot.png', 'png')
+        self.write('Messages.pb.swift', 'let generated = 1\n')
+        finish('turn-3')
+        self.review.begin_iteration('turn-4', 'Add a limit store')
+        self.write('Interactor.swift', 'let value = 2\nlet maximum = 15\n')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.run_reviewer(record, self.report())
+        self.write('LimitStore.swift', 'struct LimitStore {}\n')
+        with self.assertRaisesRegex(ValueError, 'changed LimitStore.swift without'):
+            finish('turn-4')
+        self.review.begin_iteration('turn-4', 'Add a limit store')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
+        self.run_reviewer(record, self.report())
+        finish('turn-4')
+        self.review.begin_iteration('turn-5', 'Regenerate messages')
+        self.write('Messages.pb.swift', 'let generated = 2\n')
+        finish('turn-5')
+
+    def test_browser_actions_on_a_stale_page_keep_findings_and_replies_written_meanwhile(self):
+        server = m.ReviewServer(('127.0.0.1', 0), m.Handler)
+        server.review, server.token, server.assets = self.review, 'test-token', {}
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        def request(path, body):
+            with urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{server.server_port}{path}', data=json.dumps(body).encode(),
+                                        headers={'X-Review-Token': 'test-token', 'Content-Type': 'application/json'})) as response:
+                return json.load(response)
+        file = self.review.file(self.review.files[0]['id'])
+        person = request('/api/comment', {'file': file['id'], 'fingerprint': file['fingerprint'], 'side': 'new', 'line': 1, 'text': 'Mine'})['session']['comments'][-1]
+        worker = m.Review(self.root, 'main', auto_rank=False)
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = worker.start_agent_review()
+        self.review, server_review = worker, self.review
+        _, record = self.run_reviewer(record, self.report({'line': 1, 'severity': 'important'}))
+        finding = record['findings'][0]['id']
+        m.Review(self.root, 'main', auto_rank=False).reply_comment(finding, 'Fixed.')
+        request('/api/viewed', {'file': file['id'], 'fingerprint': file['fingerprint'], 'viewed': True})
+        request('/api/resolve', {'id': person['id'], 'resolved': True})
+        request('/api/comment', {'file': file['id'], 'fingerprint': file['fingerprint'], 'side': 'new', 'line': 2, 'text': 'Another'})
+        saved = read_json_safely(server_review.store / f'{server_review.session_id}.json')['comments']
+        self.assertEqual([c['text'] for c in saved], ['Mine', 'Finding', 'Another'])
+        self.assertEqual((saved[0]['resolved'], saved[1]['replies'][0]['text']), (True, 'Fixed.'))
+
+    def test_agent_review_settings_are_validated(self):
+        for setting in ('reviewer = "gemini"', 'nits = -1'):
+            self.write('.config/local-review.toml', f'[agent-review]\n{setting}\n')
+            with self.assertRaisesRegex(ValueError, 'agent-review'):
+                m.load_config(self.root, strict=True)
 
 
 class CodexQueueCompatibilityTests(unittest.TestCase):

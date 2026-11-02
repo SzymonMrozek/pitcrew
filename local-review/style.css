@@ -692,6 +692,10 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
 #review-handoff-status {background:#202530; border-bottom:1px solid var(--border); padding:12px 25px; display:flex; align-items:center; gap:12px; flex-wrap:wrap}
 #review-handoff-status > span {flex:1; white-space:pre-wrap; max-height:160px; overflow:auto}
 .comment .sent {color:var(--muted)}
+.comment.agent-finding {border-left:3px solid var(--muted)}
+.comment.agent-finding.important {border-left-color:#e5534b}
+.comment-reply {margin:8px 0 0 12px;padding-left:10px;border-left:2px solid var(--border)}
+.comment-reply p {margin:2px 0 0}
 #merge-request-status > span {flex:1;white-space:pre-wrap;max-height:120px;overflow:auto}
 #merge-request-status details {width:100%}
 #merge-request-status textarea {width:100%;margin-top:8px}

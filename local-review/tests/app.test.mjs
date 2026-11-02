@@ -548,6 +548,25 @@ test('comment locations jump to their exact side and line and handle file, stale
   assert.equal(location({...comment, file: 'missing'}).disabled, true);
 });
 
+test('agent review findings show their reviewer, severity and the author replies', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function commentNode('), source.indexOf('function renderComments('));
+  const node = (tag, className, text) => ({tag, className, textContent: text, children: [], append(...items) {this.children.push(...items);}});
+  const context = vm.createContext({state: {files: [{id: 'file', fingerprint: 'current'}]}, el: node,
+    button: (text, action, className) => ({...node('button', className, text), action})});
+  vm.runInContext(fn, context);
+  const comment = {file: 'file', path: '<file>.swift', fingerprint: 'current', side: 'new', line: 4, endLine: 4, text: 'The limit is never read.',
+    severity: 'important', category: 'bugs', author: {kind: 'agent-review', provider: 'claude'}, replies: [{provider: 'codex', text: 'Read it in the interactor.'}]};
+  const finding = context.commentNode(comment);
+  assert.equal(finding.className, 'comment agent-finding important');
+  assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude review · important · bugs · new line 4');
+  const reply = finding.children.find(child => child.className === 'comment-reply');
+  assert.deepEqual(reply.children.map(child => child.textContent), ['Codex replied', 'Read it in the interactor.']);
+  const plain = context.commentNode({...comment, author: undefined, replies: undefined});
+  assert.equal(plain.className, 'comment');
+  assert.equal(plain.children.find(child => child.tag === 'small').textContent, 'new line 4');
+});
+
 test('diff jumps reveal filtered and viewed files, expand context, and skip text APIs for file comments', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const fn = source.slice(source.indexOf('async function showInDiff('), source.indexOf("$('#send-review').onclick"));

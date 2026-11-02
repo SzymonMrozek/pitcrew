@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.10.0'
+RELEASE = '0.11.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -57,6 +57,37 @@ MAX_SEARCH_RESULTS = 500
 PRIORITY_SCORE = 95
 # Data model types shape everything built on them, even when their diff looks like plain declarations.
 MODEL_SCORE = 85
+AGENT_PROVIDERS = ('claude', 'codex')
+# Session markers inherited from whichever agent started the review server.
+AGENT_MARKERS = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PATH', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+                 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PID')
+# The only tools a Claude reviewer has: it reads the diff and the worktree. Even read-like Git commands can
+# write (git diff --output), so it gets no shell; Codex reviews in its read-only sandbox instead.
+AGENT_REVIEW_TOOLS = ('Read', 'Glob', 'Grep')
+AGENT_REVIEW_TIMEOUT = 1200
+# Strict, so Codex accepts it as an output schema: every property required, no extras.
+AGENT_REVIEW_SCHEMA = {
+    'type': 'object', 'additionalProperties': False, 'required': ['summary', 'findings'],
+    'properties': {
+        'summary': {'type': 'string'},
+        'findings': {'type': 'array', 'items': {
+            'type': 'object', 'additionalProperties': False,
+            'required': ['path', 'line', 'endLine', 'severity', 'category', 'text'],
+            'properties': {
+                'path': {'type': 'string'},
+                'line': {'type': ['integer', 'null']},
+                'endLine': {'type': ['integer', 'null']},
+                'severity': {'type': 'string', 'enum': ['important', 'nit']},
+                'category': {'type': 'string', 'enum': ['bugs', 'security', 'compliance']},
+                'text': {'type': 'string'},
+            }}},
+    }}
+AGENT_REVIEW_DEFAULT_INSTRUCTIONS = '''Review in three passes and tag each finding with its pass:
+- bugs: logic errors, unhandled failures, races, broken edge cases and regressions in behavior.
+- security: injection, missing authentication or authorization, secrets or personal data in logs, unsafe storage.
+- compliance: the change does not do what the request asked, or breaks the repository's documented conventions.
+Important is for behavior, data, security or policy breaks. Everything else is a nit.
+Skip formatting and anything the repository's linters and tests already enforce.'''
 CONFIG_PATH = '.config/local-review.toml'
 # Repository settings; .config/local-review.toml overrides any of them. Path patterns are Python
 # regular expressions searched case-insensitively, except modules, which the browser evaluates.
@@ -105,6 +136,10 @@ CONFIG = {
     # Run builds and launches the app from the review page. destinations prints a JSON array of
     # {id, name, kind, detail}; command runs in the worktree with {destination} replaced by the chosen id.
     'run': {'destinations': [], 'command': []},
+    # --agent-review hands the diff to a fresh, read-only reviewer agent before the person sees it.
+    # reviewer is "opposite" (the other provider than the change's author), "claude" or "codex";
+    # instructions is the repository's review policy, relative to its root; nits caps minor findings.
+    'agent-review': {'reviewer': 'opposite', 'instructions': 'REVIEW.md', 'nits': 5},
 }
 
 
@@ -176,11 +211,54 @@ def load_config(root, strict=None):
             raise ValueError(f'[run] {key} in {path} must be a list of strings')
     if bool(run['destinations']) != bool(run['command']) or (run['command'] and not any('{destination}' in arg for arg in run['command'])):
         raise ValueError(f'[run] in {path} needs both destinations and a command that uses {{destination}}')
+    agent_review = config['agent-review']
+    if agent_review['reviewer'] not in AGENT_PROVIDERS + ('opposite',):
+        raise ValueError(f'[agent-review] reviewer in {path} must be opposite, claude or codex')
+    if not isinstance(agent_review['instructions'], str) or type(agent_review['nits']) is not int or agent_review['nits'] < 0:
+        raise ValueError(f'[agent-review] in {path} needs an instructions path and a non-negative nits count')
     return config
+
+
+def sendable(comment):
+    """A person's unresolved comment not yet sent; the authoring agent already answered agent review findings."""
+    return not comment['resolved'] and not comment.get('sentAt') and (comment.get('author') or {}).get('kind') != 'agent-review'
+
+
+def reviewable(files):
+    """Paths a reviewer agent reads: text changes, without generated code."""
+    return [f['path'] for f in files if f['kind'] != 'generated' and not f['binary'] and not f['limited']]
+
+
+def parse_agent_review(text, provider):
+    """A reviewer's report from its CLI output: Claude wraps it in a result event, Codex writes it alone."""
+    def decode(raw):
+        raw = raw.strip()
+        start, end = raw.find('{'), raw.rfind('}')
+        return json.loads(raw[start:end + 1]) if start >= 0 and end > start else None
+    try:
+        report = json.loads(text)
+        if provider == 'claude':
+            report = report.get('structured_output') or decode(report.get('result') or '')
+    except (ValueError, AttributeError) as error:
+        raise ValueError(f'The reviewer did not return JSON: {error}') from error
+    if not isinstance(report, dict) or not isinstance(report.get('summary'), str) or not isinstance(report.get('findings'), list):
+        raise ValueError('The reviewer report has no summary and findings')
+    nullable_int = lambda value: value is None or type(value) is int
+    report['findings'] = [f for f in report['findings'] if isinstance(f, dict) and isinstance(f.get('path'), str) and isinstance(f.get('text'), str)
+                          and f.get('severity') in ('important', 'nit') and f.get('category') in ('bugs', 'security', 'compliance')
+                          and nullable_int(f.get('line')) and nullable_int(f.get('endLine'))]
+    return report
 
 
 def env_prefix(name):
     return re.sub(r'[^A-Z0-9]', '_', name.upper())
+
+
+def clean_env():
+    env = dict(os.environ)
+    for name in AGENT_MARKERS:
+        env.pop(name, None)
+    return env
 
 
 def launcher(config):
@@ -1505,6 +1583,7 @@ class Review:
         if pending and pending['id'] != iteration:
             raise ValueError('A different user interaction is pending')
         after = self.snapshot('iteration-' + iteration)
+        self.require_agent_review(pending, after)
         item = {**(existing or pending), 'number': existing['number'] if existing else len(self.session['iterations']) + 1,
                 'after': after, 'summary': summary.strip(), 'finishedAt': datetime.now(timezone.utc).isoformat()}
         item.setdefault('agent', self.origin_agent())
@@ -1517,6 +1596,226 @@ class Review:
         self.historical.pop(iteration, None)
         self.historical.pop('thread', None)
         self.save_session('iterations', 'pendingIteration', 'mergeDraft')
+
+    def agent_review_paths(self):
+        directory = self.store / 'agent-reviews'
+        directory.mkdir(exist_ok=True)
+        return sorted(directory.glob(f'{self.session_id}-*.json'))
+
+    def agent_reviews(self):
+        """This review's agent reviews, oldest first; one whose process exited unfinished is marked failed."""
+        reviews = []
+        for path in self.agent_review_paths():
+            record = read_json(path, None)
+            if not record:
+                continue
+            if record['status'] == 'running' and not process_alive(record.get('pid')):
+                record.update(status='failed', summary='The reviewer process exited before reporting. See its log.')
+                write_json(path, record)
+            reviews.append(record)
+        return sorted(reviews, key=lambda record: record['startedAt'])
+
+    def recorded_cli(self, provider):
+        """The executable this repository's agents of provider last ran from, like a desktop app's bundled CLI, which PATH can lag behind."""
+        for path in sorted(self.store.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)[:200]:
+            agent = read_json(path, {}).get('agent') if re.fullmatch(r'[0-9a-f]{24}\.json', path.name) else None
+            if isinstance(agent, dict) and agent.get('provider') == provider and agent.get('cli') and os.access(agent['cli'], os.X_OK):
+                return agent['cli']
+        return None
+
+    def agent_reviewer(self, author):
+        """The provider and CLI that review a change; the provider other than its author unless configured."""
+        choice = self.config['agent-review']['reviewer']
+        provider = {'claude': 'codex', 'codex': 'claude'}.get(author, 'claude') if choice == 'opposite' else choice
+        cli = (os.environ.get('CODEX_CLI_PATH') if provider == 'codex' else None) or self.recorded_cli(provider) or shutil.which(provider)
+        if not cli:
+            # A same-provider review shares the author's blind spots, so it is a configuration choice, never a fallback.
+            raise ValueError(f'The {provider} CLI is unavailable for agent review. Install it, choose a reviewer in [agent-review], '
+                             'or record why this interaction has none with --skip-agent-review "<reason>".')
+        return provider, cli
+
+    def start_agent_review(self, scope='iteration'):
+        """Start a read-only reviewer agent on this interaction's changes, or reuse one for identical content."""
+        if not self.worktree_available():
+            raise ValueError('Agent review needs the live worktree')
+        # Right after finishing, the interaction under review is the latest one.
+        pending = self.session.get('pendingIteration') or (self.session['iterations'] or [None])[-1]
+        after = self.snapshot('agent-review')
+        if scope == 'iteration' and pending:
+            before, label = pending['before'], 'the changes made during the current user request'
+        else:
+            before, label, scope = self.base, f'the full branch against its merge base with {self.target}', 'full'
+        scoped = self.capture(before, after)[3]
+        revision = digest(json.dumps([scope, [(f['path'], f['fingerprint']) for f in scoped]]).encode())
+        latest = (self.agent_reviews() or [None])[-1]
+        if latest and latest['revision'] == revision and latest['status'] in ('running', 'finished'):
+            return latest
+        reviewed = reviewable(scoped)
+        author = ((pending or {}).get('agent') or self.origin_agent() or {}).get('provider')
+        provider, cli = self.agent_reviewer(author)
+        review_id = secrets.token_hex(8)
+        path = self.store / 'agent-reviews' / f'{self.session_id}-{review_id}.json'
+        diff = path.with_suffix('.diff')
+        # A submodule's diff is otherwise two commit hashes, and the reviewer can't run Git to expand it.
+        diff.write_text(self.git('diff', '--no-ext-diff', '--no-renames', '--submodule=diff', before, after, '--', *reviewed) if reviewed else '')
+        # Findings become comments on the Full review the page opens with, so they carry its file IDs and fingerprints.
+        comment_scope = 'branch-start' if self.session.get('branchStart') else 'full'
+        view, blobs = self.view(comment_scope)[:2]
+        files = {f['path']: {'id': f['id'], 'fingerprint': f['fingerprint'], 'lines': len(blobs[f['id']]['new'].decode(errors='replace').splitlines())}
+                 for f in view if f['path'] in reviewed}
+        record = {'id': review_id, 'path': str(path), 'sessionId': self.session_id, 'scope': scope, 'commentScope': comment_scope, 'label': label,
+                  'request': (pending or {}).get('request', ''), 'revision': revision, 'reviewer': provider, 'cli': cli,
+                  'author': author, 'reviewed': reviewed, 'diff': str(diff), 'log': str(path.with_suffix('.log')), 'files': files,
+                  'status': 'running' if reviewed else 'finished', 'startedAt': datetime.now(timezone.utc).isoformat(),
+                  'summary': '' if reviewed else 'No reviewable changes.', 'findings': []}
+        write_json(path, record)
+        if reviewed:
+            with open(record['log'], 'a') as log:
+                record['pid'] = subprocess.Popen([sys.executable, str(ASSETS / 'server.py'), '--repo', self.repo, '--base', self.target,
+                    '--agent-review-worker', str(path)], cwd=self.repo, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True).pid
+            write_json(path, record)
+        return record
+
+    def agent_review_prompt(self, record):
+        instructions = self.repo / self.config['agent-review']['instructions']
+        policy = instructions.read_text() if instructions.is_file() else AGENT_REVIEW_DEFAULT_INSTRUCTIONS
+        source = self.config['agent-review']['instructions'] if instructions.is_file() else 'default'
+        author = {'claude': 'Claude', 'codex': 'Codex'}.get(record['author'], 'another coding agent')
+        return (
+            f'You are an independent code reviewer. {author} wrote a change in the Git worktree {self.repo}, and a person reviews it after you. '
+            'Find the problems they would otherwise have to find. You only review: never edit, create or delete files, '
+            'never stage or commit, and never run builds, tests, formatters or the review tool.\n\n'
+            + (f'The request the change answers:\n{record["request"]}\n\n' if record['request'] else '')
+            + f'The diff to review, {record["label"]}, is in {record["diff"]}. '
+            'Read the surrounding code, callers, tests and repository instructions in the worktree whenever you need context.\n\n'
+            f'Review instructions ({source}):\n{policy.strip()}\n\n'
+            'Answer with JSON matching the schema. For each finding give the repository-relative path of a file in the diff, '
+            'the line on the new side (the current worktree file) it concerns, with endLine for a range, or null for the whole file, '
+            'severity important or nit, category bugs, security or compliance, and text saying what is wrong, why it matters and '
+            f'how to fix it, in at most 120 words. Report at most {self.config["agent-review"]["nits"]} nits. '
+            'Report only problems you can point to in the code, not guesses. An empty findings list is a valid answer. '
+            'summary is one or two sentences on the change and the review.\n')
+
+    def run_agent_review(self, path):
+        """Worker: run the reviewer agent, then add its findings to the review as comments."""
+        path = Path(path)
+        record = read_json(path, None)
+        if not record or record['status'] != 'running' or record['sessionId'] != self.session_id:
+            return
+        try:
+            schema = path.with_suffix('.schema')
+            write_json(schema, AGENT_REVIEW_SCHEMA)
+            output = path.with_suffix('.out')
+            if record['reviewer'] == 'claude':
+                # Restricted mode ignores the person's settings files, so their allow rules can't widen these tools.
+                command = [record['cli'], '--print', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config',
+                           '--permission-mode', 'dontAsk', '--add-dir', str(path.parent), '--json-schema', json.dumps(AGENT_REVIEW_SCHEMA),
+                           '--tools', *AGENT_REVIEW_TOOLS, '--allowedTools', *AGENT_REVIEW_TOOLS]
+            else:
+                command = [record['cli'], 'exec', '--cd', str(self.repo), '--sandbox', 'read-only', '-c', 'approval_policy="never"',
+                           '--output-schema', str(schema), '--output-last-message', str(output), '-']
+            env = clean_env()
+            # A reviewer that runs the review CLI must not become this review's originating agent.
+            env[env_prefix(self.config['name']) + '_HANDOFF'] = '1'
+            result = subprocess.run(command, cwd=self.repo, input=self.agent_review_prompt(record), capture_output=True,
+                                    text=True, env=env, timeout=AGENT_REVIEW_TIMEOUT)
+            print(result.stderr[-20000:], flush=True)
+            if result.returncode:
+                # The CLI echoes the prompt to stderr; its error lines say why it stopped.
+                output = (result.stderr or result.stdout).strip()
+                errors = [line for line in output.splitlines() if line.startswith(('ERROR', 'Error', 'error'))]
+                raise ValueError(f'The reviewer exited with status {result.returncode}: {(errors[-1] if errors else output[-2000:])}')
+            report = parse_agent_review(result.stdout if record['reviewer'] == 'claude' else output.read_text(), record['reviewer'])
+            comments = self.agent_review_comments(record, report['findings'])
+            self.edit_session(lambda session: session.setdefault('comments', []).extend(comments))
+            record.update(status='finished', summary=report['summary'].strip()[:2000],
+                          findings=[{key: c[key] for key in ('id', 'severity', 'category', 'path', 'side', 'line', 'endLine', 'text')} for c in comments])
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            record.update(status='failed', summary=str(error)[:4000])
+        record['finishedAt'] = datetime.now(timezone.utc).isoformat()
+        write_json(path, record)
+
+    def agent_review_comments(self, record, findings):
+        """A comment per finding. One on a file the page doesn't show, such as a caller outside the diff, is a file comment there too."""
+        comments, nits = [], 0
+        for finding in sorted(findings, key=lambda finding: finding['severity'] != 'important'):
+            text = finding['text'].strip()[:10000]
+            if not text:
+                continue
+            if finding['severity'] == 'nit':
+                nits += 1
+                if nits > self.config['agent-review']['nits']:
+                    continue
+            path = finding['path'].strip().removeprefix('./')
+            if not path or path.startswith('/') or '..' in Path(path).parts:
+                continue
+            file = record['files'].get(path) or {'id': digest(path.encode('utf-8', 'surrogateescape'))[:20], 'fingerprint': '', 'lines': 0}
+            line, end = finding['line'], finding['endLine'] if finding['endLine'] is not None else finding['line']
+            ranged = type(line) is int and type(end) is int and 1 <= line <= end <= file['lines']
+            comments.append({'id': secrets.token_hex(8), 'file': file['id'], 'path': path, 'side': 'new' if ranged else 'file',
+                             'line': line if ranged else 0, 'endLine': end if ranged else 0, 'text': text, 'resolved': False,
+                             'fingerprint': file['fingerprint'], 'scope': record['commentScope'], 'severity': finding['severity'], 'category': finding['category'],
+                             'author': {'kind': 'agent-review', 'provider': record['reviewer'], 'review': record['id']}, 'replies': []})
+        return comments
+
+    def wait_agent_review(self, record, seconds):
+        deadline = time.monotonic() + seconds
+        while record['status'] == 'running' and time.monotonic() < deadline:
+            time.sleep(1)
+            record = next((r for r in self.agent_reviews() if r['id'] == record['id']), record)
+        return record
+
+    def reply_comment(self, comment_id, text, resolve=False):
+        """Record the authoring agent's answer to a comment, optionally resolving it."""
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 10000:
+            raise ValueError('Provide a reply of at most 10000 characters')
+        agent = detect_agent(self.config['name']) or self.origin_agent() or {}
+        def reply(session):
+            comment = next((c for c in session.get('comments', []) if c['id'] == comment_id), None)
+            if comment is None:
+                raise ValueError('Unknown comment ' + comment_id)
+            comment.setdefault('replies', []).append({'provider': agent.get('provider'), 'text': text.strip(),
+                                                      'at': datetime.now(timezone.utc).isoformat()})
+            comment['resolved'] = comment['resolved'] or resolve
+            return comment
+        return self.edit_session(reply)
+
+    def require_agent_review(self, pending, after):
+        """Finishing waits for running agent reviews and an answer to each finding. With review instructions in the
+        repository, an interaction that changed files also needs a finished review or a reason it has none."""
+        reviews = self.agent_reviews()
+        if running := [r['id'] for r in reviews if r['status'] == 'running']:
+            raise ValueError(f'Agent review {", ".join(running)} is still running. Wait for it with --agent-review, then answer its findings.')
+        comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
+        if open_findings := [c['id'] for c in comments if (c.get('author') or {}).get('kind') == 'agent-review' and not c['resolved'] and not c.get('replies')]:
+            raise ValueError(f'Answer agent review findings {", ".join(open_findings)} first: fix them, then reply with '
+                             f'{launcher(self.config)} --reply-comment <id> --reply "<what changed>" --resolve, '
+                             'or reply without --resolve to explain why not.')
+        if (not pending or pending.get('agentReviewSkipped') or after == pending['before']
+                or not (self.repo / self.config['agent-review']['instructions']).is_file()):
+            return
+        changed = reviewable(self.capture(pending['before'], after)[3])
+        if not changed:
+            return  # Generated code and images only; the reviewer is never given those.
+        # The latest review stands for the interaction: a later failure isn't covered by an earlier success. Fixes to files
+        # it reviewed don't need another review, or answering findings would never end; files it never saw do.
+        latest = next((r for r in reversed(reviews) if r['startedAt'] >= pending.get('startedAt', '')), None)
+        unseen = sorted(set(changed) - set(latest.get('reviewed') or [])) if latest and latest['status'] == 'finished' else changed
+        if unseen:
+            raise ValueError(f'This interaction changed {", ".join(unseen[:5])}{" and others" if len(unseen) > 5 else ""} without a finished agent review of '
+                             + ('them' if len(unseen) > 1 else 'it') + '. Run --agent-review and answer its findings'
+                             + (f'; the last review failed: {latest["summary"]}' if latest and latest['status'] == 'failed' else '')
+                             + '. If no reviewer can run, record why with --skip-agent-review "<reason>".')
+
+    def skip_agent_review(self, reason):
+        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000:
+            raise ValueError('Explain in at most 1000 characters why this interaction has no agent review')
+        def skip(session):
+            if not session.get('pendingIteration'):
+                raise ValueError('Begin the user interaction first; agent review skips belong to one interaction')
+            session['pendingIteration']['agentReviewSkipped'] = reason.strip()
+        self.edit_session(skip)
 
     @staticmethod
     def validate_message(title, description):
@@ -1989,7 +2288,7 @@ class Review:
         handoff = self.review_handoff()
         comments = read_json(self.store / f'{self.session_id}.json', self.session).get('comments', [])
         return {'last': {k: v for k, v in handoff.items() if k != 'prompt'} if handoff else None, 'blocker': self.handoff_blocker(),
-                'unsent': sum(not c['resolved'] and not c.get('sentAt') for c in comments)}
+                'unsent': sum(map(sendable, comments))}
 
     def send_review(self, note):
         """Send the reviewer's new comments to the conversation that wrote the change."""
@@ -1997,7 +2296,7 @@ class Review:
             raise ValueError('The note for the agent must be at most 10000 characters')
         if blocker := self.handoff_blocker():
             raise ValueError(blocker)
-        comments = [c for c in self.session['comments'] if not c['resolved'] and not c.get('sentAt')]
+        comments = [c for c in self.session['comments'] if sendable(c)]
         if not comments and not note.strip():
             raise ValueError('No new unresolved comments to send. Add a comment or a note for the agent.')
         current = {f['path']: f['fingerprint'] for f in self.files}
@@ -2489,28 +2788,32 @@ class Handler(BaseHTTPRequestHandler):
                     count = len(review.file_lines(file['id'], iteration)[side]) if side != 'file' and file['rows'] else 0
                     if (side == 'file' and (line, end_line) != (0, 0)) or (side != 'file' and not 1 <= line <= end_line <= count):
                         raise ValueError('Comment range is outside the file')
-                    review.session['comments'].append({'id': secrets.token_hex(8), 'file': file['id'], 'path': file['path'], 'side': side, 'line': line,
-                          'endLine': end_line, 'text': text.strip(), 'resolved': False, 'fingerprint': file['fingerprint'], 'scope': scope})
-                    review.save_session()
+                    # Reviewer workers and CLI replies write comments too, so change the saved session, not this process's copy.
+                    comment = {'id': secrets.token_hex(8), 'file': file['id'], 'path': file['path'], 'side': side, 'line': line,
+                               'endLine': end_line, 'text': text.strip(), 'resolved': False, 'fingerprint': file['fingerprint'], 'scope': scope}
+                    review.edit_session(lambda session: session.setdefault('comments', []).append(comment))
                 elif route == '/api/resolve':
-                    comment = next((c for c in review.session['comments'] if c['id'] == body.get('id')), None)
-                    if comment is None or type(body.get('resolved')) is not bool:
-                        raise ValueError('Unknown comment')
-                    comment['resolved'] = body['resolved']
-                    review.save_session()
+                    def resolve(session):
+                        comment = next((c for c in session.get('comments', []) if c['id'] == body.get('id')), None)
+                        if comment is None or type(body.get('resolved')) is not bool:
+                            raise ValueError('Unknown comment')
+                        comment['resolved'] = body['resolved']
+                    review.edit_session(resolve)
                 elif route == '/api/viewed':
                     file = review.file(body.get('file'), iteration)
                     if file is None or type(body.get('viewed')) is not bool:
                         raise ValueError('Unknown file')
                     if body.get('fingerprint') != file['fingerprint']:
                         raise ValueError('File changed in another review tab. Refresh before marking Viewed.')
-                    if body['viewed']:
-                        review.session['viewed'][scope + ':' + file['id']] = file['fingerprint']
-                    else:
-                        review.session['viewed'].pop(scope + ':' + file['id'], None)
-                        if scope == 'full':
-                            review.session['viewed'].pop(file['id'], None)
-                    review.save_session()
+                    def mark(session):
+                        viewed = session.setdefault('viewed', {})
+                        if body['viewed']:
+                            viewed[scope + ':' + file['id']] = file['fingerprint']
+                        else:
+                            viewed.pop(scope + ':' + file['id'], None)
+                            if scope == 'full':
+                                viewed.pop(file['id'], None)
+                    review.edit_session(mark)
                 elif route == '/api/merge':
                     review.request_merge(body.get('revision'), body.get('title', ''), body.get('description', ''), body.get('instructions', ''))
                 elif route == '/api/merge/cancel':
@@ -2557,6 +2860,14 @@ def main():
     iterations.add_argument('--remove-demo', metavar='ID', help='Delete a demo recording from the review')
     iterations.add_argument('--skip-demo', metavar='REASON', help='Explain why changes to UI paths need no demo recording')
     iterations.add_argument('--demos', action='store_true', help="Print this review's demo recordings as JSON")
+    iterations.add_argument('--agent-review', nargs='?', const='iteration', choices=('iteration', 'full'), metavar='SCOPE',
+                            help='Have a fresh reviewer agent review this interaction (default) or the full branch, and print its findings as JSON')
+    iterations.add_argument('--skip-agent-review', metavar='REASON', help='Explain why this interaction finishes without an agent review')
+    iterations.add_argument('--reply-comment', metavar='ID', help='Answer a review comment with --reply, and --resolve it when fixed')
+    parser.add_argument('--agent-review-worker', metavar='PATH', help=argparse.SUPPRESS)
+    parser.add_argument('--wait', type=int, default=540, help='Seconds --agent-review waits for findings before returning (default: 540)')
+    parser.add_argument('--reply', default='', help='Reply text for --reply-comment')
+    parser.add_argument('--resolve', action='store_true', help='Resolve the comment answered with --reply-comment')
     parser.add_argument('--request', default='')
     parser.add_argument('--summary', default='')
     parser.add_argument('--title', default='')
@@ -2623,6 +2934,27 @@ def main():
                 print('Recorded why this review has no demo.')
             else:
                 print(json.dumps(review.demo_state(), indent=2))
+            return
+        if args.agent_review_worker:
+            review.run_agent_review(args.agent_review_worker)
+            return
+        if args.agent_review or args.reply_comment or args.skip_agent_review:
+            if args.skip_agent_review:
+                review.skip_agent_review(args.skip_agent_review)
+                print('Recorded why this interaction has no agent review.')
+                return
+            if args.reply_comment:
+                comment = review.reply_comment(args.reply_comment, args.reply, args.resolve)
+                print(f'Replied to comment {comment["id"]}' + (' and resolved it.' if comment['resolved'] else '.'))
+                return
+            record = review.wait_agent_review(review.start_agent_review(args.agent_review), max(args.wait, 0))
+            print(json.dumps({key: record.get(key) for key in ('id', 'status', 'reviewer', 'scope', 'summary', 'findings', 'log')}, indent=2))
+            if record['status'] == 'running':
+                print(f'The reviewer is still running. Run {launcher(config)} --base {args.base} --agent-review {record["scope"]} again to keep waiting.', file=sys.stderr)
+            elif record['findings']:
+                print(f'Fix each important finding, then answer every finding with {launcher(config)} --base {args.base} '
+                      '--reply-comment <id> --reply "<what changed>" --resolve, or reply without --resolve to explain why not. '
+                      'Run --agent-review again after substantial fixes.', file=sys.stderr)
             return
         if not args.merge_request and not args.execute_merge_request:
             review.record_agent()

@@ -33,6 +33,7 @@ originating agent. A single repository-wide queue serializes merges.
 | Server port and token | `shared-server.json` | Links posted in chats keep working across restarts |
 | Demo recordings | `<git-common-dir>/<name>/demos/<review>/` | Large binaries stay out of the diff, the approval and Git objects, and outlive the worktree |
 | Last **Run** status and output | `<git-common-dir>/<name>/runs/` | Survives a server restart, so the page can still explain what happened |
+| Agent reviews: diff, report, log | `<git-common-dir>/<name>/agent-reviews/` | The detached reviewer writes them after the command that started it may have returned |
 
 ## Invariants
 
@@ -68,6 +69,11 @@ Keep these, whatever your stack.
    opens review pages.
 10. **Failure returns the same approval to pending.** Retries don't create new
     approvals, new iterations or new queue positions.
+11. **The reviewer never shares the author's context and never writes.** It's
+    a new session, of the other provider by default, limited to read tools or
+    a read-only sandbox. Its findings are comments the author must answer
+    before finishing; they never approve or block a merge on their own. A
+    missing review is an explicit, recorded skip, never a silent one.
 
 The recorded CLI follows the actual ancestor agent binary (or an explicit
 `CODEX_CLI_PATH`), since a desktop app and `PATH` can contain different Codex
@@ -166,6 +172,18 @@ Each of these cost real debugging time.
   it as ended with an unknown result instead of guessing.
 - **The browser can't tell a script-driven scroll from a real one.**
   Programmatic scrolling and zero-distance pointer events don't count as input.
+
+- **The default comparison has its own comments.** Comments belong to the
+  scope they were written in, and Full review opens on **Branch start** when
+  that commit is known. Agent findings are written to the scope the page opens
+  with, with that view's fingerprints, or nobody sees them.
+- **Allowing tools doesn't remove the others.** Claude's `--allowedTools` only
+  pre-approves; the person's settings can still allow Edit or Bash, and even
+  `git diff --output` writes files. The reviewer runs with `--restricted`,
+  `--tools` limited to reading and no shell.
+- **The CLI on `PATH` can lag behind the one agents run.** A desktop app's
+  bundled Codex accepted a model the `PATH` copy rejected. The reviewer uses the
+  executable this repository's agents last recorded, before `PATH`.
 
 - **Queued delivery is not a completed merge.** Merge requests use the same
   original-conversation delivery as comments. A separate delivery process holds

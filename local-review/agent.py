@@ -11,11 +11,8 @@ import sys
 import time
 import uuid
 
-from server import env_prefix, read_json, write_json, process_alive, queue_slot
+from server import clean_env, env_prefix, read_json, write_json, process_alive, queue_slot
 
-# Session markers inherited from whichever agent started the review server.
-AGENT_MARKERS = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PATH', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
-                 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PID')
 CLAUDE_TOOLS = ('Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash')
 
 
@@ -28,13 +25,6 @@ def agent_cli(origin):
     if not cli:
         raise ValueError(f'{label} CLI is unavailable. Copy the saved request into your agent chat.')
     return provider, label, cli
-
-
-def clean_env():
-    env = dict(os.environ)
-    for name in AGENT_MARKERS:
-        env.pop(name, None)
-    return env
 
 
 def final_response(provider, log_path, output):
