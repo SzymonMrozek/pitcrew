@@ -1,7 +1,8 @@
 # Simulator Session Broker
 
 A local HTTP service that gives every iOS Simulator on your machine the same
-OAuth session and device ID, and lets only one of them refresh tokens at a time.
+OAuth session per backend environment and one device ID. Only one simulator
+refreshes a given environment's tokens at a time.
 Log in once, and every simulator (one per worktree, one per agent) is logged in.
 
 The workflow it was built for (one worktree, one simulator, one shared
@@ -37,12 +38,26 @@ docker compose run --rm session-broker pytest
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/health` | `200` when ready. |
+| `GET` | `/health` | `200` when ready; includes `"environments": true`. |
 | `GET` | `/device-id` | Persistent machine-level device ID (`{"deviceId": "..."}`). |
-| `GET` | `/session` | Canonical session. Waits while a refresh is in progress; `404` when logged out. |
-| `POST` | `/refresh/start` | Claims refresh ownership, or waits for the current owner. Returns `{"shouldRefresh": bool}`. |
-| `PUT` | `/session` | Stores a session after login, or conditionally completes an owned refresh. |
-| `DELETE` | `/session` | Logs out globally, or conditionally removes the session after a failed owned refresh. |
+| `GET` | `/sessions?environment=production` | Canonical session. Waits while a refresh is in progress; `404` when logged out. |
+| `POST` | `/sessions/refresh/start?environment=production` | Claims refresh ownership, or waits for the current owner. Returns `{"shouldRefresh": bool}`. |
+| `PUT` | `/sessions?environment=production` | Stores a session after login, or conditionally completes an owned refresh. |
+| `DELETE` | `/sessions?environment=production` | Logs out this environment, or conditionally removes the session after a failed owned refresh. |
+
+Use `environment=development` (or another backend name) on every session and
+refresh request to select its independent session, refresh lease, and waiting
+readers. Names contain 1–64 lowercase letters, digits, hyphens, or underscores,
+starting with a letter or digit. `/device-id` stays shared across environments.
+Requests without an environment select `production`. The legacy `/session` and
+`/refresh/start` routes remain aliases for older clients. New clients should use
+the plural routes: an older broker returns `404` instead of silently ignoring
+an environment parameter and overwriting its shared session.
+
+Production keeps `SESSION_FILE` unchanged. Other environments persist next to
+it as `<stem>.<environment><suffix>`, for example `/data/session.development.json`.
+All persisted environments are validated at startup. Sessions survive a broker
+restart; in-memory refresh ownership is isolated per environment and resets.
 
 Session shape:
 
@@ -55,16 +70,16 @@ ID header (default `X-Session-Client-ID`).
 
 ### Refresh protocol
 
-1. A client sees an expired access token and calls `POST /refresh/start` with
+1. A client sees an expired access token and calls `POST /sessions/refresh/start?environment=production` with
    `{"replacingAccessToken": "<the token it holds>"}`.
 2. If `shouldRefresh` is `true`, the client owns the refresh. It calls your
-   OAuth server, then sends `PUT /session` with the new session and the same
-   `replacingAccessToken`. If the refresh fails, it sends `DELETE /session` with
+   OAuth server, then sends `PUT /sessions?environment=production` with the new session and the same
+   `replacingAccessToken`. If the refresh fails, it sends `DELETE /sessions?environment=production` with
    the same `replacingAccessToken` instead.
 3. If `shouldRefresh` is `false`, another process already refreshed, so the
-   client calls `GET /session` to read the new session.
+   client calls `GET /sessions?environment=production` to read the new session.
 
-Ownership expires after 45 seconds. If an owner crashes, exactly one waiter
+Use the same environment parameter throughout this protocol. Ownership expires after 45 seconds. If an owner crashes, exactly one waiter
 takes over. A stale owner's conditional `PUT` or `DELETE` gets `409` and cannot
 overwrite a newer session. Leaving out `replacingAccessToken` makes the
 operation unconditional, which is what login and logout use.
@@ -73,7 +88,7 @@ operation unconditional, which is what login and logout use.
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
-| `SESSION_FILE` | `/data/session.json` | Session location. `device-id` is stored next to it. |
+| `SESSION_FILE` | `/data/session.json` | Production session location; named environment sessions and `device-id` are stored next to it. |
 | `SESSION_BROKER_CLIENT_ID_HEADER` | `X-Session-Client-ID` | Header name that identifies a client process. |
 | `SESSION_BROKER_REFRESH_TIMEOUT` | `45` | Refresh ownership lifetime in seconds. |
 

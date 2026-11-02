@@ -5,7 +5,7 @@ name: myapp-session-broker
 services:
   session-broker:
     build:
-      context: https://github.com/SzymonMrozek/pitcrew.git#session-broker-v0.1.0:session-broker
+      context: https://github.com/SzymonMrozek/pitcrew.git#session-broker-v0.2.0:session-broker
     environment:
       # Optional: match the header your existing client already sends.
       SESSION_BROKER_CLIENT_ID_HEADER: X-Session-Client-ID

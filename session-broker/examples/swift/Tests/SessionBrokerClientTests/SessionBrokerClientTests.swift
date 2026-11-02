@@ -4,8 +4,8 @@ import Testing
 
 private let brokerURL = ProcessInfo.processInfo.environment["SESSION_BROKER_URL"].flatMap(URL.init(string:))
 
-private func client(_ clientID: String) -> SessionBrokerClient {
-    SessionBrokerClient(baseURL: brokerURL!, clientID: clientID)
+private func client(_ clientID: String, environment: String = "production") -> SessionBrokerClient {
+    SessionBrokerClient(baseURL: brokerURL!, clientID: clientID, environment: environment)
 }
 
 private func session(_ token: String) -> OAuthSession {
@@ -33,6 +33,21 @@ struct SessionBrokerClientTests {
 
         #expect(shared == session("login"))
         #expect(try await simulatorA.session() == nil)
+    }
+
+    @Test func environmentsShareTheDeviceButKeepIndependentSessions() async throws {
+        let production = client("production")
+        let development = client("development", environment: "development")
+        try await development.delete()
+        try await production.store(session("production"))
+        try await development.store(session("development"))
+
+        #expect(try await production.session() == session("production"))
+        #expect(try await development.session() == session("development"))
+        #expect(try await production.deviceID() == development.deviceID())
+
+        try await development.delete()
+        #expect(try await production.session() == session("production"))
     }
 
     @Test func deviceIDIsStableAcrossClients() async throws {

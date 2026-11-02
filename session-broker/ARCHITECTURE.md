@@ -20,9 +20,9 @@ One local process is the single source of truth for three things:
 
 | State | Where it lives | Survives a restart |
 | --- | --- | --- |
-| The session (`accessToken`, `refreshToken`, `expiresAt`) | JSON file in a volume | Yes |
+| A session per environment (`accessToken`, `refreshToken`, `expiresAt`) | Separate JSON files in one volume | Yes |
 | A machine-level device ID | File next to the session | Yes |
-| Who is refreshing right now | Memory only | No, on purpose |
+| Who is refreshing each environment right now | Separate conditions and leases in memory | No, on purpose |
 
 Simulators read and write through it over HTTP on `127.0.0.1`. Devices never
 see it: the app picks the Keychain on devices and the broker in simulators at
@@ -33,9 +33,9 @@ compile time.
 These are the properties that make it work. If you build your own, keep them,
 whatever your stack.
 
-1. **One writer of truth.** All simulators read the same session. None of them
+1. **One writer of truth.** All simulators using an environment read its same session. None of them
    keeps its own copy as the authority.
-2. **At most one refresh at a time.** A client asks for refresh ownership
+2. **At most one refresh per environment at a time.** A client asks for refresh ownership
    before calling the OAuth server. Everyone else waits for the result instead
    of refreshing too.
 3. **Ownership is a lease, not a lock.** It expires (45 seconds by default). A
@@ -110,10 +110,16 @@ Each of these cost real debugging time.
   tests in an app, as `examples/ios-app` does.
 - **Parallel integration tests.** Every test shares the broker's one session.
   Run them serially (`swift test --no-parallel`, `.serialized` suites).
-- **One broker per app, one broker per machine.** A broker holds exactly one
-  session. Two different apps need two brokers on two ports. One app across
-  many worktrees needs one fixed Compose project and volume name. Per-worktree
-  names fight over the port and split the session.
+- **One broker per app, one broker per machine.** A broker holds independent
+  sessions selected by the `environment` query parameter, sharing one device ID.
+  One app across many worktrees needs one fixed Compose project, port, and volume.
+  Per-worktree names fight over the port and split sessions.
+- **Creating environments in a threaded dependency.** Concurrent first requests
+  could create competing brokers and refresh leases. Environment lookup and
+  creation run synchronously on the ASGI event loop before any await.
+- **Old servers ignore unknown query parameters.** New clients use plural
+  `/sessions` routes, absent on old brokers, and startup verifies the health
+  capability before reusing a running service.
 - **App Transport Security.** Plain HTTP to `127.0.0.1` needs
   `NSAllowsLocalNetworking` in Debug builds.
 - **First-launch race for the device ID.** Two concurrent first reads can each

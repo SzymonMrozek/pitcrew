@@ -26,19 +26,23 @@ public struct SessionBrokerClient: Sendable {
     private let baseURL: URL
     private let clientIDHeader: String
     private let clientID: String
+    private let environment: String
     private let urlSession: URLSession
 
     /// - Parameters:
     ///   - clientIDHeader: Must match the broker's `SESSION_BROKER_CLIENT_ID_HEADER`.
     ///   - clientID: Identifies this app process. Keep one per launch.
+    ///   - environment: Backend whose session and refresh lease this client shares.
     public init(
         baseURL: URL = defaultBaseURL,
         clientIDHeader: String = "X-Session-Client-ID",
         clientID: String = UUID().uuidString,
+        environment: String = "production",
         urlSession: URLSession = .shared
     ) {
         self.baseURL = baseURL
         self.clientIDHeader = clientIDHeader
+        self.environment = environment
         self.clientID = clientID
         self.urlSession = urlSession
     }
@@ -52,7 +56,7 @@ public struct SessionBrokerClient: Sendable {
     /// The shared session, or `nil` when nobody is logged in. Waits while another process refreshes.
     public func session() async throws -> OAuthSession? {
         do {
-            return try await send("GET", "session") as OAuthSession
+            return try await send("GET", "sessions") as OAuthSession
         } catch SessionBrokerError.unexpectedStatus(404) {
             return nil
         }
@@ -63,7 +67,7 @@ public struct SessionBrokerClient: Sendable {
     public func startRefresh(replacing accessToken: String) async throws -> Bool {
         let response: StartRefreshResponse = try await send(
             "POST",
-            "refresh/start",
+            "sessions/refresh/start",
             body: StartRefreshRequest(replacingAccessToken: accessToken)
         )
         return response.shouldRefresh
@@ -73,16 +77,16 @@ public struct SessionBrokerClient: Sendable {
     public func store(_ session: OAuthSession, replacing accessToken: String? = nil) async throws {
         try await sendWithoutResponse(
             "PUT",
-            "session",
+            "sessions",
             body: UpdateSessionRequest(session: session, replacingAccessToken: accessToken)
         )
     }
 
-    /// Logs out every simulator. Pass `replacing` only to abandon a refresh this process owns.
+    /// Logs out every simulator in this environment. Pass `replacing` only to abandon a refresh this process owns.
     public func delete(replacing accessToken: String? = nil) async throws {
         try await sendWithoutResponse(
             "DELETE",
-            "session",
+            "sessions",
             body: DeleteSessionRequest(replacingAccessToken: accessToken)
         )
     }
@@ -102,7 +106,11 @@ public struct SessionBrokerClient: Sendable {
         _ path: String,
         body: (some Encodable)? = String?.none
     ) async throws -> Data {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if path != "device-id" {
+            components.queryItems = [URLQueryItem(name: "environment", value: environment)]
+        }
+        var request = URLRequest(url: components.url!)
         request.httpMethod = method
         request.setValue(clientID, forHTTPHeaderField: clientIDHeader)
         if let body {

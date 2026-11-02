@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 from uuid import UUID, uuid4
 from dataclasses import dataclass
@@ -7,11 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
 
 CLIENT_ID_HEADER = os.getenv("SESSION_BROKER_CLIENT_ID_HEADER", "X-Session-Client-ID")
+ENVIRONMENT_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 REFRESH_TIMEOUT_SECONDS = float(os.getenv("SESSION_BROKER_REFRESH_TIMEOUT", "45"))
 
 
@@ -209,29 +211,53 @@ class SessionBroker:
 def create_app(broker: SessionBroker | None = None) -> FastAPI:
     app = FastAPI(title="Simulator Session Broker")
     session_broker = broker or SessionBroker(Path(os.getenv("SESSION_FILE", "/data/session.json")))
+    storage_path = session_broker._storage_path
+    brokers = {"production": session_broker}
+
+    def load_environment(environment: str) -> SessionBroker:
+        if environment not in brokers:
+            path = storage_path.with_name(f"{storage_path.stem}.{environment}{storage_path.suffix}")
+            brokers[environment] = SessionBroker(path, refresh_timeout=session_broker._refresh_timeout)
+        return brokers[environment]
+
+    async def broker_for_environment(
+        environment: Annotated[str, Query(pattern=ENVIRONMENT_PATTERN)] = "production",
+    ) -> SessionBroker:
+        # Stay on the event loop so concurrent first requests cannot create competing brokers.
+        return load_environment(environment)
+
+    # Validate all persisted environments at startup, including ones nobody has requested yet.
+    for path in storage_path.parent.glob(f"{storage_path.stem}.*{storage_path.suffix}"):
+        environment = path.name.removeprefix(f"{storage_path.stem}.").removesuffix(storage_path.suffix)
+        if not re.fullmatch(ENVIRONMENT_PATTERN, environment) or environment == "production":
+            raise RuntimeError(f"invalid environment session file: {path}")
+        load_environment(environment)
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, str | bool]:
+        return {"status": "ok", "environments": True}
 
     @app.get("/device-id", response_model=DeviceId)
     async def get_device_id() -> DeviceId:
         return DeviceId(deviceId=session_broker.get_device_id())
 
     @app.get("/session", response_model=Session)
-    async def get_session() -> Session:
-        session = await session_broker.get_session()
+    @app.get("/sessions", response_model=Session)
+    async def get_session(broker: Annotated[SessionBroker, Depends(broker_for_environment)]) -> Session:
+        session = await broker.get_session()
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session does not exist")
         return session
 
     @app.post("/refresh/start", response_model=StartRefreshResponse)
+    @app.post("/sessions/refresh/start", response_model=StartRefreshResponse)
     async def start_refresh(
         body: StartRefreshRequest,
+        broker: Annotated[SessionBroker, Depends(broker_for_environment)],
         client_id: Annotated[str, Header(alias=CLIENT_ID_HEADER)],
     ) -> StartRefreshResponse:
         try:
-            should_refresh = await session_broker.start_refresh(
+            should_refresh = await broker.start_refresh(
                 client_id,
                 body.replacing_access_token,
             )
@@ -241,11 +267,13 @@ def create_app(broker: SessionBroker | None = None) -> FastAPI:
         return StartRefreshResponse(shouldRefresh=should_refresh)
 
     @app.put("/session", status_code=status.HTTP_204_NO_CONTENT)
+    @app.put("/sessions", status_code=status.HTTP_204_NO_CONTENT)
     async def update_session(
         body: UpdateSessionRequest,
+        broker: Annotated[SessionBroker, Depends(broker_for_environment)],
         client_id: Annotated[str, Header(alias=CLIENT_ID_HEADER)],
     ) -> Response:
-        updated = await session_broker.update_session(
+        updated = await broker.update_session(
             client_id,
             body.session,
             body.replacing_access_token,
@@ -258,14 +286,16 @@ def create_app(broker: SessionBroker | None = None) -> FastAPI:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.delete("/session", status_code=status.HTTP_204_NO_CONTENT)
+    @app.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_session(
         request: Request,
+        broker: Annotated[SessionBroker, Depends(broker_for_environment)],
         client_id: Annotated[str, Header(alias=CLIENT_ID_HEADER)],
     ) -> Response:
         raw_body = await request.body()
         body = DeleteSessionRequest.model_validate_json(raw_body) if raw_body else DeleteSessionRequest()
         replacing_access_token = body.replacing_access_token
-        deleted = await session_broker.delete_session(client_id, replacing_access_token)
+        deleted = await broker.delete_session(client_id, replacing_access_token)
         if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
