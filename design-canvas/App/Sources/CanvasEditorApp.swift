@@ -142,6 +142,8 @@ struct EditorView: View {
                 .disabled(!store.canRedo)
             if !compact { fileStatus }
             Spacer()
+            pagePicker
+            Spacer()
             if !compact {
                 Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
                     .labelStyle(.titleAndIcon)
@@ -153,6 +155,7 @@ struct EditorView: View {
             Toggle("Comment", systemImage: "bubble.left", isOn: $store.isCommenting)
                 .toggleStyle(.button)
                 .keyboardShortcut("c", modifiers: [])
+                .disabled(store.isOnTokens)
             Toggle("Spacing", systemImage: "ruler", isOn: $store.showsSpacing)
                 .toggleStyle(.button)
                 .help("Show the selection's padding and gaps (or hold ⌥)")
@@ -206,9 +209,39 @@ struct EditorView: View {
         .disabled(store.selection == nil)
     }
 
+    /// The pages, like Figma's page list, also in the layers panel.
+    private var pagePicker: some View {
+        Menu {
+            Picker("Page", selection: $store.page) {
+                ForEach(store.pageList, id: \.page) { entry in
+                    Label(entry.name, systemImage: entry.page == .tokens ? "swatchpalette" : "doc").tag(entry.page)
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Add Page", systemImage: "plus") { store.addPage() }
+        } label: {
+            Label(store.pageList.first { $0.page == store.page }?.name ?? "Page", systemImage: "doc.on.doc")
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline.weight(.semibold))
+        }
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("Pages")
+    }
+
     private var darkCopies: some View {
-        Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
-            .toggleStyle(.button)
+        Menu {
+            Picker("Theme", selection: $store.theme) {
+                ForEach(CanvasTheme.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Theme", systemImage: store.theme.symbol)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Theme: \(store.theme.rawValue)")
     }
 
     private var zoomOut: some View {

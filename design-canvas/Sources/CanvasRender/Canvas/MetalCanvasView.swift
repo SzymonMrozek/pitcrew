@@ -124,7 +124,8 @@ final class MetalCanvasUIView: MTKView {
         let translation = gesture.translation(in: self)
         gesture.setTranslation(.zero, in: self)
         if gesture.modifierFlags.contains(.command) || gesture.modifierFlags.contains(.control) {
-            scene.camera.zoom(by: exp(-translation.y * 0.01), around: gesture.location(in: self))
+            // Like Figma: scrolling up zooms in.
+            scene.camera.zoom(by: exp(translation.y * 0.01), around: gesture.location(in: self))
         } else {
             scene.camera.pan(by: CGSize(width: translation.x, height: translation.y))
         }

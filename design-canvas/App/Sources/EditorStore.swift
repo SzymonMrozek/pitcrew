@@ -10,19 +10,54 @@ import SwiftUI
 struct CanvasItem: Identifiable {
     enum Content {
         case screen(ResolvedNode, ColorScheme)
-        case component(name: String, root: ResolvedNode)
+        case component(name: String, root: ResolvedNode, ColorScheme)
+        /// A group of tokens, built from the tokens rather than from document nodes.
+        case tokens(name: String, root: ResolvedNode, ColorScheme)
     }
 
     let id: String
     let origin: CGPoint
     let content: Content
+    /// The page the item is on.
+    let page: CanvasPage
+
+    var scheme: ColorScheme {
+        switch content {
+        case .screen(_, let scheme), .component(_, _, let scheme), .tokens(_, _, let scheme): scheme
+        }
+    }
+
+    func moved(to origin: CGPoint) -> CanvasItem { CanvasItem(id: id, origin: origin, content: content, page: page) }
 }
 
 extension CanvasItem {
     var tree: ResolvedNode {
         switch content {
         case .screen(let screen, _): screen
-        case .component(_, let root): root
+        case .component(_, let root, _), .tokens(_, let root, _): root
+        }
+    }
+}
+
+/// A page of the canvas: one of the document's pages, or the tokens, which the editor
+/// draws from the tokens and never stores.
+enum CanvasPage: Hashable {
+    case document(NodeID)
+    case tokens
+}
+
+/// Which appearances the canvas draws. Screens show both side by side; components and
+/// token boards, which sit close together, show light.
+enum CanvasTheme: String, CaseIterable {
+    case light = "Light"
+    case dark = "Dark"
+    case both = "Light and dark"
+
+    var symbol: String {
+        switch self {
+        case .light: "sun.max"
+        case .dark: "moon"
+        case .both: "circle.lefthalf.filled"
         }
     }
 }
@@ -55,9 +90,22 @@ final class EditorStore {
     private(set) var selectedThread: String?
     /// The anchor of a comment being written.
     private(set) var draft: CommentAnchor?
-    var showsDarkCopies = true {
-        didSet { rebuildItems() }
+    var theme = CanvasTheme.both {
+        didSet { if theme != oldValue { showItems() } }
     }
+    /// The page on the canvas. Token boards aren't document nodes, so the Tokens page has
+    /// no selection or comments.
+    var page = CanvasPage.document(CanvasDocument.rootID) {
+        didSet {
+            guard page != oldValue else { return }
+            if page == .tokens { isCommenting = false }
+            if selection.map({ item in items.contains { $0.id == item.item } }) != true { clearSelection() }
+            hovered = nil
+            showItems()
+            focusTarget = contentBounds.insetBy(dx: -80, dy: -80)
+        }
+    }
+    var isOnTokens: Bool { page == .tokens }
     private(set) var lastError: String?
     private(set) var mcpStatus = "MCP off"
     /// Bumped by every document change, so views can refresh derived state.
@@ -66,6 +114,8 @@ final class EditorStore {
     var hovered: Selection?
     /// Draws the selection's padding and gaps on the canvas. Holding ⌥ shows them too.
     var showsSpacing = false
+    /// The pointer's page point, for the comment cursor.
+    private(set) var pointer: CGPoint?
     var isOptionDown = false
     /// The preview shown as a sheet where the platform has no windows.
     var previewSheet: PreviewTarget?
@@ -110,6 +160,7 @@ final class EditorStore {
             document = .sample()
             lastError = "Couldn't open \(file.fileName): \(error.localizedDescription)"
         }
+        page = document.pages.first.map { .document($0.id) } ?? .tokens
         rebuildItems()
         file.onExternalChange = { [weak self] contents in self?.replaceContents(with: contents) }
     }
@@ -124,6 +175,9 @@ final class EditorStore {
     func replaceContents(with contents: CanvasFile) {
         document = contents.document
         commentStore = contents.comments
+        if case .document(let id) = page, !document.pages.contains(where: { $0.id == id }) {
+            page = document.pages.first.map { .document($0.id) } ?? .tokens
+        }
         history = History()
         selection = nil
         selectedThread = nil
@@ -158,14 +212,16 @@ final class EditorStore {
     var canUndo: Bool { history.canUndo }
     var canRedo: Bool { history.canRedo }
 
-    /// The rendered screens and components, rebuilt when the document changes. Pan, zoom
-    /// and hover read it every frame, so it must not resolve the document each time.
+    /// The rendered screens and components on the page, in the theme. Pan, zoom and hover
+    /// read it every frame, so it must not resolve the document each time.
     private(set) var items: [CanvasItem] = []
+    /// Every page's items in every appearance, so agents can measure any of them.
+    private var allItems: [CanvasItem] = []
 
     private func rebuildItems() {
-        items = makeItems()
+        allItems = makeItems()
         var next: [String: (key: Int, layout: LayoutResult)] = [:]
-        for item in items {
+        for item in allItems {
             let key = contentKey(of: item)
             if let cached = layoutCache[item.id], cached.key == key {
                 next[item.id] = cached
@@ -174,6 +230,63 @@ final class EditorStore {
             }
         }
         layoutCache = next
+        showItems()
+    }
+
+    /// Picks the page's items in the theme. With only dark, dark copies take the light ones'
+    /// places.
+    private func showItems() {
+        items = allItems.compactMap { item in
+            guard item.page == page else { return nil }
+            let isDark = item.scheme == .dark
+            switch theme {
+            case .light: return isDark ? nil : item
+            case .both:
+                if case .screen = item.content { return item }
+                return isDark ? nil : item
+            case .dark:
+                guard isDark else { return nil }
+                if case .screen(let screen, _) = item.content,
+                    let light = allItems.first(where: { $0.id == "\(screen.source)#light" })
+                {
+                    return item.moved(to: light.origin)
+                }
+                return item
+            }
+        }
+    }
+
+    /// The pages in the page list: the document's, then Tokens.
+    var pageList: [(page: CanvasPage, name: String)] {
+        document.pages.enumerated().map { index, node in
+            (.document(node.id), node[.name]?.string ?? "Page \(index + 1)")
+        } + [(.tokens, "Tokens")]
+    }
+
+    /// Adds a page after the last one and shows it.
+    func addPage() {
+        var edits: [Edit] = []
+        var pages = document.pages
+        // A file from before pages keeps its items on the root; they become the first page.
+        if pages.first?.id == CanvasDocument.rootID {
+            let first = Node(id: .random(), kind: .page, parent: CanvasDocument.rootID, order: FractionalIndex.between(nil, nil), props: [.name: .string("Page 1")])
+            edits.append(.insert(first))
+            for item in document.items(onPage: CanvasDocument.rootID) {
+                edits.append(.move(item.id, parent: first.id, order: item.order))
+            }
+            pages = [first]
+        }
+        let order = FractionalIndex.between(pages.last?.order, nil)
+        let node = Node(id: .random(), kind: .page, parent: CanvasDocument.rootID, order: order, props: [.name: .string("Page \(pages.count + 1)")])
+        edits.append(.insert(node))
+        perform(.batch(edits))
+        page = .document(node.id)
+    }
+
+    func renamePage(_ id: NodeID, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, document[id]?[.name]?.string != name else { return }
+        perform(.set(id, .name, .string(name)))
     }
 
     private func makeLayout(_ item: CanvasItem) -> LayoutResult {
@@ -181,31 +294,49 @@ final class EditorStore {
         case .screen(let screen, let scheme):
             LayoutEngine(tokens: document.tokens, appearance: scheme == .dark ? .dark : .light)
                 .screen(screen, device: DeviceSpec.named(screen[.device]?.string))
-        case .component(_, let root):
-            LayoutEngine(tokens: document.tokens, appearance: .light).component(root)
+        case .component(_, let root, let scheme), .tokens(_, let root, let scheme):
+            LayoutEngine(tokens: document.tokens, appearance: scheme == .dark ? .dark : .light).component(root)
         }
     }
 
+    /// Items keep their IDs across themes: a screen is `<id>#light` and `<id>#dark`, a
+    /// component its node ID, and its dark copy `<id>#dark`.
     private func makeItems() -> [CanvasItem] {
-        document.children(of: CanvasDocument.rootID).flatMap { node -> [CanvasItem] in
-            let origin = CGPoint(x: node[.x]?.number ?? 0, y: node[.y]?.number ?? 0)
-            switch node.kind {
-            case .screen:
-                guard let screen = try? document.resolve(node.id) else { return [] }
-                let light = CanvasItem(id: "\(node.id)#light", origin: origin, content: .screen(screen, .light))
-                guard showsDarkCopies else { return [light] }
-                let darkOrigin = CGPoint(x: origin.x + 470, y: origin.y)
-                return [light, CanvasItem(id: "\(node.id)#dark", origin: darkOrigin, content: .screen(screen, .dark))]
-            case .component:
-                guard let root = document.children(of: node.id).first,
-                    let resolved = try? document.resolve(root.id)
-                else { return [] }
-                let name = node[.name]?.string ?? node.id.rawValue
-                return [CanvasItem(id: node.id.rawValue, origin: origin, content: .component(name: name, root: resolved))]
-            default:
-                return []
+        let boards = document.tokens.boards().flatMap { board in
+            [ColorScheme.light, .dark].map { scheme in
+                CanvasItem(
+                    id: "tokens/\(board.id)" + (scheme == .dark ? "#dark" : ""), origin: board.origin,
+                    content: .tokens(name: board.title, root: board.root, scheme), page: .tokens
+                )
             }
         }
+        return document.pages.flatMap { page in
+            document.items(onPage: page.id).flatMap { node -> [CanvasItem] in
+                let origin = CGPoint(x: node[.x]?.number ?? 0, y: node[.y]?.number ?? 0)
+                switch node.kind {
+                case .screen:
+                    guard let screen = try? document.resolve(node.id) else { return [] }
+                    let darkOrigin = CGPoint(x: origin.x + 470, y: origin.y)
+                    return [
+                        CanvasItem(id: "\(node.id)#light", origin: origin, content: .screen(screen, .light), page: .document(page.id)),
+                        CanvasItem(id: "\(node.id)#dark", origin: darkOrigin, content: .screen(screen, .dark), page: .document(page.id)),
+                    ]
+                case .component:
+                    guard let root = document.children(of: node.id).first,
+                        let resolved = try? document.resolve(root.id)
+                    else { return [] }
+                    let name = node[.name]?.string ?? node.id.rawValue
+                    return [ColorScheme.light, .dark].map { scheme in
+                        CanvasItem(
+                            id: node.id.rawValue + (scheme == .dark ? "#dark" : ""), origin: origin,
+                            content: .component(name: name, root: resolved, scheme), page: .document(page.id)
+                        )
+                    }
+                default:
+                    return []
+                }
+            }
+        } + boards
     }
 
     func markPreviewDeviceSeen(udid: String?) {
@@ -235,7 +366,7 @@ final class EditorStore {
 
     /// The screen the preview opens: the selected one, else the first on the page.
     var previewTarget: PreviewTarget? {
-        let screens = document.children(of: CanvasDocument.rootID).filter { $0.kind == .screen }
+        let screens = document.canvasItems.filter { $0.kind == .screen }
         if let item = selection?.item {
             let parts = item.split(separator: "#").map(String.init)
             if let id = parts.first, screens.contains(where: { $0.id.rawValue == id }) {
@@ -289,7 +420,7 @@ final class EditorStore {
             return ComponentInfo(id: component, name: name(ofComponent: component), instance: instance, isRoot: node.source == instanceID)
         }
         guard case .component = context.item.content else { return nil }
-        let id = NodeID(context.item.id)
+        let id = NodeID(context.item.id.replacingOccurrences(of: "#dark", with: ""))
         return ComponentInfo(id: id, name: name(ofComponent: id), instance: nil, isRoot: context.path.count == 1)
     }
 
@@ -306,7 +437,7 @@ final class EditorStore {
         return text.map { "\(name) · \($0)" } ?? name
     }
 
-    var components: [Node] { document.children(of: CanvasDocument.rootID).filter { $0.kind == .component } }
+    var components: [Node] { document.canvasItems.filter { $0.kind == .component } }
 
     func instanceCount(of component: NodeID) -> Int {
         document.nodes.values.count { $0.kind == .instance && $0[.component]?.string == component.rawValue }
@@ -314,7 +445,8 @@ final class EditorStore {
 
     /// Selects a component's main definition and brings it into view.
     func showMainComponent(_ id: NodeID) {
-        guard let item = items.first(where: { $0.id == id.rawValue }) else { return }
+        if let page = document.page(of: id) { self.page = .document(page) }
+        guard let item = items.first(where: { $0.id == id.rawValue || $0.id == "\(id.rawValue)#dark" }) else { return }
         select(Selection(item: item.id, node: item.tree.id))
         focusTarget = pageRect(of: item).insetBy(dx: -200, dy: -200)
     }
@@ -325,7 +457,7 @@ final class EditorStore {
         guard let selection, let context = context(of: selection) else { return nil }
         let node = context.node
         let anchorID = node.instance ?? node.source
-        guard let anchor = document[anchorID], let parent = anchor.parent, parent != CanvasDocument.rootID else { return nil }
+        guard let anchor = document[anchorID], let parent = anchor.parent, document[parent]?.kind != .page else { return nil }
         let index = document.children(of: parent).firstIndex { $0.id == anchorID } ?? 0
         let anchorResolved = context.path.last { $0.source == anchorID }?.id ?? node.id
         let prefix = anchorResolved.split(separator: "/").dropLast().joined(separator: "/")
@@ -342,8 +474,8 @@ final class EditorStore {
         var trial = document
         do {
             try trial.apply(.insert(node))
-            for root in trial.children(of: CanvasDocument.rootID) where root.kind == .screen { _ = try trial.resolve(root.id) }
-            for component in trial.children(of: CanvasDocument.rootID) where component.kind == .component {
+            for root in trial.canvasItems where root.kind == .screen { _ = try trial.resolve(root.id) }
+            for component in trial.canvasItems where component.kind == .component {
                 if let root = trial.children(of: component.id).first { _ = try trial.resolve(root.id) }
             }
         } catch {
@@ -387,6 +519,13 @@ final class EditorStore {
     }
 
     func selectThread(_ id: String) {
+        if let anchor = comments.threads[id]?.anchor, !isOnPage(anchor) {
+            if let node = anchor.node, let item = allItems.first(where: { $0.id == node.item }) {
+                page = item.page
+            } else if let free = anchor.page.map(NodeID.init(_:)), document[free] != nil {
+                page = .document(free)
+            }
+        }
         selectedThread = id
         selection = nil
         draft = nil
@@ -402,7 +541,20 @@ final class EditorStore {
 
     /// Unresolved threads, plus the selected one even when resolved.
     var visibleThreads: [CommentThread] {
-        comments.ordered.filter { !$0.isResolved || $0.id == selectedThread }
+        comments.ordered.filter { ($0.isResolved == false || $0.id == selectedThread) && isOnPage($0.anchor) }
+    }
+
+    /// A free pin records its page; nil means the first one.
+    private var freePinPage: String? {
+        guard case .document(let id) = page, id != document.pages.first?.id else { return nil }
+        return id.rawValue
+    }
+
+    /// A node pin is on the page of its item, a free pin on the page it records.
+    private func isOnPage(_ anchor: CommentAnchor) -> Bool {
+        if let node = anchor.node, let item = allItems.first(where: { $0.id == node.item }) { return item.page == page }
+        guard case .document(let id) = page else { return false }
+        return (anchor.page.map(NodeID.init(_:)) ?? document.pages.first?.id) == id
     }
 
     /// Where a pin's tip sits in page coordinates. A node pin follows its node's measured
@@ -525,6 +677,7 @@ final class EditorStore {
     /// depth of the current selection. `drill` (double click) goes one level deeper,
     /// `deep` (⌘ click) straight to the innermost element.
     func handleTap(atPage page: CGPoint, drill: Bool = false, deep: Bool = false) {
+        guard !isOnTokens else { return }
         if let (item, local, node) = hit(atPage: page) {
             if isCommenting {
                 startDraft(in: item, at: local, on: node, frame: node.flatMap { frames(of: item.id)[$0] })
@@ -533,7 +686,7 @@ final class EditorStore {
                 select(target.map { Selection(item: item.id, node: $0) })
             }
         } else if isCommenting {
-            startDraft(at: CommentAnchor(x: page.x, y: page.y))
+            startDraft(at: CommentAnchor(x: page.x, y: page.y, page: freePinPage))
         } else {
             clearSelection()
         }
@@ -561,6 +714,8 @@ final class EditorStore {
 
     /// The hover outline shows what a click would select, like Figma.
     func hover(atPage page: CGPoint?) {
+        pointer = page
+        guard !isOnTokens else { return }
         let hit = page.flatMap { self.hit(atPage: $0) }
         let next = hit.flatMap { hit in
             hit.node.map { Selection(item: hit.item.id, node: selectionTarget(in: hit.item, innermost: $0, drill: false)) }
@@ -587,8 +742,9 @@ final class EditorStore {
         case .screen(let screen, let scheme):
             hasher.combine(screen)
             hasher.combine(scheme == .dark)
-        case .component(_, let root):
+        case .component(_, let root, let scheme), .tokens(_, let root, let scheme):
             hasher.combine(root)
+            hasher.combine(scheme == .dark)
         }
         return hasher.finalize()
     }

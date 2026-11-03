@@ -27,9 +27,14 @@ Status: early prototype. What works today:
   live document, the designer's selection, frames, spacing and screenshots, and write
   edits the designer can undo.
 - `App/`: a Mac (Catalyst, Mac idiom) and iOS editor: trackpad pan, pinch and ⌘-scroll
-  zoom around the pointer, ⇧1 to fit, vector-sharp at any zoom. Screens in light and
-  dark side by side, a components area, and comments: press C, tap anywhere, and the
-  pin sticks to the node under it as layout changes.
+  zoom around the pointer (scrolling up zooms in, as in Figma), ⇧1 to fit, vector-sharp
+  at any zoom. A theme menu shows screens in light, dark, or both side by side, and
+  comments: press C, a pin follows the pointer, tap anywhere, and the pin sticks to the
+  node under it as layout changes.
+- Pages, as in Figma: a file's items sit on pages (say, app flows and components),
+  listed in the layers panel and the toolbar, added with + and renamed by double click.
+  A last Tokens page draws every token group as a card, built from the tokens and never
+  stored. Comments stay on their page; agents see every page.
 - Inspection like Figma's. A click selects the outermost element (a component instance,
   a toggle, a button), a double click goes one level in, ⌘-click goes straight to the
   innermost one; hover shows what a click would pick. The selection shows its component
@@ -47,7 +52,8 @@ Status: early prototype. What works today:
   expanded, sharing selection and hover with the canvas.
 - Text and number fields apply as you type; one burst of typing is one undo step.
 - A design system panel: components with their instance counts, inserted after the
-  selection, and every token with its light and dark values and how often it's used.
+  selection, and every token, grouped by its ID path (`color.text`), with its light and
+  dark values and how often it's used.
 
 Not built yet: multiplayer sync and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
 

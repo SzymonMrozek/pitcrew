@@ -54,6 +54,31 @@ public struct CanvasDocument: Hashable, Codable, Sendable {
 
     public subscript(id: NodeID) -> Node? { nodes[id] }
 
+    // MARK: - Pages
+
+    /// The canvas pages in order. Pages are `page` nodes under the root, each holding its
+    /// screens and components. A file from before pages keeps those on the root itself,
+    /// which then counts as the first page.
+    public var pages: [Node] {
+        let children = children(of: Self.rootID)
+        let explicit = children.filter { $0.kind == .page }
+        let loose = children.contains { $0.kind != .page }
+        return (loose || explicit.isEmpty ? [nodes[Self.rootID]].compactMap(\.self) : []) + explicit
+    }
+
+    /// The screens and components placed on a page.
+    public func items(onPage page: NodeID) -> [Node] {
+        children(of: page).filter { $0.kind != .page }
+    }
+
+    /// Every screen and component, page by page.
+    public var canvasItems: [Node] { pages.flatMap { items(onPage: $0.id) } }
+
+    /// The page a screen or component sits on.
+    public func page(of item: NodeID) -> NodeID? {
+        nodes[item]?.parent.flatMap { nodes[$0]?.kind == .page ? $0 : nil }
+    }
+
     public func children(of id: NodeID) -> [Node] {
         (childIndex[id] ?? []).compactMap { nodes[$0] }
     }
