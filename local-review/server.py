@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.11.0'
+RELEASE = '0.11.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
@@ -756,12 +756,17 @@ class Review:
                     result = subprocess.run(['git', '-C', str(self.repo / path), 'status', '--porcelain'], capture_output=True, timeout=30)
                     submodule_dirty = bool(result.returncode or result.stdout)
             # Executable-bit and symlink changes matter even with identical bytes.
+            # Working files use Git's modes, so they fingerprint like a snapshot of them.
             if after:
                 mode = int(tree_entry.split(b' ', 1)[0], 8) if tree_entry else 0
             elif submodule:
                 mode = 0o160000
+            elif (self.repo / path).is_symlink():
+                mode = 0o120000
+            elif (self.repo / path).exists():
+                mode = 0o100755 if (self.repo / path).stat().st_mode & 0o100 else 0o100644
             else:
-                mode = (self.repo / path).lstat().st_mode if (self.repo / path).exists() or (self.repo / path).is_symlink() else 0
+                mode = 0
             # Git LFS stores pointers; compare the image bytes that the reviewer sees.
             old, new = self.lfs_blob(old), self.lfs_blob(new)
             file_id = digest(path.encode('utf-8', 'surrogateescape'))[:20]

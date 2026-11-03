@@ -1553,6 +1553,15 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(request['head'], self.git('rev-parse', 'HEAD'))
         self.assertEqual(request['reviewedRevision'], reviewed)
 
+    def test_approval_snapshot_matches_new_symlinks_and_group_writable_files(self):
+        (self.root / 'skills').symlink_to('Interactor.swift')
+        self.write('Shared.swift', 'let shared = 1\n')
+        (self.root / 'Shared.swift').chmod(0o664)
+        self.review.refresh()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.assertIn('skills', request['changedPaths'])
+        self.assertIn('Shared.swift', request['changedPaths'])
+
     def test_approval_does_not_follow_a_branch_switch_during_refresh(self):
         reviewed = self.review.approval_revision()
         refresh = self.review.refresh
