@@ -1,0 +1,23 @@
+name: design-canvas
+
+on:
+  push:
+    branches: [main]
+    paths: ["design-canvas/**", ".github/workflows/design-canvas.yml"]
+  pull_request:
+    paths: ["design-canvas/**", ".github/workflows/design-canvas.yml"]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core tests
+        run: swift test --package-path design-canvas
+      - name: Build the Catalyst editor
+        working-directory: design-canvas/App
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project CanvasEditor.xcodeproj -scheme CanvasEditor \
+            -destination 'platform=macOS,variant=Mac Catalyst' build
