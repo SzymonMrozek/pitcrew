@@ -152,7 +152,7 @@ final class PreviewDevice {
     /// previewed one first so the editor's window updates soonest.
     private func upload() async {
         guard let document = file?.document, let state else { return }
-        let screens = document.children(of: CanvasDocument.rootID).filter { $0.kind == .screen }
+        let screens = document.canvasItems.filter { $0.kind == .screen }
             .sorted { first, _ in first.id.rawValue == state.screen }
         for node in screens {
             guard let screen = resolve(node.id) else { continue }

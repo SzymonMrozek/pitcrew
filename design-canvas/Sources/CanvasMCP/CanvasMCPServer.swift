@@ -119,7 +119,7 @@ public final class CanvasMCPServer {
     }
 
     private func roots(_ document: CanvasDocument) -> [Root] {
-        document.children(of: CanvasDocument.rootID).compactMap { node in
+        document.canvasItems.compactMap { node in
             switch node.kind {
             case .screen:
                 return (try? document.resolve(node.id)).map { Root(node: node, tree: $0, item: "\(node.id)#light") }
@@ -157,6 +157,9 @@ public final class CanvasMCPServer {
                 "root": .string(root.tree.id),
             ]
             if let device = root.node[.device]?.string { entry["device"] = .string(device) }
+            if let page = host.document.page(of: root.node.id), let name = host.document[page]?[.name]?.string {
+                entry["page"] = .string(name)
+            }
             return .object(entry)
         })
     }

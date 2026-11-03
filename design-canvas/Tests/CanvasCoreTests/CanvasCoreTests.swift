@@ -246,6 +246,16 @@ import Testing
         #expect(tokens.kind(of: "missing") == nil)
     }
 
+    @Test func tokenGroupsFollowTheIDPath() {
+        let tokens = TokenSet(tokens: [
+            Token("color.text.ink", .system("label")), Token("color.text.muted", .system("secondaryLabel")),
+            Token("color.accent.base", .system("systemBlue")), Token("space.4", .number(16)), Token("gap", .number(8)),
+        ])
+        #expect(tokens.groups(of: .color).map(\.name) == ["color.accent", "color.text"])
+        #expect(tokens.groups(of: .color).last?.ids == ["color.text.ink", "color.text.muted"])
+        #expect(tokens.groups(of: .number).map(\.name) == ["", "space"])
+    }
+
     @Test func detachingATokenGivesItsLiteral() {
         let tokens = CanvasDocument.sample().tokens
         #expect(tokens.literal("space.row") == .number(12))
@@ -364,5 +374,29 @@ import Testing
         #expect(document["settingRow.title"]?[.text] == .string("Title"))
         try history.redo(&document)
         #expect(document["settingRow.title"]?[.text] == .string("WLAN"))
+    }
+}
+
+@Suite struct PageTests {
+    @Test func aFileFromBeforePagesIsOnePage() {
+        let document = CanvasDocument.sample()
+        #expect(document.pages.map(\.id) == [CanvasDocument.rootID])
+        #expect(document.canvasItems == document.children(of: CanvasDocument.rootID))
+        #expect(document.page(of: document.canvasItems[0].id) == CanvasDocument.rootID)
+    }
+
+    @Test func pagesHoldTheirItemsInOrder() throws {
+        var document = CanvasDocument()
+        let flows = Node(id: "flows", kind: .page, parent: CanvasDocument.rootID, order: "a", props: [.name: .string("Flows")])
+        let parts = Node(id: "parts", kind: .page, parent: CanvasDocument.rootID, order: "b")
+        try document.apply(.batch([
+            .insert(parts), .insert(flows),
+            .insert(Node(id: "home", kind: .screen, parent: "flows", order: "a")),
+            .insert(Node(id: "button", kind: .component, parent: "parts", order: "a")),
+        ]))
+        #expect(document.pages.map(\.id) == ["flows", "parts"])
+        #expect(document.canvasItems.map(\.id) == ["home", "button"])
+        #expect(document.page(of: "button") == "parts")
+        #expect(document.items(onPage: CanvasDocument.rootID).isEmpty)
     }
 }

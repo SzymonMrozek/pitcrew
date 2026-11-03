@@ -40,6 +40,12 @@
   or conflict with design edits. A node pin stores the canvas item, the resolved node
   path and an offset from the node's corner, so it follows layout; its page point is
   the fallback when the node stops rendering.
+- Pages are `page` nodes under the root, and canvas items are their children. A file
+  with items directly under the root, from before pages, is one page, converted when a
+  second page is added. A free comment pin records its page; a node pin follows its item.
+- The Tokens page is generated (`TokenSet.boards()`): one card per token group, the ID
+  up to its last dot, rows of colors, then text styles, then numbers. It is never
+  stored, so it can't drift from the tokens.
 - An item's origin is the top-left of its content. Titles and pins are overlays, so
   page point = item origin + local point at any zoom.
 - A file is the document plus its comments, encoded deterministically: the same

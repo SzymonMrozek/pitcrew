@@ -1,10 +1,15 @@
 import CanvasCore
 import SwiftUI
 
-/// The layer tree, like Figma's left panel: every screen and component with its views,
-/// instances expanded. Selection and hover are shared with the canvas.
+/// Figma's left panel: the pages, then the layer tree of the page on the canvas, every
+/// screen and component with its views, instances expanded. Selection and hover are
+/// shared with the canvas.
 struct LayersView: View {
     let store: EditorStore
+    /// The page being renamed, and its name so far.
+    @State private var renaming: CanvasPage?
+    @State private var name = ""
+    @FocusState private var isNaming: Bool
     /// Rows the designer opened or closed, keyed by item and node. System containers
     /// start open, everything else closed; the selection's ancestors always open.
     @State private var opened: Set<String> = []
@@ -30,6 +35,14 @@ struct LayersView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    pages
+                    Divider().padding(.vertical, 6)
+                    if store.isOnTokens {
+                        Text("Token boards are drawn from the document's tokens. Edit tokens in the file or through MCP.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                    }
                     ForEach(roots) { root in
                         HStack(spacing: 6) {
                             Image(systemName: root.isComponent ? "diamond" : "iphone")
@@ -54,21 +67,99 @@ struct LayersView: View {
         .background(Color(uiColor: .secondarySystemBackground))
     }
 
+    // MARK: - Pages
+
+    private var pages: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Pages").font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Add Page", systemImage: "plus") { store.addPage() }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            ForEach(store.pageList, id: \.page) { entry in
+                pageRow(entry.page, name: entry.name)
+            }
+        }
+    }
+
+    /// A button, so the page list works with the keyboard and accessibility too. Double
+    /// click or the context menu renames a page.
+    private func pageRow(_ page: CanvasPage, name pageName: String) -> some View {
+        Button {
+            store.page = page
+        } label: {
+            pageLabel(page, name: pageName)
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { startRenaming(page, name: pageName) })
+        .contextMenu {
+            if case .document = page {
+                Button("Rename", systemImage: "pencil") { startRenaming(page, name: pageName) }
+            }
+        }
+    }
+
+    private func pageLabel(_ page: CanvasPage, name pageName: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: page == .tokens ? "swatchpalette" : "doc")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            if renaming == page, case .document(let id) = page {
+                TextField("Page name", text: $name)
+                    .font(.callout)
+                    .focused($isNaming)
+                    .onSubmit { finishRenaming(id) }
+                    .onChange(of: isNaming) { if !isNaming { finishRenaming(id) } }
+            } else {
+                Text(pageName).font(.callout).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(store.page == page ? Color.accentColor.opacity(0.22) : .clear)
+                .padding(.horizontal, 4)
+        )
+        .contentShape(Rectangle())
+    }
+
+    /// Tokens is drawn from the tokens, so only document pages take a name.
+    private func startRenaming(_ page: CanvasPage, name pageName: String) {
+        guard case .document = page else { return }
+        name = pageName
+        renaming = page
+        isNaming = true
+    }
+
+    private func finishRenaming(_ id: NodeID) {
+        guard renaming == .document(id) else { return }
+        renaming = nil
+        store.renamePage(id, to: name)
+    }
+
     // MARK: - Tree
 
-    /// Screens use their light copy, unless the selection is on the dark one.
+    /// The page's screens and components, each in the copy shown: the selected one if
+    /// there are two, else light.
     private var roots: [Root] {
-        store.document.children(of: CanvasDocument.rootID).compactMap { node in
+        guard case .document(let page) = store.page else { return [] }
+        return store.document.items(onPage: page).compactMap { node in
+            let ids = node.kind == .screen ? ["\(node.id)#light", "\(node.id)#dark"] : [node.id.rawValue, "\(node.id)#dark"]
+            let shown = store.items.filter { ids.contains($0.id) }
+            guard let item = shown.first(where: { $0.id == store.selection?.item }) ?? shown.first else { return nil }
             switch node.kind {
             case .screen:
-                let light = "\(node.id)#light"
-                let selected = store.selection?.item
-                let item = selected?.hasPrefix("\(node.id)#") == true ? selected! : light
-                guard let tree = store.items.first(where: { $0.id == item })?.tree else { return nil }
-                return Root(item: item, title: node[.name]?.string ?? node.id.rawValue, isComponent: false, tree: tree)
+                return Root(item: item.id, title: node[.name]?.string ?? node.id.rawValue, isComponent: false, tree: item.tree)
             case .component:
-                guard let tree = store.items.first(where: { $0.id == node.id.rawValue })?.tree else { return nil }
-                return Root(item: node.id.rawValue, title: store.name(ofComponent: node.id), isComponent: true, tree: tree)
+                return Root(item: item.id, title: store.name(ofComponent: node.id), isComponent: true, tree: item.tree)
             default:
                 return nil
             }

@@ -25,11 +25,14 @@ public struct CommentAnchor: Hashable, Codable, Sendable {
     public var x: Double
     public var y: Double
     public var node: NodeAnchor?
+    /// The page a pin without a node sits on; nil for the first page.
+    public var page: String?
 
-    public init(x: Double, y: Double, node: NodeAnchor? = nil) {
+    public init(x: Double, y: Double, node: NodeAnchor? = nil, page: String? = nil) {
         self.x = x
         self.y = y
         self.node = node
+        self.page = page
     }
 }
 

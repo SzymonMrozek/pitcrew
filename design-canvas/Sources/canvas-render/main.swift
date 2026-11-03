@@ -2,7 +2,7 @@ import CanvasCore
 import CanvasEngine
 import Foundation
 
-// Renders every screen (light and dark) and component of a .canvas file to PNGs,
+// Renders every screen (light and dark), component and token board of a .canvas file to PNGs,
 // without the editor: `canvas-render [file.canvas] [output-dir] [scale]`.
 // `canvas-render --sample file.canvas` writes the sample document instead, to start from.
 let arguments = CommandLine.arguments.dropFirst()
@@ -23,7 +23,7 @@ if let input {
 }
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
-for node in document.children(of: CanvasDocument.rootID) {
+for node in document.canvasItems {
     switch node.kind {
     case .screen:
         let tree = try document.resolve(node.id)
@@ -43,4 +43,11 @@ for node in document.children(of: CanvasDocument.rootID) {
     default:
         continue
     }
+}
+
+for board in document.tokens.boards() {
+    let layout = LayoutEngine(tokens: document.tokens, appearance: .light).component(board.root)
+    let url = output.appending(path: "tokens.\(board.id).png")
+    try Rasterizer.png(layout, scale: scale)?.write(to: url)
+    print(url.path(percentEncoded: false))
 }

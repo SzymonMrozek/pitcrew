@@ -78,3 +78,22 @@ import Testing
         #expect(Rasterizer.png(layout, scale: 1) != nil)
     }
 }
+
+@Suite struct TokenBoardTests {
+    @Test func boardsAreGroupsInRowsByKind() {
+        let tokens = TokenSet(tokens: [
+            Token("color.text.ink", modes: ["light": .color(RGBA(hex: "#111318")!), "dark": .color(RGBA(hex: "#F1F2F5")!)]),
+            Token("color.accent.base", .system("systemBlue")),
+            Token("type.ui.body", .textStyle("body")),
+            Token("space.4", .number(16)), Token("space.1", .number(4)),
+        ])
+        let boards = tokens.boards()
+        #expect(boards.map(\.id) == ["color.accent", "color.text", "type.ui", "space"])
+        #expect(boards[0].origin.y == boards[1].origin.y && boards[1].origin.x > boards[0].origin.x)
+        #expect(boards[2].origin.y > boards[0].origin.y && boards[3].origin.y > boards[2].origin.y)
+        // Numbers read smallest first, and a color shows both modes' values.
+        #expect(boards[3].root.children.map(\.id) == ["tokens.space.1", "tokens.space.4"])
+        let detail = boards[1].root.first { $0.id == "tokens.color.text.ink.detail" }?[.text]?.string
+        #expect(detail == "#111318 / #F1F2F5")
+    }
+}

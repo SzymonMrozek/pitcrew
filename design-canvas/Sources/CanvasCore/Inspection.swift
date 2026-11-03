@@ -30,6 +30,17 @@ extension TokenSet {
         tokens.keys.filter { self.kind(of: $0) == kind }.sorted()
     }
 
+    /// Tokens of one kind, grouped by the ID up to its last dot: `color.text.ink` is in
+    /// `color.text`, `space.4` in `space`. Groups and their tokens are sorted by ID.
+    public func groups(of kind: TokenKind) -> [(name: String, ids: [TokenID])] {
+        var groups: [(name: String, ids: [TokenID])] = []
+        for id in ids(of: kind) {
+            let name = id.rawValue.lastIndex(of: ".").map { String(id.rawValue[..<$0]) } ?? ""
+            if groups.last?.name == name { groups[groups.count - 1].ids.append(id) } else { groups.append((name, [id])) }
+        }
+        return groups
+    }
+
     /// The literal a token resolves to in a mode, for detaching a property from it.
     public func literal(_ id: TokenID, mode: String = TokenSet.defaultMode) -> Value? {
         switch try? resolve(id, mode: mode) {

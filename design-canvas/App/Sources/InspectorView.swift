@@ -550,21 +550,26 @@ private struct AssetsView: View {
             Text(store.canInsertInstance ? "Insert places an instance after the selected element." : "Select an element on a screen to insert an instance after it.")
         }
         ForEach(TokenKind.allCases, id: \.self) { kind in
-            Section(kind.title) {
-                ForEach(tokens.ids(of: kind), id: \.self) { id in
-                    HStack(spacing: 8) {
-                        if kind == .color {
-                            Swatch(light: StyleInfo.hex(.token(id), tokens: tokens, dark: false), dark: StyleInfo.hex(.token(id), tokens: tokens, dark: true))
+            // One section per group (`color.text`, `space`), each token by its name in the group.
+            ForEach(tokens.groups(of: kind), id: \.name) { group in
+                Section(group.name.isEmpty ? kind.title : "\(kind.title) · \(group.name)") {
+                    ForEach(group.ids, id: \.self) { id in
+                        HStack(spacing: 8) {
+                            if kind == .color {
+                                Swatch(light: StyleInfo.hex(.token(id), tokens: tokens, dark: false), dark: StyleInfo.hex(.token(id), tokens: tokens, dark: true))
+                            }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(group.name.isEmpty ? id.rawValue : String(id.rawValue.dropFirst(group.name.count + 1)))
+                                    .font(.callout.monospaced())
+                                    .help(id.rawValue)
+                                Text(summary(id, kind: kind, tokens: tokens)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text("\(usage[id] ?? 0)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .help("Uses")
                         }
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(id.rawValue).font(.callout.monospaced())
-                            Text(summary(id, kind: kind, tokens: tokens)).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text("\(usage[id] ?? 0)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("Uses")
                     }
                 }
             }

@@ -98,6 +98,15 @@ private struct CanvasOverlay: View {
                     CommentComposer(store: store)
                 }
             }
+            // The comment tool's cursor: a new pin follows the pointer, tip on the point a
+            // click would pin.
+            if store.isCommenting, store.draft == nil, let pointer = store.pointer {
+                pinned(at: camera.pageToView(pointer)) {
+                    CommentPin(number: store.comments.threads.count + 1, isResolved: false, byAgent: false, isSelected: true)
+                        .opacity(0.85)
+                }
+                .allowsHitTesting(false)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -182,8 +191,10 @@ private struct CanvasOverlay: View {
         switch item.content {
         case .screen(let screen, let scheme):
             "\(screen[.name]?.string ?? "Screen") · \(scheme == .dark ? "Dark" : "Light")"
-        case .component(let name, _):
-            "◇ \(name)"
+        case .component(let name, _, let scheme):
+            "◇ \(name)" + (scheme == .dark ? " · Dark" : "")
+        case .tokens(let name, _, let scheme):
+            name + (scheme == .dark ? " · Dark" : "")
         }
     }
 

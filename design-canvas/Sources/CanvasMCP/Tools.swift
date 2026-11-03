@@ -25,7 +25,7 @@ extension CanvasMCPServer {
     static let tools: [JSON] = [
         tool(
             "list_items",
-            "List the screens and components on the canvas with their root node IDs.",
+            "List the screens and components on the canvas, page by page, with their root node IDs.",
             properties: [:]
         ),
         tool(
