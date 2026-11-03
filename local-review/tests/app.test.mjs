@@ -62,7 +62,7 @@ test('a late response cannot overwrite a more recently selected iteration', asyn
   const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
   const pending = [], displayed = [];
   const context = vm.createContext({
-    loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true, chooseInitialScope: false,
+    loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
     $: () => ({}),
     api: () => new Promise(resolve => pending.push(resolve)),
     updateChrome: () => displayed.push(context.state.scope), renderComments: () => {},
@@ -77,27 +77,27 @@ test('a late response cannot overwrite a more recently selected iteration', asyn
   assert.equal(context.state.scope, 'iteration-2');
 });
 
-test('new review pages default to branch start while explicit scopes and missing history remain usable', async () => {
+test('new review pages default to the merge base while explicit comparisons remain usable', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderMergeRequest('));
   const readSelection = source.slice(source.indexOf('function readSelection('), source.indexOf('function scopedPath('));
-  for (const [query, branchStart, expected, comparison] of [
-    ['', 'abc', 'branch-start', 'branch-start'], ['', null, 'full', 'full'],
-    ['iteration=full&compare=target', 'abc', 'target', 'target'], ['iteration=full', 'abc', 'full', 'full'],
-    ['iteration=one&compare=target', 'abc', 'one', 'target'], ['iteration=one', 'abc', 'one', 'branch-start'],
+  for (const [query, expected, comparison] of [
+    ['', 'full', 'full'], ['iteration=full', 'full', 'full'],
+    ['iteration=full&compare=branch-start', 'branch-start', 'branch-start'], ['iteration=full&compare=target', 'target', 'target'],
+    ['iteration=one&compare=target', 'one', 'target'], ['iteration=one', 'one', 'full'],
   ]) {
     const scopes = [], displayed = [];
     const context = vm.createContext({
       loadVersion: 0, renderVersion: 0, tab: 'comments', definitionsRequested: true,
       $: () => ({}), params: new URLSearchParams(query),
-      api: async () => {scopes.push(context.iteration); return {branchStart, scope: context.iteration || 'full', settings: {diffMode: 'unified'}, job: {status: 'idle'}};},
+      api: async () => {scopes.push(context.iteration); return {branchStart: 'abc', scope: context.iteration, settings: {diffMode: 'unified'}, job: {status: 'idle'}};},
       updateChrome: () => displayed.push(context.iteration), renderComments: () => {},
     });
-    vm.runInContext(readSelection + '\nvar {scope: reviewScope, comparison, iteration} = readSelection(params); var chooseInitialScope = comparison === null;\n' + load, context);
+    vm.runInContext(readSelection + '\nvar {scope: reviewScope, comparison, iteration} = readSelection(params);\n' + load, context);
     await context.load();
     assert.deepEqual(displayed, [expected]);
     assert.equal(context.comparison, comparison);
-    assert.equal(scopes.length, !query && branchStart ? 2 : 1);
+    assert.equal(scopes.length, 1);
   }
 });
 
@@ -112,6 +112,7 @@ test('comparison links keep review scope separate and preserve older links', () 
     ['iteration=full&compare=branch-start', 'full', 'branch-start', 'branch-start'],
     ['iteration=one&compare=target', 'one', 'target', 'one'],
     ['iteration=thread&compare=branch-start', 'thread', 'branch-start', 'thread'],
+    ['', 'full', 'full', 'full'],
   ]) {
     const selected = context.readSelection(new URLSearchParams(query));
     assert.equal(selected.scope, scope); assert.equal(selected.comparison, comparison); assert.equal(selected.iteration, effective);

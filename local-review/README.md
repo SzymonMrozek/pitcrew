@@ -352,14 +352,15 @@ a stopped worker in its original queue position.
 
 **Compare against** is a separate control for Full review:
 
-- **Branch start** (default): current contents against the commit recorded when
-  Git created the branch. The tool retains that commit even after a rebase or
+- **Merge base** (default): the live branch against its current merge base.
+- **Branch start:** current contents against the commit recorded when Git
+  created the branch. The tool retains that commit even after a rebase or
   reflog expiry. If the creation entry has already expired or was never present
-  locally, this option is disabled and the default falls back to Merge base.
+  locally, this option is disabled. After a rebase it also shows the target
+  changes the branch picked up.
 - **Latest local main** (or the configured target): current contents directly
   against the target branch's latest local commit. Refresh picks up target
   updates; this does not fetch the remote.
-- **Merge base:** the live branch against its current merge base.
 
 Thread and interaction views use their recorded before/after snapshots, so
 Compare against is disabled there. Returning to Full review restores the chosen
@@ -367,7 +368,8 @@ comparison source. Links preserve both selections. Approval always covers the
 full branch diff against its merge base, regardless of the selected preview.
 
 Snapshots are Git tree objects written through a private index and kept under
-`refs/<name>/<review>/…`. They include untracked files, deletions, modes and
+`refs/<name>/<review>/…`. The private index starts as a copy of the
+worktree's index, so only changed files are hashed again. They include untracked files, deletions, modes and
 symlinks, and never touch `HEAD` or your staging index. Nothing appears in
 branch history. They survive worktree removal, and saved reviews of removed
 worktrees stay readable.
