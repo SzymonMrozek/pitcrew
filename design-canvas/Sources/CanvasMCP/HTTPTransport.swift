@@ -121,7 +121,7 @@ struct HTTPRequest: Equatable {
             let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
             headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let length = Int(headers["content-length"] ?? "0") ?? 0
+        guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else { return .invalid }
         let body = data[end.upperBound...]
         guard body.count >= length else { return .incomplete }
         return .complete(HTTPRequest(

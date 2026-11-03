@@ -242,6 +242,13 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         #expect(parsed.body == Data("{}\n\n".utf8))
     }
 
+    @Test func rejectsMalformedContentLengths() {
+        for length in ["-1", "abc", ""] {
+            let request = Data("POST /mcp HTTP/1.1\r\nContent-Length: \(length)\r\n\r\n{}".utf8)
+            #expect(HTTPRequest.parse(request) == .invalid)
+        }
+    }
+
     @Test func onlyLocalOriginsPass() {
         #expect(HTTPTransport.isLocal(origin: "http://localhost:6274"))
         #expect(HTTPTransport.isLocal(origin: "http://127.0.0.1"))
