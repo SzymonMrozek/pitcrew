@@ -121,6 +121,16 @@ Each of these cost real debugging time.
   agent process in the ancestry decides which one is calling. Workers clear every
   inherited marker and set `<NAME>_HANDOFF`, so a worker can't overwrite the
   original conversation.
+- **A fresh private index rehashes the whole worktree.** `read-tree HEAD` leaves
+  no stat data, so `git add --all` read every tracked file and ran each Git LFS
+  file through its filter: seconds per snapshot. Snapshots copy the worktree's
+  index instead, with its mtime: Git compares entry mtimes with the index's own
+  to catch files edited while it was written, and a copy stamped now would
+  trust their stale stat data and miss same-size edits.
+- **Each Git call costs a process.** On macOS `/usr/bin/git` is an xcrun shim
+  that triples the cost of every call. The tool runs the binary from
+  `git --exec-path` and reads a diff's files through one `ls-tree` per side and
+  one `cat-file --batch`, instead of up to three calls per file.
 - **Focus isn't attention.** A merge agent's background Chrome tab reported
   focus and counted a whole merge as review time. Time now needs real input in
   the last two minutes, and it stops once a merge is requested.
@@ -174,9 +184,9 @@ Each of these cost real debugging time.
   Programmatic scrolling and zero-distance pointer events don't count as input.
 
 - **The default comparison has its own comments.** Comments belong to the
-  scope they were written in, and Full review opens on **Branch start** when
-  that commit is known. Agent findings are written to the scope the page opens
-  with, with that view's fingerprints, or nobody sees them.
+  scope they were written in, and Full review opens on **Merge base**. Agent
+  findings are written to the scope the page opens with, with that view's
+  fingerprints, or nobody sees them.
 - **Allowing tools doesn't remove the others.** Claude's `--allowedTools` only
   pre-approves; the person's settings can still allow Edit or Bash, and even
   `git diff --output` writes files. The reviewer runs with `--restricted`,

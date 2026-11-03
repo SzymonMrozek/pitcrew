@@ -16,7 +16,6 @@ document.querySelector('.brand').href = location.pathname + location.search + '#
 document.querySelector('#queue-page').href = '/queue.html' + (reviewId ? '?review=' + encodeURIComponent(reviewId) : '') + '#' + token;
 document.querySelector('#queue').onclick = () => {document.querySelector('#queue-dialog').showModal(); void refreshQueue();};
 let {scope: reviewScope, comparison, iteration} = readSelection(new URLSearchParams(location.search));
-let chooseInitialScope = comparison === null;
 const watchedMerge = new URLSearchParams(location.search).get('merge');
 let mergeLogLoading = false, mergeLogRunning = false, mergeLogId;
 let definitionsRequested = false, state, active, tab = 'all', commentTarget, lineSelection, renderVersion = 0, loadVersion = 0, simulatorOpening = false, devMenuTriggering = false, claudeConversationOpening = false;
@@ -32,7 +31,7 @@ async function run(action) {try {await action();} catch (error) {notice(error.me
 function readSelection(params) {
   let scope = params.get('iteration') || 'full', comparison = params.get('compare');
   if (['branch-start', 'target'].includes(scope)) {comparison ||= scope; scope = 'full';}
-  else if (scope === 'full' && params.has('iteration')) comparison ||= 'full';
+  comparison ||= 'full';
   return {scope, comparison, iteration: scope === 'full' ? comparison : scope};
 }
 function scopedPath(path, scope = iteration) {if (reviewId) path += (path.includes('?') ? '&' : '?') + 'review=' + encodeURIComponent(reviewId); if (watchedMerge) path += (path.includes('?') ? '&' : '?') + 'merge=' + encodeURIComponent(watchedMerge); return path + (scope ? (path.includes('?') ? '&' : '?') + 'iteration=' + encodeURIComponent(scope) : '');}
@@ -94,7 +93,7 @@ function updateChrome() {
   selector.replaceChildren(full, thread, ...state.iterations.map(i => {const option = el('option', '', `Iteration ${i.number} · ${i.request}`); option.value = i.id; return option;}));
   selector.value = reviewScope;
   const compare = $('#comparison'), mergeBase = el('option', '', 'Merge base'); mergeBase.value = 'full';
-  compare.replaceChildren(branchStart, target, mergeBase);
+  compare.replaceChildren(mergeBase, branchStart, target);
   compare.value = comparison;
   compare.disabled = reviewScope !== 'full';
   compare.title = compare.disabled ? 'Recorded interactions use their own before/after snapshots. Return to Full review to change the comparison source.' : 'Baseline for the full review';
@@ -165,14 +164,6 @@ async function load(refresh = false) {
   const version = ++loadVersion; ++renderVersion;
   const nextState = await api(refresh ? 'refresh' : 'state', refresh ? {} : undefined);
   if (version !== loadVersion) return;
-  if (chooseInitialScope) {
-    chooseInitialScope = false;
-    comparison = nextState.branchStart ? 'branch-start' : 'full';
-    if (reviewScope === 'full') {
-      iteration = comparison;
-      if (iteration === 'branch-start') return load();
-    }
-  }
   state = nextState;
   $('#mode').value = state.settings.diffMode;
   if (refresh) {fileLines.clear(); sources.clear();}
@@ -680,7 +671,6 @@ $('#iteration').onchange = $('#comparison').onchange = () => run(async () => {
 window.addEventListener('popstate', () => run(async () => {
   checkpointReviewTime();
   ({scope: reviewScope, comparison, iteration} = readSelection(new URLSearchParams(location.search)));
-  chooseInitialScope = comparison === null;
   sampleReviewTime(); active = null; await load();
 }));
 $('#refresh').onclick = () => run(() => load(true));

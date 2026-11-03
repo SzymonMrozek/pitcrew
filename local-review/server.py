@@ -32,9 +32,10 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.11.1'
+RELEASE = '0.12.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
+GIT = 'git'
 WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
 DEFAULTS = {
     "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
@@ -368,6 +369,48 @@ class ElixirNavigation:
 
 # Code navigation by the language the page highlights; see definitions.mjs for which tokens link.
 NAVIGATION = {'swift': SwiftNavigation(), 'elixir': ElixirNavigation()}
+
+
+def git_executable():
+    """The Git binary itself. macOS's /usr/bin/git is an xcrun shim that adds tens of milliseconds to every call."""
+    global GIT
+    # Resolved again if it disappears, such as after switching Xcode, because the shared server runs for days.
+    if GIT == 'git' or not os.access(GIT, os.X_OK):
+        try:
+            result = subprocess.run(['git', '--exec-path'], capture_output=True, text=True, timeout=10)
+            path = Path(result.stdout.strip()) / 'git'
+            GIT = str(path) if not result.returncode and os.access(path, os.X_OK) else 'git'
+        except (OSError, subprocess.SubprocessError):
+            GIT = 'git'
+    return GIT
+
+
+def tree_entries(git, tree):
+    """Map each path in a tree to its mode, type and object ID, with one Git call."""
+    entries = {}
+    for line in git('ls-tree', '-r', '-z', '--full-tree', tree, binary=True).split(b'\0'):
+        if line:
+            info, _, path = line.partition(b'\t')
+            mode, kind, oid = info.decode().split()
+            entries[path.decode('utf-8', 'surrogateescape')] = (int(mode, 8), kind, oid)
+    return entries
+
+
+def read_blobs(git, oids):
+    """Read many blobs through one cat-file process instead of one git show per file."""
+    oids = list(dict.fromkeys(oids))
+    if not oids:
+        return {}
+    output, blobs, offset = git('cat-file', '--batch', binary=True, data=''.join(oid + '\n' for oid in oids).encode()), {}, 0
+    for oid in oids:
+        end = output.index(b'\n', offset)
+        header = output[offset:end].split()
+        if header[-1] == b'missing':
+            raise ValueError(f'Git object {oid} is missing')
+        size = int(header[2])
+        blobs[oid] = output[end + 1:end + 1 + size]
+        offset = end + 2 + size
+    return blobs
 
 
 def digest(data):
@@ -704,8 +747,9 @@ class Review:
             self.git('rev-parse', '--verify', target + '^{commit}')
             self.refresh()
 
-    def git(self, *args, binary=False, check=True):
-        result = subprocess.run(['git', *args] if self.repo.exists() else ['git', '--git-dir', str(self.common), *args], cwd=self.repo if self.repo.exists() else self.common, capture_output=True, timeout=30)
+    def git(self, *args, binary=False, check=True, data=None):
+        result = subprocess.run([git_executable(), *args] if self.repo.exists() else [git_executable(), '--git-dir', str(self.common), *args],
+                                cwd=self.repo if self.repo.exists() else self.common, input=data, capture_output=True, timeout=30)
         if check and result.returncode:
             raise ValueError(result.stderr.decode(errors='replace').strip())
         return result.stdout if binary else result.stdout.decode(errors='replace')
@@ -717,7 +761,7 @@ class Review:
         if not file.resolve().is_relative_to(self.repo):
             raise ValueError('Path escapes the worktree')
         if file.is_dir():
-            result = subprocess.run(['git', '-C', str(file), 'rev-parse', 'HEAD'], capture_output=True, timeout=10)
+            result = subprocess.run([git_executable(), '-C', str(file), 'rev-parse', 'HEAD'], capture_output=True, timeout=10)
             return result.stdout
         return file.read_bytes() if file.is_file() else b''
 
@@ -739,26 +783,34 @@ class Review:
         changed = [(names[i].decode(), names[i + 1].decode('utf-8', 'surrogateescape')) for i in range(0, len(names) - 1, 2)]
         untracked = [] if after else self.git('ls-files', '--others', '--exclude-standard', '-z', binary=True).split(b'\0')
         changed += [('?', path.decode('utf-8', 'surrogateescape')) for path in untracked if path]
+        # Two tree listings and one cat-file process read every side, instead of up to three Git calls per file.
+        old_entries = tree_entries(self.git, base) if changed else {}
+        new_entries = tree_entries(self.git, after) if after and changed else {}
+        sides = [(old_entries.get(path) if status not in ('A', '?') else None, new_entries.get(path) if status != 'D' else None) for status, path in changed]
+        contents = read_blobs(self.git, [entry[2] for pair in sides for entry in pair if entry and entry[1] == 'blob'])
+        blob = lambda entry: contents[entry[2]] if entry and entry[1] == 'blob' else b''
         files, blobs = [], {}
         for status, path in sorted(changed, key=lambda item: item[1]):
-            old = self.git('show', f'{base}:{path}', binary=True, check=False) if status not in ('A', '?') else b''
-            tree_entry = self.git('ls-tree', after, '--', path, binary=True) if after and status != 'D' else b''
-            submodule = tree_entry.startswith(b'160000 ') if after else (self.repo / path).is_dir() and not (self.repo / path).is_symlink()
-            # A saved tree's gitlink names a commit inside the submodule, which git show cannot read here.
-            new = (self.git('show', f'{after}:{path}', binary=True) if after else self.work_blob(path)) if status != 'D' and not submodule else b''
+            old = blob(old_entries.get(path)) if status not in ('A', '?') else b''
+            tree_entry = new_entries.get(path) if after and status != 'D' else None
+            if after and status != 'D' and not tree_entry:
+                raise ValueError(f'{path} is missing from snapshot {after}')
+            submodule = bool(tree_entry and tree_entry[0] == 0o160000) if after else (self.repo / path).is_dir() and not (self.repo / path).is_symlink()
+            # A saved tree's gitlink names a commit inside the submodule, which cat-file cannot read here.
+            new = (blob(tree_entry) if after else self.work_blob(path)) if status != 'D' and not submodule else b''
             submodule_dirty = False
             if submodule:
-                old = self.git('rev-parse', f'{base}:{path}', binary=True, check=False) if status not in ('A', '?') else b''
+                old = (old_entries[path][2] + '\n').encode() if status not in ('A', '?') and path in old_entries else b''
                 if after:
-                    new = self.git('rev-parse', f'{after}:{path}', binary=True)
+                    new = (tree_entry[2] + '\n').encode()
                 else:
                     new = self.work_blob(path)
-                    result = subprocess.run(['git', '-C', str(self.repo / path), 'status', '--porcelain'], capture_output=True, timeout=30)
+                    result = subprocess.run([git_executable(), '-C', str(self.repo / path), 'status', '--porcelain'], capture_output=True, timeout=30)
                     submodule_dirty = bool(result.returncode or result.stdout)
             # Executable-bit and symlink changes matter even with identical bytes.
             # Working files use Git's modes, so they fingerprint like a snapshot of them.
             if after:
-                mode = int(tree_entry.split(b' ', 1)[0], 8) if tree_entry else 0
+                mode = tree_entry[0] if tree_entry else 0
             elif submodule:
                 mode = 0o160000
             elif (self.repo / path).is_symlink():
@@ -936,7 +988,7 @@ class Review:
             with tempfile.TemporaryDirectory(dir=self.store) as directory:
                 env = {**os.environ, 'GIT_INDEX_FILE': str(Path(directory) / 'index')}
                 def git(*args, data=None):
-                    result = subprocess.run(['git', '--git-dir', str(self.common), *args], env=env,
+                    result = subprocess.run([git_executable(), '--git-dir', str(self.common), *args], env=env,
                                             input=data, capture_output=True, timeout=60)
                     if result.returncode:
                         raise ValueError('Cannot isolate recorded thread changes after overlapping updates. Use Full diff. ' + result.stderr.decode(errors='replace').strip())
@@ -1537,13 +1589,20 @@ class Review:
     def snapshot(self, name):
         # A private index writes immutable Git trees without staging or committing branch changes.
         with tempfile.TemporaryDirectory(dir=self.store) as directory:
-            env = {**os.environ, 'GIT_INDEX_FILE': str(Path(directory) / 'index')}
+            index = Path(directory) / 'index'
+            env = {**os.environ, 'GIT_INDEX_FILE': str(index)}
             def git(*args):
-                result = subprocess.run(['git', *args], cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
+                result = subprocess.run([git_executable(), *args], cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
                 if result.returncode:
                     raise ValueError(result.stderr.strip())
                 return result.stdout.strip()
-            git('read-tree', 'HEAD')
+            # A copy of the worktree's index keeps its file stat data, so git add rehashes only changed
+            # files. A fresh index would run every tracked file, Git LFS ones included, through its filters.
+            # The copy keeps the index's mtime, which Git compares with entry mtimes to catch racily clean files.
+            try:
+                shutil.copy2(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index').strip(), index)
+            except OSError:
+                git('read-tree', 'HEAD')
             git('add', '--all')
             tree = git('write-tree')
             ref = f'refs/{self.config["name"]}/{self.session_id}/{name}'
@@ -1664,7 +1723,7 @@ class Review:
         # A submodule's diff is otherwise two commit hashes, and the reviewer can't run Git to expand it.
         diff.write_text(self.git('diff', '--no-ext-diff', '--no-renames', '--submodule=diff', before, after, '--', *reviewed) if reviewed else '')
         # Findings become comments on the Full review the page opens with, so they carry its file IDs and fingerprints.
-        comment_scope = 'branch-start' if self.session.get('branchStart') else 'full'
+        comment_scope = 'full'
         view, blobs = self.view(comment_scope)[:2]
         files = {f['path']: {'id': f['id'], 'fingerprint': f['fingerprint'], 'lines': len(blobs[f['id']]['new'].decode(errors='replace').splitlines())}
                  for f in view if f['path'] in reviewed}

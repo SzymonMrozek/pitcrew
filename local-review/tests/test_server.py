@@ -976,6 +976,37 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(len(self.review.session['iterations']), 1)
         self.assertEqual(self.review.view('user-1')[1][file['id']]['new'], b'let value = 99\n')
 
+    def test_snapshots_start_from_the_worktree_index_but_record_the_worktree(self):
+        self.write('Staged.swift', 'staged\n')
+        self.git('add', 'Staged.swift')
+        self.write('Staged.swift', 'edited after staging\n')
+        self.git('rm', '-q', '--cached', 'Interactor.swift')
+        self.write('new.txt', 'untracked\n')
+        staged = self.git('diff', '--cached')
+        tree = self.review.snapshot('seeded')
+        self.assertEqual(self.git('diff', '--cached'), staged)
+        self.assertEqual(self.git('show', tree + ':Staged.swift'), 'edited after staging')
+        self.assertEqual(self.git('show', tree + ':Interactor.swift'), 'let value = 2')
+        self.assertEqual(self.git('show', tree + ':new.txt'), 'untracked')
+        Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index')).unlink()
+        self.assertEqual(self.review.snapshot('without-index'), tree)
+
+    def test_snapshots_see_same_size_edits_made_while_the_index_was_written(self):
+        # An edit in the same instant as the index write matches the entry's stat data; only the index's mtime marks it racy.
+        self.git('config', 'core.trustctime', 'false')
+        index, file, stamp = Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index')), self.root / 'Interactor.swift', 1_700_000_000 * 10**9
+        os.utime(file, ns=(stamp, stamp))
+        self.git('add', 'Interactor.swift')
+        os.utime(index, ns=(stamp, stamp))
+        self.write('Interactor.swift', 'let value = 7\n')
+        os.utime(file, ns=(stamp, stamp))
+        self.assertEqual(self.git('show', self.review.snapshot('racy') + ':Interactor.swift'), 'let value = 7')
+
+    def test_git_is_resolved_again_when_its_binary_disappears(self):
+        with patch.object(m, 'GIT', '/missing/git'):
+            self.assertEqual(Path(m.git_executable()).name, 'git')
+            self.assertTrue(m.GIT == 'git' or os.access(m.GIT, os.X_OK))
+
     def test_cli_iterations_and_browser_comments_do_not_overwrite_each_other(self):
         browser = m.Review(self.root, 'main', auto_rank=False)
         self.review.begin_iteration('one', 'Change calculation')
@@ -2820,12 +2851,12 @@ class AgentReviewTests(unittest.TestCase):
         self.assertEqual((record['status'], record['summary']), ('finished', 'Looks mostly fine.'))
         comments = self.review.session['comments']
         self.assertEqual([(c['path'], c['severity'], c['side'], c['line'], c['scope']) for c in comments],
-                         [('Interactor.swift', 'important', 'new', 2, 'branch-start'), ('Interactor.swift', 'nit', 'file', 0, 'branch-start'),
-                          ('Elsewhere.swift', 'nit', 'file', 0, 'branch-start')])
+                         [('Interactor.swift', 'important', 'new', 2, 'full'), ('Interactor.swift', 'nit', 'file', 0, 'full'),
+                          ('Elsewhere.swift', 'nit', 'file', 0, 'full')])
         self.assertEqual(comments[2]['fingerprint'], '')
         self.assertEqual(comments[0]['author'], {'kind': 'agent-review', 'provider': 'claude', 'review': record['id']})
-        self.assertEqual(comments[0]['fingerprint'], self.review.file(comments[0]['file'], 'branch-start')['fingerprint'])
-        self.assertEqual(len(self.review.state('branch-start')['session']['comments']), 3)
+        self.assertEqual(comments[0]['fingerprint'], self.review.file(comments[0]['file'], 'full')['fingerprint'])
+        self.assertEqual(len(self.review.state('full')['session']['comments']), 3)
         self.assertEqual(self.review.handoff_state()['unsent'], 0)
 
     def test_finishing_waits_for_the_reviewer_and_an_answer_to_every_finding(self):
