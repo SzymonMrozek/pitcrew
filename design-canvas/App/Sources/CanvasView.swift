@@ -1,149 +1,56 @@
 import CanvasCore
+import CanvasEngine
 import CanvasRender
 import SwiftUI
 
-/// The canvas in three layers:
+/// The canvas in two layers:
 ///
-/// 1. Offscreen renderers: every item rendered live with real SwiftUI at 1:1, under
-///    the Metal view. Pan and zoom never touch them, so layout and measured frames stay
-///    still while the camera moves.
-/// 2. Metal: draws each item from a texture snapshot of its renderer. A snapshot is
-///    retaken only when the item's content changes or the zoom needs more pixels.
-/// 3. Overlay: titles, selection and hover outlines, comment pins and the composer,
-///    positioned with the camera.
+/// 1. Metal: the dot grid, each item's shadow, and tiles drawn by the layout engine
+///    from the document, on background threads, at the resolution the zoom needs.
+/// 2. Overlay: titles, selection and hover outlines, measurements, comment pins and the
+///    composer, positioned with the camera.
 struct CanvasView: View {
     @Bindable var store: EditorStore
     let scene: CanvasScene
 
     var body: some View {
         let items = store.items
-        ZStack(alignment: .topLeading) {
-            OffscreenRenderers(store: store, items: items)
+        // The Metal view alone sizes the canvas, so nothing the overlay lays out, such as
+        // a title as wide as a zoomed-in screen, can change the camera's view size.
+        metal(items)
+            .overlay(alignment: .topLeading) { CanvasOverlay(store: store, camera: scene.camera, items: items) }
+            .clipped()
+    }
+
+    @ViewBuilder
+    private func metal(_ items: [CanvasItem]) -> some View {
+        Group {
             if scene.renderer != nil {
                 MetalCanvas(
                     scene: scene,
-                    quads: items.map { CanvasQuad(id: $0.id, rect: store.pageRect(of: $0), cornerRadius: cornerRadius(of: $0)) },
-                    onTap: { store.handleTap(atPage: scene.camera.viewToPage($0)) },
-                    onHover: { store.hover(atPage: $0.map(scene.camera.viewToPage)) }
+                    quads: items.map { item in
+                        let layout = store.layout(of: item.id)
+                        return CanvasQuad(
+                            id: item.id, rect: store.pageRect(of: item), cornerRadius: layout?.cornerRadius ?? 0,
+                            background: layout?.background ?? RGBA(red: 1, green: 1, blue: 1)
+                        )
+                    },
+                    items: items.compactMap { item in
+                        store.layout(of: item.id).map {
+                            SceneItem(id: item.id, origin: item.origin, layout: $0, version: store.contentKey(of: item))
+                        }
+                    },
+                    onTap: { point, click in
+                        store.handleTap(atPage: scene.camera.viewToPage(point), drill: click == .double, deep: click == .deep)
+                    },
+                    onHover: { store.hover(atPage: $0.map(scene.camera.viewToPage)) },
+                    onOptionKey: { if store.isOptionDown != $0 { store.isOptionDown = $0 } }
                 )
             } else {
                 ContentUnavailableView("Metal is unavailable", systemImage: "exclamationmark.triangle")
             }
-            CanvasOverlay(store: store, camera: scene.camera, items: items)
-            TextureRefresher(store: store, scene: scene, items: items)
         }
-        .clipped()
-    }
-
-    private func cornerRadius(of item: CanvasItem) -> CGFloat {
-        switch item.content {
-        case .screen(let screen, _): Device.named(screen[.device]?.string).cornerRadius
-        case .component: 10
-        }
-    }
-}
-
-/// Live renderers stacked at the origin and covered by the opaque Metal view.
-private struct OffscreenRenderers: View {
-    let store: EditorStore
-    let items: [CanvasItem]
-
-    var body: some View {
-        Color.clear
-            .overlay(alignment: .topLeading) {
-                ZStack(alignment: .topLeading) {
-                    ForEach(items) { item in
-                        switch item.content {
-                        case .screen(let screen, let scheme):
-                            ScreenView(screen, tokens: store.document.tokens, colorScheme: scheme, frames: store.registry(for: item.id))
-                        case .component(_, let root):
-                            ComponentPreview(root, tokens: store.document.tokens, frames: store.registry(for: item.id))
-                        }
-                    }
-                }
-                .fixedSize()
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-}
-
-/// Retakes texture snapshots when content changes or the zoom needs a sharper level.
-/// Only this small view observes the camera, so panning re-evaluates nothing else.
-private struct TextureRefresher: View {
-    let store: EditorStore
-    let scene: CanvasScene
-    let items: [CanvasItem]
-    @State private var keys: [String: Int] = [:]
-
-    /// Pixels per point of a texture. Capped: a 6x iPhone screen is ~70 MB with mips.
-    private static let levels: [CGFloat] = [1, 2, 3, 4]
-
-    private var level: CGFloat {
-        Self.levels.first { $0 >= scene.displayScale } ?? Self.levels.last!
-    }
-
-    private struct Trigger: Equatable {
-        let revision: Int
-        let items: [String]
-        let level: CGFloat
-        let sizes: [CGSize]
-    }
-
-    var body: some View {
-        let trigger = Trigger(
-            revision: store.revision,
-            items: items.map(\.id),
-            level: level,
-            sizes: items.map { store.size(of: $0) }
-        )
-        Color.clear
-            .allowsHitTesting(false)
-            .task(id: trigger) {
-                // Wait for the offscreen renderers to show the new state, then retry
-                // items that were not on screen yet.
-                for attempt in 0..<20 {
-                    try? await Task.sleep(for: .milliseconds(attempt == 0 ? 30 : 150))
-                    if Task.isCancelled || refresh() { break }
-                }
-            }
-    }
-
-    /// Returns true when every item has an up-to-date texture.
-    @MainActor
-    private func refresh() -> Bool {
-        guard let renderer = scene.renderer else { return true }
-        let visible = scene.camera.visiblePageRect
-        var complete = true
-        for item in items {
-            let key = store.contentKey(of: item)
-            let current = renderer.textureScale(for: item.id)
-            // Off-screen items keep their resolution; only visible ones sharpen.
-            let wanted = store.pageRect(of: item).intersects(visible) ? level : max(current ?? 1, 1)
-            guard keys[item.id] != key || (current ?? 0) < wanted else { continue }
-            guard let image = snapshot(item, scale: wanted) else {
-                complete = false
-                continue
-            }
-            renderer.setTexture(image, scale: wanted, for: item.id)
-            keys[item.id] = key
-        }
-        renderer.removeTextures(except: Set(items.map(\.id)))
-        scene.setNeedsDisplay()
-        return complete
-    }
-
-    @MainActor
-    private func snapshot(_ item: CanvasItem, scale: CGFloat) -> CGImage? {
-        switch item.content {
-        case .screen:
-            return store.registry(for: item.id).snapshot(scale: scale)?.cgImage
-        case .component(_, let root):
-            // Plain SwiftUI without UIKit-backed views, so ImageRenderer draws it faithfully.
-            let renderer = ImageRenderer(content: ComponentPreview(root, tokens: store.document.tokens))
-            renderer.scale = scale
-            return renderer.cgImage
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -161,7 +68,7 @@ private struct CanvasOverlay: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(width: max(rect.width, 1), alignment: .leading)
+                    .frame(width: min(max(rect.width, 1), max(camera.viewSize.width, 1)), alignment: .leading)
                     .offset(x: rect.minX, y: rect.minY - 20)
             }
             .allowsHitTesting(false)
@@ -170,7 +77,9 @@ private struct CanvasOverlay: View {
                 outline(hovered, width: 1)
             }
             if let selection = store.selection {
-                outline(selection, width: 2)
+                outline(selection, width: 2, color: isComponent(selection) ? .purple : .accentColor)
+                measurements(for: selection)
+                labels(for: selection)
             }
 
             ForEach(store.visibleThreads) { thread in
@@ -194,17 +103,79 @@ private struct CanvasOverlay: View {
     }
 
     @ViewBuilder
-    private func outline(_ selection: Selection, width: CGFloat) -> some View {
+    private func outline(_ selection: Selection, width: CGFloat, color: Color = .accentColor) -> some View {
         if let item = items.first(where: { $0.id == selection.item }),
-            let frame = store.registry(for: item.id).frames[selection.node]
+            let frame = store.frames(of: item.id)[selection.node]
         {
             let rect = camera.pageToView(frame.offsetBy(dx: item.origin.x, dy: item.origin.y))
             Rectangle()
-                .strokeBorder(Color.accentColor, lineWidth: width)
+                .strokeBorder(color, lineWidth: width)
                 .frame(width: rect.width, height: rect.height)
                 .offset(x: rect.minX, y: rect.minY)
                 .allowsHitTesting(false)
         }
+    }
+
+    private var isMeasuring: Bool { store.isOptionDown || store.showsSpacing }
+
+    private func isComponent(_ selection: Selection) -> Bool {
+        store.context(of: selection).flatMap(store.component(of:)) != nil
+    }
+
+    private func viewRect(of selection: Selection) -> CGRect? {
+        guard let item = items.first(where: { $0.id == selection.item }),
+            let frame = store.frames(of: item.id)[selection.node]
+        else { return nil }
+        return camera.pageToView(frame.offsetBy(dx: item.origin.x, dy: item.origin.y))
+    }
+
+    /// The selection's name above it, purple for components, and its size below, like Figma.
+    @ViewBuilder
+    private func labels(for selection: Selection) -> some View {
+        // Measurements carry their own labels; the inspector still names the selection.
+        if !isMeasuring, let rect = viewRect(of: selection), let context = store.context(of: selection) {
+            let component = store.component(of: context)
+            let name = component.map { $0.isRoot ? "◇ \($0.name)" : "\(context.node.kind.title) · ◇ \($0.name)" }
+                ?? context.node.kind.title
+            placed(at: CGPoint(x: rect.minX, y: rect.minY - 3), .bottomLeading) {
+                CanvasBadge(text: name, color: component == nil ? .accentColor : .purple)
+            }
+            if let frame = store.frames(of: selection.item)[selection.node] {
+                placed(at: CGPoint(x: rect.midX, y: rect.maxY + 4), .top) {
+                    CanvasBadge(text: "\(frame.width.rounded1) × \(frame.height.rounded1)", color: component == nil ? .accentColor : .purple)
+                }
+            }
+        }
+    }
+
+    /// Padding and gaps of the selection with ⌥ or the Spacing toggle; with ⌥ over
+    /// another node of the same item, the distance to it instead.
+    @ViewBuilder
+    private func measurements(for selection: Selection) -> some View {
+        if let item = items.first(where: { $0.id == selection.item }), isMeasuring {
+            let lines = store.measurements
+            let origin = item.origin
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                let from = camera.pageToView(CGPoint(x: origin.x + line.from.x, y: origin.y + line.from.y))
+                let to = camera.pageToView(CGPoint(x: origin.x + line.to.x, y: origin.y + line.to.y))
+                RedlinePath(from: from, to: to)
+                    .stroke(CanvasBadge.redline, lineWidth: 1)
+                    .allowsHitTesting(false)
+                placed(at: CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2), line.isHorizontal ? .bottom : .leading) {
+                    CanvasBadge(text: line.length.rounded1, color: CanvasBadge.redline)
+                        .padding(line.isHorizontal ? .bottom : .leading, 3)
+                }
+            }
+        }
+    }
+
+    /// Places content so that its `alignment` point sits on a view point.
+    private func placed(at point: CGPoint, _ alignment: Alignment, @ViewBuilder content: () -> some View) -> some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .overlay(alignment: alignment) { content().fixedSize() }
+            .offset(x: point.x, y: point.y)
+            .allowsHitTesting(false)
     }
 
     private func title(of item: CanvasItem) -> String {
@@ -222,6 +193,41 @@ private struct CanvasOverlay: View {
             .frame(width: 0, height: 0)
             .overlay(alignment: .bottomLeading) { content().fixedSize() }
             .offset(x: point.x, y: point.y)
+    }
+}
+
+private struct CanvasBadge: View {
+    static let redline = Color(red: 0.95, green: 0.28, blue: 0.13)
+
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color, in: RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+/// A measured distance with short ticks at both ends.
+private struct RedlinePath: Shape {
+    let from: CGPoint
+    let to: CGPoint
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: from)
+        path.addLine(to: to)
+        let horizontal = from.y == to.y
+        for end in [from, to] {
+            path.move(to: horizontal ? CGPoint(x: end.x, y: end.y - 4) : CGPoint(x: end.x - 4, y: end.y))
+            path.addLine(to: horizontal ? CGPoint(x: end.x, y: end.y + 4) : CGPoint(x: end.x + 4, y: end.y))
+        }
+        return path
     }
 }
 

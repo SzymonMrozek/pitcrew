@@ -13,10 +13,19 @@ public protocol CanvasHost: AnyObject {
     var selected: (item: String, node: String)? { get }
     /// Measured frames in screen points for one rendered canvas item.
     func measuredFrames(item: String) -> [String: CGRect]
+    /// The list row each row's content sits in, keyed like `measuredFrames`.
+    func measuredRows(item: String) -> [String: CGRect]
     func snapshotPNG(item: String) -> Data?
+    /// The same screen rendered with real SwiftUI, or nil where SwiftUI can't render it.
+    func nativeSnapshotPNG(item: String) -> Data?
     /// Page position of a canvas item's top-left corner.
     func canvasOrigin(item: String) -> CGPoint?
     var comments: CommentStore { get set }
+}
+
+extension CanvasHost {
+    public func measuredRows(item: String) -> [String: CGRect] { [:] }
+    public func nativeSnapshotPNG(item: String) -> Data? { nil }
 }
 
 /// MCP over JSON-RPC: `initialize`, `ping`, `tools/list` and `tools/call`.
@@ -127,19 +136,11 @@ public final class CanvasMCPServer {
     /// The resolved node, its ancestors (outermost first) and the root it belongs to.
     private func find(_ id: String, in document: CanvasDocument) throws -> (ResolvedNode, [ResolvedNode], Root) {
         for root in roots(document) {
-            if let path = Self.path(to: id, in: root.tree) {
+            if let path = root.tree.path(to: id) {
                 return (path.last!, Array(path.dropLast()), root)
             }
         }
         throw ToolError("No node \(id). Use get_tree for resolved IDs; nodes inside instances use instance/node paths.")
-    }
-
-    private static func path(to id: String, in node: ResolvedNode) -> [ResolvedNode]? {
-        if node.id == id { return [node] }
-        for child in node.children {
-            if let path = path(to: id, in: child) { return [node] + path }
-        }
-        return nil
     }
 
     private func item(_ root: Root, appearance: String?) -> String {
@@ -174,7 +175,8 @@ public final class CanvasMCPServer {
         guard let id = arguments["node_id"]?.string else { throw ToolError("node_id is required") }
         let document = host.document
         let (node, ancestors, root) = try find(id, in: document)
-        let frames = host.measuredFrames(item: item(root, appearance: arguments["appearance"]?.string))
+        let measured = item(root, appearance: arguments["appearance"]?.string)
+        let frames = host.measuredFrames(item: measured)
         guard case .object(var result) = Self.treeJSON(node, frames: frames, depth: 0) else { return [:] }
 
         result["ancestors"] = .array(ancestors.map { .string("\($0.kind.rawValue) \($0.id)") })
@@ -185,6 +187,41 @@ public final class CanvasMCPServer {
             resolvedTokens[prop.rawValue] = tokenJSON(token, in: document.tokens)
         }
         if !resolvedTokens.isEmpty { result["tokens"] = .object(resolvedTokens) }
+        // Literal values where the design system has tokens of that kind: candidates to bind.
+        let unbound = node.props.keys.sorted().filter { prop in
+            guard let kind = prop.tokenKind, !document.tokens.ids(of: kind).isEmpty else { return false }
+            if case .token? = node[prop] { return false }
+            // `infinity` is a frame limit, not a number a token could stand for.
+            return node[prop] != .string("infinity")
+        }
+        if !unbound.isEmpty {
+            result["unbound"] = .object(Dictionary(uniqueKeysWithValues: unbound.map { prop in
+                (prop.rawValue, JSON.array(document.tokens.ids(of: prop.tokenKind!).map { .string($0.rawValue) }))
+            }))
+        }
+        if let instance = node.instance, let component = document[instance]?[.component]?.string {
+            let name = document[NodeID(component)]?[.name]?.string ?? component
+            var info: [String: JSON] = ["component": .string(component), "name": .string(name), "instance": .string(instance.rawValue)]
+            if instance == node.source, let overrides = document[instance]?.overrides, !overrides.isEmpty {
+                info["overrides"] = .object(Dictionary(uniqueKeysWithValues: overrides.map { target, props in
+                    (target.rawValue, JSON.object(Dictionary(uniqueKeysWithValues: props.map { ($0.key.rawValue, JSON.string($0.value.description)) })))
+                }))
+            }
+            result["component"] = .object(info)
+        }
+        if let spacing = Spacing(of: node.id, in: root.tree, frames: frames, rows: host.measuredRows(item: measured)) {
+            // Padding to the parent per side, and gaps to the neighbours.
+            var entry: [String: JSON] = [:]
+            if let container = spacing.container {
+                entry["container"] = .string(container)
+                entry["measured_to"] = .string(spacing.inRow ? "list row in container" : "container")
+            }
+            for inset in spacing.insets { entry[inset.side.rawValue] = .number(Self.rounded(inset.value)) }
+            for (key, gap) in [("gap_to_previous", spacing.previous), ("gap_to_next", spacing.next)] {
+                if let gap { entry[key] = ["sibling": .string(gap.sibling), "value": .number(Self.rounded(gap.value))] }
+            }
+            result["spacing"] = .object(entry)
+        }
         if let instance = node.instance, instance != node.source {
             result["editing"] = .string(
                 "Inside instance \(instance) of a component. set_property writes an override on that instance; "
@@ -193,6 +230,9 @@ public final class CanvasMCPServer {
         }
         return .object(result)
     }
+
+    /// Points to one decimal, which is what a designer reads.
+    private static func rounded(_ value: CGFloat) -> Double { (Double(value) * 10).rounded() / 10 }
 
     private func selection(_ host: any CanvasHost) throws -> JSON {
         guard let selected = host.selected else { return ["selected": nil] }
@@ -210,6 +250,7 @@ public final class CanvasMCPServer {
 
     private func tokenJSON(_ id: TokenID, in tokens: TokenSet) -> JSON {
         var modes: [String: JSON] = ["token": .string(id.rawValue)]
+        if let kind = tokens.kind(of: id) { modes["kind"] = .string(kind.rawValue) }
         for mode in tokens.modes {
             let value: JSON = switch try? tokens.resolve(id, mode: mode) {
             case .color(let rgba): .string(rgba.hex)
@@ -234,13 +275,27 @@ public final class CanvasMCPServer {
             throw ToolError("No screen or component \(id). Use list_items.")
         }
         let item = item(root, appearance: appearance)
-        guard let png = host.snapshotPNG(item: item) else {
-            throw ToolError("\(item) is not rendered on the canvas right now")
+        let caption: String
+        let png: Data?
+        switch arguments["renderer"]?.string ?? "canvas" {
+        case "canvas":
+            png = host.snapshotPNG(item: item)
+            caption = "\(item), drawn by the canvas engine, at 3 pixels per point"
+        case "native":
+            guard root.node.kind == .screen else { throw ToolError("Only screens render natively") }
+            guard let native = host.nativeSnapshotPNG(item: item) else {
+                throw ToolError("No SwiftUI render of \(item) for the current document yet. Open Preview in the editor, which runs it on the iOS Simulator, then retry.")
+            }
+            png = native
+            caption = "\(item), rendered by SwiftUI on iOS, at 3 pixels per point"
+        case let other:
+            throw ToolError("Unknown renderer \(other). Use canvas or native.")
         }
+        guard let png else { throw ToolError("\(item) is not rendered right now") }
         return [
             "content": [
                 ["type": "image", "data": .string(png.base64EncodedString()), "mimeType": "image/png"],
-                ["type": "text", "text": .string("\(item), rendered natively, in screen points at device scale")],
+                ["type": "text", "text": .string(caption)],
             ],
         ]
     }

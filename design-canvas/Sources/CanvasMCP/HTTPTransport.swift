@@ -7,17 +7,21 @@ import Network
 /// which is the DNS-rebinding protection the MCP spec asks local servers for.
 public final class HTTPTransport: Sendable {
     public typealias Handler = @Sendable (Data) async -> Data?
+    /// Another path than `/mcp`, such as the editor's preview link. Nil answers 404.
+    public typealias Route = @Sendable (_ method: String, _ path: String, _ body: Data) async -> (status: Int, contentType: String?, body: Data)?
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "design-canvas.mcp")
     private let handler: Handler
+    private let route: Route?
 
-    public init(port: UInt16, handler: @escaping Handler) throws {
+    public init(port: UInt16, route: Route? = nil, handler: @escaping Handler) throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
         parameters.allowLocalEndpointReuse = true
         listener = try NWListener(using: parameters)
         self.handler = handler
+        self.route = route
     }
 
     public func start(onState: @escaping @Sendable (NWListener.State) -> Void = { _ in }) {
@@ -57,7 +61,12 @@ public final class HTTPTransport: Sendable {
             return send(HTTPResponse(status: 403, body: Data("Forbidden origin".utf8)), on: connection)
         }
         guard request.path.split(separator: "?").first == "/mcp" else {
-            return send(HTTPResponse(status: 404, body: Data()), on: connection)
+            let response = await route?(request.method, request.path, request.body)
+            return send(
+                response.map { HTTPResponse(status: $0.status, contentType: $0.contentType, body: $0.body) }
+                    ?? HTTPResponse(status: 404, body: Data()),
+                on: connection
+            )
         }
         switch request.method {
         case "POST":
@@ -130,7 +139,7 @@ struct HTTPResponse {
     let body: Data
 
     var serialized: Data {
-        let reason = [200: "OK", 202: "Accepted", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed"][status] ?? "OK"
+        let reason = [200: "OK", 202: "Accepted", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed"][status] ?? "OK"
         var head = "HTTP/1.1 \(status) \(reason)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n"
         if let contentType { head += "Content-Type: \(contentType)\r\n" }
         return Data((head + "\r\n").utf8) + body

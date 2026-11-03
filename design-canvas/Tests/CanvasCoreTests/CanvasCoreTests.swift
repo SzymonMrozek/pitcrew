@@ -130,6 +130,15 @@ import Testing
         #expect(bluetoothTitle[.text] == .string("Bluetooth"))
     }
 
+    @Test func settingReplacesAPropByResolvedID() throws {
+        let screen = try CanvasDocument.sample().resolve("settings")
+        let isOn = screen.first { $0.id == "settings.airplane" }?[.isOn]?.bool ?? false
+        let switched = screen.setting(.isOn, ["settings.airplane": .bool(!isOn)])
+        #expect(switched.first { $0.id == "settings.airplane" }?[.isOn] == .bool(!isOn))
+        #expect(switched.first { $0.id == "settings.wifi" } == screen.first { $0.id == "settings.wifi" })
+        #expect(screen.setting(.isOn, [:]) == screen)
+    }
+
     @Test func instancePropsReplaceTheComponentRoot() throws {
         var document = CanvasDocument.sample()
         try document.apply(.set("settings.wifi", .spacing, .number(20)))
@@ -224,5 +233,136 @@ import Testing
         #expect(throws: CanvasFileError.unsupportedVersion(2)) {
             try CanvasFile.decode(Data(#"{"format": "design-canvas", "version": 2}"#.utf8))
         }
+    }
+}
+
+@Suite struct InspectionTests {
+    @Test func tokensAreGroupedByWhatTheyResolveTo() {
+        let tokens = CanvasDocument.sample().tokens
+        #expect(tokens.ids(of: .textStyle) == ["text.row", "text.rowDetail"])
+        #expect(tokens.ids(of: .number).starts(with: ["radius.button", "radius.card", "radius.icon"]))
+        #expect(!tokens.ids(of: .number).contains("color.label"))
+        #expect(tokens.ids(of: .color).contains("color.label"))
+        #expect(tokens.kind(of: "missing") == nil)
+    }
+
+    @Test func detachingATokenGivesItsLiteral() {
+        let tokens = CanvasDocument.sample().tokens
+        #expect(tokens.literal("space.row") == .number(12))
+        #expect(tokens.literal("color.label") == .string("label"))
+        #expect(tokens.literal("color.accent", mode: "dark") == .color(RGBA(hex: "#0A84FF")!))
+        #expect(tokens.literal("text.rowDetail") == .string("body"))
+    }
+
+    @Test func propertiesTakeTokensOfOneKind() {
+        #expect(Prop.fill.tokenKind == .color)
+        #expect(Prop.spacing.tokenKind == .number)
+        #expect(Prop.font.tokenKind == .textStyle)
+        #expect(Prop.text.tokenKind == nil)
+        #expect(Node.Kind.section.props == [.title])
+        #expect(Node.Kind.text.props.first == .text)
+    }
+
+    @Test func usageCountsPropsOverridesAndAliases() {
+        let usage = CanvasDocument.sample().tokenUsage()
+        #expect(usage["space.row"] == 1)
+        #expect(usage["text.row"] == 2)  // the title and the alias text.rowDetail
+        #expect(usage["brand.coral"] == 2)  // the card's thumbnail and one instance override
+        #expect(usage["brand.outline"] == 1)
+    }
+}
+
+@Suite struct RedlineTests {
+    @Test func insetsMeasureEveryEdge() {
+        let lines = Redlines.insets(of: CGRect(x: 16, y: 8, width: 100, height: 30), in: CGRect(x: 0, y: 0, width: 132, height: 46))
+        #expect(lines.map(\.length) == [16, 16, 8, 8])
+        #expect(lines[0] == Redline(from: CGPoint(x: 0, y: 23), to: CGPoint(x: 16, y: 23)))
+    }
+
+    @Test func gapsRunThroughTheSharedSpan() {
+        let icon = CGRect(x: 0, y: 0, width: 30, height: 30)
+        let title = CGRect(x: 42, y: 5, width: 60, height: 20)
+        #expect(Redlines.gaps(from: icon, to: title) == [Redline(from: CGPoint(x: 30, y: 15), to: CGPoint(x: 42, y: 15))])
+        #expect(Redlines.gaps(from: title, to: icon).map(\.length) == [12])
+        let below = CGRect(x: 10, y: 50, width: 10, height: 10)
+        #expect(Redlines.gaps(from: icon, to: below) == [Redline(from: CGPoint(x: 15, y: 30), to: CGPoint(x: 15, y: 50))])
+    }
+
+    @Test func betweenPicksInsetsForNestedRects() {
+        let outer = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let inner = CGRect(x: 10, y: 10, width: 10, height: 10)
+        #expect(Redlines.between(inner, outer).count == 4)
+        #expect(Redlines.between(outer, inner).count == 4)
+    }
+
+    @Test func spacingOfARowInAnHStack() throws {
+        let tree = try CanvasDocument.sample().resolve("settingRow")
+        let frames: [String: CGRect] = [
+            "settingRow": CGRect(x: 0, y: 0, width: 300, height: 30),
+            "settingRow.icon": CGRect(x: 0, y: 0, width: 30, height: 30),
+            "settingRow.title": CGRect(x: 42, y: 5, width: 60, height: 20),
+            "settingRow.spacer": CGRect(x: 114, y: 0, width: 100, height: 30),
+            "settingRow.value": CGRect(x: 226, y: 5, width: 74, height: 20),
+        ]
+        let spacing = try #require(Spacing(of: "settingRow.title", in: tree, frames: frames))
+        #expect(spacing.container == "settingRow")
+        #expect(spacing.leading == 42)
+        #expect(spacing.top == 5)
+        #expect(spacing.previous?.sibling == "settingRow.icon")
+        #expect(spacing.previous?.value == 12)
+        // The spacer is skipped: the gap runs to the value.
+        #expect(spacing.next?.sibling == "settingRow.value")
+        #expect(spacing.next?.value == 124)
+        // Gaps replace the padding on their side: left and right are gaps, top and bottom padding.
+        #expect(spacing.redlines.map(\.length) == [12, 124, 5, 5])
+    }
+
+    @Test func listRowContentMeasuresToItsRow() throws {
+        let tree = try CanvasDocument.sample().resolve("settings")
+        let frames: [String: CGRect] = [
+            "settings.list": CGRect(x: 0, y: 100, width: 402, height: 700),
+            "settings.wifi": CGRect(x: 32, y: 301, width: 338, height: 30),
+        ]
+        let rows = ["settings.wifi": CGRect(x: 16, y: 290, width: 370, height: 52)]
+        let spacing = try #require(Spacing(of: "settings.wifi", in: tree, frames: frames, rows: rows))
+        #expect(spacing.inRow)
+        #expect(spacing.container == "settings.general")
+        #expect([spacing.leading, spacing.trailing, spacing.top, spacing.bottom] == [16, 16, 11, 11])
+        // Rows are separate cells: no gaps to the rows around it.
+        #expect(spacing.previous == nil && spacing.next == nil)
+    }
+
+    @Test func paddingMeasuresToTheParent() throws {
+        let tree = try CanvasDocument.sample().resolve("settings")
+        let frames: [String: CGRect] = [
+            "settings.profile": CGRect(x: 0, y: 0, width: 300, height: 60),
+            "settings.profile/profileRow.avatar": CGRect(x: 0, y: 8, width: 44, height: 44),
+            "settings.profile/profileRow.text": CGRect(x: 58, y: 10, width: 200, height: 40),
+            "settings.profile/profileRow.name": CGRect(x: 58, y: 10, width: 120, height: 22),
+            "settings.profile/profileRow.detail": CGRect(x: 58, y: 34, width: 200, height: 16),
+        ]
+        let spacing = try #require(Spacing(of: "settings.profile/profileRow.name", in: tree, frames: frames))
+        // The parent is the VStack, even where its edge is the name's own.
+        #expect(spacing.container == "settings.profile/profileRow.text")
+        #expect(spacing.insets.allSatisfy { $0.container == "settings.profile/profileRow.text" })
+        #expect([spacing.leading, spacing.trailing, spacing.top, spacing.bottom] == [0, 80, 0, 18])
+        #expect(spacing.next?.value == 2)
+        // Zero padding draws nothing; the gap below replaces the bottom padding.
+        #expect(spacing.redlines.map(\.length) == [2, 80])
+    }
+
+    @Test func typingCoalescesIntoOneUndoStep() throws {
+        var document = CanvasDocument.sample()
+        var history = History()
+        for text in ["W", "WL", "WLA", "WLAN"] {
+            try history.perform(.set("settingRow.title", .text, .string(text)), on: &document, coalescing: "title")
+        }
+        try history.perform(.set("settingRow.title", .opacity, .number(0.5)), on: &document)
+        try history.undo(&document)
+        #expect(document["settingRow.title"]?[.text] == .string("WLAN"))
+        try history.undo(&document)
+        #expect(document["settingRow.title"]?[.text] == .string("Title"))
+        try history.redo(&document)
+        #expect(document["settingRow.title"]?[.text] == .string("WLAN"))
     }
 }

@@ -21,6 +21,18 @@ public struct ResolvedNode: Hashable, Sendable, Identifiable {
         }
         return nil
     }
+
+    /// The tree with `prop` set on the nodes in `values`, keyed by resolved ID. The preview
+    /// uses it for state changed by interacting, such as a switched toggle.
+    public func setting(_ prop: Prop, _ values: [String: Value]) -> ResolvedNode {
+        guard !values.isEmpty else { return self }
+        var props = props
+        if let value = values[id] { props[prop] = value }
+        return ResolvedNode(
+            id: id, source: source, instance: instance, kind: kind, props: props,
+            children: children.map { $0.setting(prop, values) }
+        )
+    }
 }
 
 public enum ResolveError: Error, Equatable {

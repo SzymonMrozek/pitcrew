@@ -1,6 +1,7 @@
 extension CanvasDocument {
-    /// A Settings screen built from two components and Apple semantic tokens. The app
-    /// opens it and the tests use it, so it stays small and covers every resolve path.
+    /// A Settings screen built from two components and Apple semantic tokens, plus three
+    /// custom screens on a brand design system (`addShowcase`). The app opens it and the
+    /// tests use it.
     public static func sample() -> CanvasDocument {
         var document = CanvasDocument(tokens: TokenSet(tokens: [
             Token("color.accent", modes: [
@@ -17,9 +18,9 @@ extension CanvasDocument {
             Token("space.row", .number(12)),
             Token("text.row", .textStyle("body")),
             Token("text.rowDetail", .alias("text.row")),
-        ]))
+        ] + showcaseTokens))
 
-        var builder = Builder(document: document)
+        var builder = SampleBuilder(document: document)
 
         builder.add("component.settingRow", .component, under: CanvasDocument.rootID, [
             .name: .string("SettingRow"), .x: .number(980), .y: .number(0),
@@ -92,25 +93,26 @@ extension CanvasDocument {
             .title: .string("Sign Out"), .foreground: .token("color.destructive"),
         ])
 
+        addShowcase(&builder)
         document = builder.document
         return document
     }
+}
 
-    private struct Builder {
-        var document: CanvasDocument
+struct SampleBuilder {
+    var document: CanvasDocument
 
-        mutating func add(
-            _ id: NodeID,
-            _ kind: Node.Kind,
-            under parent: NodeID,
-            _ props: [Prop: Value] = [:],
-            overrides: [NodeID: [Prop: Value]] = [:]
-        ) {
-            let node = Node(
-                id: id, kind: kind, parent: parent, order: document.appendOrder(in: parent),
-                props: props, overrides: overrides
-            )
-            do { try document.apply(.insert(node)) } catch { preconditionFailure("Sample node \(id): \(error)") }
-        }
+    mutating func add(
+        _ id: NodeID,
+        _ kind: Node.Kind,
+        under parent: NodeID,
+        _ props: [Prop: Value] = [:],
+        overrides: [NodeID: [Prop: Value]] = [:]
+    ) {
+        let node = Node(
+            id: id, kind: kind, parent: parent, order: document.appendOrder(in: parent),
+            props: props, overrides: overrides
+        )
+        do { try document.apply(.insert(node)) } catch { preconditionFailure("Sample node \(id): \(error)") }
     }
 }

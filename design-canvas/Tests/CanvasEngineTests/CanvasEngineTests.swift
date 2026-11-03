@@ -1,0 +1,80 @@
+import CanvasCore
+import CoreGraphics
+import Testing
+@testable import CanvasEngine
+
+/// Frames the native SwiftUI render of the sample produced on the iOS 26 simulator
+/// (iPhone 17 Pro). The engine must match them within half a point.
+@Suite struct FidelityTests {
+    let layout = LayoutEngine(tokens: CanvasDocument.sample().tokens, appearance: .light)
+        .screen(try! CanvasDocument.sample().resolve("settings"), device: .named("iPhone 17 Pro"))
+
+    private func expectFrame(_ id: String, _ expected: CGRect, tolerance: CGFloat = 0.5, sourceLocation: SourceLocation = #_sourceLocation) {
+        guard let frame = layout.frames[id] else {
+            Issue.record("No frame for \(id)", sourceLocation: sourceLocation)
+            return
+        }
+        for (actual, wanted) in [(frame.minX, expected.minX), (frame.minY, expected.minY), (frame.width, expected.width), (frame.height, expected.height)] {
+            #expect(abs(actual - wanted) <= tolerance, "\(id): \(frame) vs \(expected)", sourceLocation: sourceLocation)
+        }
+    }
+
+    @Test func listRowsMatchTheNativeRender() {
+        expectFrame("settings.profile", CGRect(x: 32, y: 183, width: 249.5, height: 41.5))
+        expectFrame("settings.profile/profileRow.name", CGRect(x: 86, y: 183, width: 147, height: 24))
+        expectFrame("settings.airplane", CGRect(x: 32, y: 313.5, width: 338, height: 20.5))
+        expectFrame("settings.wifi", CGRect(x: 32, y: 364.5, width: 338, height: 30))
+        expectFrame("settings.wifi/settingRow.title", CGRect(x: 74, y: 369.5, width: 40.5, height: 20.5))
+        expectFrame("settings.wifi/settingRow.value", CGRect(x: 324.5, y: 369.5, width: 45.5, height: 20.5))
+        expectFrame("settings.bluetooth", CGRect(x: 32, y: 424.5, width: 338, height: 30))
+        expectFrame("settings.signOut", CGRect(x: 32, y: 520.5, width: 66, height: 20.5))
+    }
+
+    @Test func symbolsTakeTheirImageSize() {
+        expectFrame("settings.profile/profileRow.avatar", CGRect(x: 32, y: 184, width: 40, height: 40), tolerance: 1)
+        expectFrame("settings.wifi/settingRow.icon.symbol", CGRect(x: 36.5, y: 372, width: 21, height: 15.5), tolerance: 1)
+    }
+
+    @Test func hitTestingFindsTheDeepestNode() {
+        #expect(layout.hitTest(CGPoint(x: 90, y: 378)) == "settings.wifi/settingRow.title")
+        #expect(layout.hitTest(CGPoint(x: 40, y: 378))?.hasPrefix("settings.wifi/settingRow.icon") == true)
+    }
+}
+
+@Suite struct EngineTests {
+    @Test func appearanceResolvesSemanticColors() throws {
+        let tokens = CanvasDocument.sample().tokens
+        let light = LayoutEngine(tokens: tokens, appearance: .light)
+        let dark = LayoutEngine(tokens: tokens, appearance: .dark)
+        #expect(light.color(.token("color.label"))?.hex == "#000000")
+        #expect(dark.color(.token("color.label"))?.hex == "#FFFFFF")
+        #expect(dark.color(.token("color.accent"))?.hex == "#0A84FF")
+        #expect(light.color(.string("systemRed"))?.hex == "#FF383C")
+        #expect(light.number(.token("space.row")) == 12)
+        #expect(light.textStyle(.token("text.rowDetail")) == "body")
+    }
+
+    @Test func screensUseTheGroupedBackgroundUnderAList() throws {
+        let document = CanvasDocument.sample()
+        let layout = LayoutEngine(tokens: document.tokens, appearance: .dark).screen(try document.resolve("settings"), device: .named(nil))
+        #expect(layout.background.hex == "#000000")
+        #expect(layout.size == CGSize(width: 402, height: 874))
+    }
+
+    @Test func stacksGiveSpacersWhatIsLeft() throws {
+        let document = CanvasDocument.sample()
+        let layout = LayoutEngine(tokens: document.tokens, appearance: .light).component(try document.resolve("settingRow"), width: 360)
+        let spacer = try #require(layout.frames["settingRow.spacer"])
+        let value = try #require(layout.frames["settingRow.value"])
+        #expect(layout.frames["settingRow"]?.width == 328)
+        #expect(abs(spacer.maxX + 12 - value.minX) < 0.01)
+    }
+
+    @Test func rendersAPNGAtAnyScale() throws {
+        let document = CanvasDocument.sample()
+        let layout = LayoutEngine(tokens: document.tokens, appearance: .light).screen(try document.resolve("settings"), device: .named(nil))
+        let image = try #require(Rasterizer.image(layout, scale: 2))
+        #expect(image.width == 804)
+        #expect(Rasterizer.png(layout, scale: 1) != nil)
+    }
+}

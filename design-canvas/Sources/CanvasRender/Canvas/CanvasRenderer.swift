@@ -1,34 +1,37 @@
+import CanvasCore
 import CoreGraphics
 import Metal
 import MetalKit
 import simd
 
-/// One textured rectangle on the page: a rendered screen or component.
+/// One item's footprint on the page: where its shadow and placeholder go.
 public struct CanvasQuad: Equatable, Sendable {
     public var id: String
     public var rect: CGRect
     public var cornerRadius: CGFloat
+    /// Shown until the item's tiles arrive.
+    public var background: RGBA
 
-    public init(id: String, rect: CGRect, cornerRadius: CGFloat) {
+    public init(id: String, rect: CGRect, cornerRadius: CGFloat, background: RGBA) {
         self.id = id
         self.rect = rect
         self.cornerRadius = cornerRadius
+        self.background = background
     }
 }
 
-/// Draws the canvas: background, dot grid, and each quad as a cached texture with
-/// rounded corners and a soft shadow. Draws on demand only; nothing runs while idle.
-///
-/// One draw call per quad keeps the code simple. Hundreds of screens would want a
-/// texture array and instancing, which this layout allows without API changes.
+/// Draws the canvas: background, dot grid, each item's shadow and placeholder, then the
+/// tiles that hold the items' pixels. Draws on demand only; nothing runs while idle.
 @MainActor
 public final class CanvasRenderer: NSObject {
     public let device: MTLDevice
     private let queue: MTLCommandQueue
     private let itemPipeline: MTLRenderPipelineState
     private let gridPipeline: MTLRenderPipelineState
+    private let tilePipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private let camera: CanvasCamera
+    let tiles: TileCache
 
     public var quads: [CanvasQuad] = []
     /// Linear-light background, set by the view from the current appearance.
@@ -36,14 +39,13 @@ public final class CanvasRenderer: NSObject {
     var gridColor = SIMD4<Float>(0, 0, 0, 0.12)
     var pixelRatio: Float = 2
 
-    private var textures: [String: (texture: MTLTexture, scale: CGFloat)] = [:]
-
     public init?(camera: CanvasCamera, device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         guard let device, let queue = device.makeCommandQueue() else { return nil }
         do {
             let library = try device.makeLibrary(source: Self.shaders, options: nil)
             itemPipeline = try Self.pipeline(device, library, vertex: "item_vertex", fragment: "item_fragment")
             gridPipeline = try Self.pipeline(device, library, vertex: "grid_vertex", fragment: "grid_fragment")
+            tilePipeline = try Self.pipeline(device, library, vertex: "tile_vertex", fragment: "tile_fragment")
         } catch {
             assertionFailure("Canvas shaders: \(error)")
             return nil
@@ -52,53 +54,18 @@ public final class CanvasRenderer: NSObject {
         samplerDescriptor.minFilter = .linear
         samplerDescriptor.magFilter = .linear
         samplerDescriptor.mipFilter = .linear
-        samplerDescriptor.maxAnisotropy = 4
+        samplerDescriptor.sAddressMode = .clampToEdge
+        samplerDescriptor.tAddressMode = .clampToEdge
         guard let sampler = device.makeSamplerState(descriptor: samplerDescriptor) else { return nil }
         self.device = device
         self.queue = queue
         self.sampler = sampler
         self.camera = camera
+        tiles = TileCache(device: device, queue: queue)
     }
 
-    // MARK: - Textures
-
-    /// The pixels-per-point of the cached texture for a quad, if any.
-    public func textureScale(for id: String) -> CGFloat? { textures[id]?.scale }
-
-    /// Uploads a snapshot as an sRGB texture with mipmaps, so zoomed-out screens stay smooth.
-    public func setTexture(_ image: CGImage, scale: CGFloat, for id: String) {
-        let width = image.width
-        let height = image.height
-        guard width > 0, height > 0 else { return }
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm_srgb, width: width, height: height, mipmapped: true
-        )
-        descriptor.usage = .shaderRead
-        guard let texture = device.makeTexture(descriptor: descriptor),
-            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-        else { return }
-
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        bytes.withUnsafeMutableBytes { buffer in
-            guard let context = CGContext(
-                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else { return }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
-        texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: bytes, bytesPerRow: width * 4)
-
-        if let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() {
-            blit.generateMipmaps(for: texture)
-            blit.endEncoding()
-            commands.commit()
-        }
-        textures[id] = (texture, scale)
-    }
-
-    public func removeTextures(except ids: Set<String>) {
-        textures = textures.filter { ids.contains($0.key) }
-    }
+    /// The laid-out items whose pixels the tiles hold.
+    public func setItems(_ items: [SceneItem]) { tiles.setItems(items) }
 
     // MARK: - Drawing
 
@@ -113,11 +80,16 @@ public final class CanvasRenderer: NSObject {
         var rect: SIMD4<Float>
         var tint: SIMD4<Float>
         var radius: Float
-        var hasTexture: Float
-        /// 0 draws the item, 1 its shadow.
+        /// 0 draws the item's placeholder, 1 its shadow.
         var mode: Float
         /// How far the quad extends past the rect, in page points, for the shadow blur.
         var expand: Float
+        var padding: Float = 0
+    }
+
+    private struct TileData {
+        var rect: SIMD4<Float>
+        var uv: SIMD4<Float>
     }
 
     func draw(in view: MTKView) {
@@ -144,30 +116,49 @@ public final class CanvasRenderer: NSObject {
         encoder.setRenderPipelineState(itemPipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
-        encoder.setFragmentSamplerState(sampler, index: 0)
 
-        let visible = camera.visiblePageRect.insetBy(dx: -80, dy: -80)
-        for quad in quads where quad.rect.intersects(visible) {
-            let texture = textures[quad.id]?.texture
+        let visible = camera.visiblePageRect
+        let margin = visible.insetBy(dx: -80, dy: -80)
+        for quad in quads where quad.rect.intersects(margin) {
             let rect = SIMD4(Float(quad.rect.minX), Float(quad.rect.minY), Float(quad.rect.width), Float(quad.rect.height))
             let radius = Float(quad.cornerRadius)
             let blur = Float(18 / max(camera.scale, 0.25))
-            var shadow = ItemData(rect: rect, tint: .zero, radius: radius, hasTexture: 0, mode: 1, expand: blur)
-            var item = ItemData(rect: rect, tint: SIMD4(1, 1, 1, 1), radius: radius, hasTexture: texture == nil ? 0 : 1, mode: 0, expand: 0)
+            let shadow = ItemData(rect: rect, tint: .zero, radius: radius, mode: 1, expand: blur)
+            let placeholder = ItemData(rect: rect, tint: Self.linear(quad.background), radius: radius, mode: 0, expand: 0)
+            for var data in [shadow, placeholder] {
+                encoder.setVertexBytes(&data, length: MemoryLayout<ItemData>.stride, index: 1)
+                encoder.setFragmentBytes(&data, length: MemoryLayout<ItemData>.stride, index: 1)
+                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            }
+        }
 
-            encoder.setVertexBytes(&shadow, length: MemoryLayout<ItemData>.stride, index: 1)
-            encoder.setFragmentBytes(&shadow, length: MemoryLayout<ItemData>.stride, index: 1)
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-
-            encoder.setVertexBytes(&item, length: MemoryLayout<ItemData>.stride, index: 1)
-            encoder.setFragmentBytes(&item, length: MemoryLayout<ItemData>.stride, index: 1)
-            encoder.setFragmentTexture(texture, index: 0)
+        encoder.setRenderPipelineState(tilePipeline)
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        let displayScale = CGFloat(pixelRatio) * camera.scale
+        for draw in tiles.draws(visible: visible, displayScale: displayScale) {
+            var data = TileData(
+                rect: SIMD4(Float(draw.rect.minX), Float(draw.rect.minY), Float(draw.rect.width), Float(draw.rect.height)),
+                uv: SIMD4(Float(draw.uv.minX), Float(draw.uv.minY), Float(draw.uv.width), Float(draw.uv.height))
+            )
+            encoder.setVertexBytes(&data, length: MemoryLayout<TileData>.stride, index: 1)
+            encoder.setFragmentTexture(draw.texture, index: 0)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
 
         encoder.endEncoding()
         commands.present(drawable)
         commands.commit()
+    }
+
+    /// sRGB render targets take colors in linear light, premultiplied here.
+    static func linear(_ color: RGBA) -> SIMD4<Float> {
+        func channel(_ value: Double) -> Float {
+            let value = Float(value)
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let alpha = Float(color.alpha)
+        return SIMD4(channel(color.red) * alpha, channel(color.green) * alpha, channel(color.blue) * alpha, alpha)
     }
 
     private static func pipeline(_ device: MTLDevice, _ library: MTLLibrary, vertex: String, fragment: String) throws -> MTLRenderPipelineState {
@@ -190,8 +181,10 @@ public final class CanvasRenderer: NSObject {
         using namespace metal;
 
         struct Uniforms { float2 viewSize; float2 offset; float scale; float pixelRatio; };
-        struct ItemData { float4 rect; float4 tint; float radius; float hasTexture; float mode; float expand; };
+        struct ItemData { float4 rect; float4 tint; float radius; float mode; float expand; float padding; };
         struct ItemOut { float4 position [[position]]; float2 local; };
+        struct TileData { float4 rect; float4 uv; };
+        struct TileOut { float4 position [[position]]; float2 uv; };
 
         float2 toClip(float2 page, constant Uniforms& u) {
             float2 view = page * u.scale + u.offset;
@@ -215,8 +208,7 @@ public final class CanvasRenderer: NSObject {
             return out;
         }
 
-        fragment float4 item_fragment(ItemOut in [[stage_in]], constant Uniforms& u [[buffer(0)]], constant ItemData& item [[buffer(1)]],
-                                      texture2d<float> texture [[texture(0)]], sampler smp [[sampler(0)]]) {
+        fragment float4 item_fragment(ItemOut in [[stage_in]], constant Uniforms& u [[buffer(0)]], constant ItemData& item [[buffer(1)]]) {
             float2 halfSize = item.rect.zw * 0.5;
             float distance = roundedRect(in.local - halfSize, halfSize, item.radius);
             if (item.mode > 0.5) {
@@ -226,8 +218,19 @@ public final class CanvasRenderer: NSObject {
             float pixel = 1.0 / (u.scale * u.pixelRatio);
             float coverage = clamp(0.5 - distance / pixel, 0.0, 1.0);
             if (coverage <= 0.0) { discard_fragment(); }
-            float4 color = item.hasTexture > 0.5 ? texture.sample(smp, in.local / item.rect.zw) : item.tint;
-            return color * coverage;
+            return item.tint * coverage;
+        }
+
+        vertex TileOut tile_vertex(uint vid [[vertex_id]], constant Uniforms& u [[buffer(0)]], constant TileData& tile [[buffer(1)]]) {
+            float2 corner = float2(vid & 1, vid >> 1);
+            TileOut out;
+            out.position = float4(toClip(tile.rect.xy + corner * tile.rect.zw, u), 0.0, 1.0);
+            out.uv = tile.uv.xy + corner * tile.uv.zw;
+            return out;
+        }
+
+        fragment float4 tile_fragment(TileOut in [[stage_in]], texture2d<float> texture [[texture(0)]], sampler smp [[sampler(0)]]) {
+            return texture.sample(smp, in.uv);
         }
 
         struct GridOut { float4 position [[position]]; };

@@ -60,6 +60,15 @@ public struct Prop: RawRepresentable, Hashable, Comparable, Codable, CodingKeyRe
     public static let padding: Prop = "padding"
     public static let width: Prop = "width"
     public static let height: Prop = "height"
+    /// A number or `infinity`, like `.frame(maxWidth: .infinity)`.
+    public static let maxWidth: Prop = "maxWidth"
+    public static let maxHeight: Prop = "maxHeight"
+    /// Where content sits in a frame larger than it, like `.frame(alignment:)`.
+    public static let frameAlignment: Prop = "frameAlignment"
+    /// Override `padding` on one axis, like `.padding(.horizontal, 20)`.
+    public static let paddingHorizontal: Prop = "paddingHorizontal"
+    public static let paddingVertical: Prop = "paddingVertical"
+    public static let multilineTextAlignment: Prop = "multilineTextAlignment"
 
     // Appearance
     public static let font: Prop = "font"
@@ -68,6 +77,12 @@ public struct Prop: RawRepresentable, Hashable, Comparable, Codable, CodingKeyRe
     public static let background: Prop = "background"
     public static let fill: Prop = "fill"
     public static let cornerRadius: Prop = "cornerRadius"
+    /// A stroke inside the node's rounded shape, like `.overlay(shape.strokeBorder(...))`.
+    public static let border: Prop = "border"
+    public static let borderWidth: Prop = "borderWidth"
+    public static let shadowRadius: Prop = "shadowRadius"
+    public static let shadowY: Prop = "shadowY"
+    public static let shadowColor: Prop = "shadowColor"
     public static let opacity: Prop = "opacity"
 }
 

@@ -20,7 +20,7 @@ self-contained and optional.
 | [repository-lint](repository-lint) | Custom Swift rules need syntax-aware checks, changed-line filtering and a cached runner outside the app dependency graph. |
 | [build-distro](build-distro) | Ad hoc build distribution services cost money or keep your builds on their servers. A small self-hosted server takes IPAs from CI in resumable parallel parts and gives testers a live install page. |
 | [worktree-simulator](worktree-simulator) | Worktrees that share a simulator overwrite each other's app, Keychain and data. Each worktree gets its own device, created and deleted with it. |
-| [design-canvas](design-canvas) | Design tools draw pictures of an iOS app and leave code to guess. An early canvas where every screen is real SwiftUI built from tokens and components, inspectable by people and agents. |
+| [design-canvas](design-canvas) | Design tools draw pictures of an iOS app and leave code to guess. An early canvas where every screen is a SwiftUI tree built from tokens and components, drawn with iOS's own look and inspectable by people and agents. |
 
 I wrote about the workflow behind the session broker in
 [Per-Worktree iOS Simulators with a Shared OAuth Session](https://mrozek.dev/posts/one-worktree-one-simulator-one-shared-session).

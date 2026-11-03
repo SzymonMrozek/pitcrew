@@ -8,9 +8,12 @@ extension CanvasMCPServer {
         IDs: get_tree returns resolved IDs. Nodes inside a component instance use \
         "instance/node" paths and carry `source` (the component node) and `instance`. \
         Values are plain JSON, {"token": "color.accent"} for a design token, or \
-        {"color": "#RRGGBB"}. Prefer tokens over raw values when one fits.
+        {"color": "#RRGGBB"}. Tokens are the design system: always use one when it fits, and \
+        check `unbound` in inspect_node for literals that should be tokens. Reuse components \
+        (insert an instance) instead of rebuilding their views.
 
-        Frames are measured from the rendered SwiftUI, in screen points from the device's \
+        Frames come from the canvas's layout engine, which follows SwiftUI's layout rules \
+        and iOS 26's system metrics, in screen points from the device's \
         top-left corner. The designer can undo every edit you make. When implementing a \
         screen in code, map kinds and props one-to-one and use the token names.
 
@@ -37,7 +40,9 @@ extension CanvasMCPServer {
         ),
         tool(
             "inspect_node",
-            "Inspect one node: props, tokens resolved per mode, measured frame, ancestors and how edits to it apply.",
+            "Inspect one node like a designer would: props, tokens resolved per mode, literal props that should use a token (unbound, with candidates), "
+                + "the component it belongs to and its overrides, measured frame and spacing (per side the distance to the nearest enclosing edge and which node it is, gaps to neighbours, "
+                + "from the layout, so system insets count), ancestors and how edits to it apply.",
             properties: [
                 "node_id": ["type": "string", "description": "A resolved node ID from get_tree or get_selection."],
                 "appearance": appearanceSchema,
@@ -56,10 +61,11 @@ extension CanvasMCPServer {
         ),
         tool(
             "screenshot",
-            "Render a screen or component as a PNG with real SwiftUI, exactly as it appears on the canvas.",
+            "Render a screen or component as a PNG, exactly as it appears on the canvas: iOS 26's look drawn with SF Pro and SF Symbols. With renderer native, a screen is rendered by real SwiftUI instead, to compare with the canvas.",
             properties: [
                 "screen_id": ["type": "string", "description": "A screen or component ID from list_items."],
                 "appearance": appearanceSchema,
+                "renderer": ["type": "string", "enum": ["canvas", "native"], "description": "canvas (default) or native SwiftUI."],
             ],
             required: ["screen_id"]
         ),

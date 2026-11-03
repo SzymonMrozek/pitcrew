@@ -27,8 +27,10 @@ public final class CanvasScene {
 /// drag pan, pinch and ⌘ or ⌃ scroll zoom around the pointer, tap to hit test.
 final class MetalCanvasUIView: MTKView {
     let scene: CanvasScene
-    var onTap: ((CGPoint) -> Void)?
+    var onTap: ((CGPoint, CanvasClick) -> Void)?
     var onHover: ((CGPoint?) -> Void)?
+    /// Reports whether ⌥ is held, for Figma's measure-on-hover.
+    var onOptionKey: ((Bool) -> Void)?
 
     init(scene: CanvasScene) {
         self.scene = scene
@@ -47,9 +49,17 @@ final class MetalCanvasUIView: MTKView {
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch))
         addGestureRecognizer(pinch)
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.delegate = self
         addGestureRecognizer(tap)
+        // Not exclusive with the single tap: the first click selects at once and the
+        // second goes one level deeper, without delaying every click.
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = self
+        addGestureRecognizer(doubleTap)
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(handleHover)))
 
+        scene.renderer?.tiles.onTileReady = { [weak self] in self?.setNeedsDisplay() }
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: MetalCanvasUIView, _) in view.updateColors() }
         updateColors()
         observeCamera()
@@ -57,6 +67,30 @@ final class MetalCanvasUIView: MTKView {
 
     @available(*, unavailable)
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    // First responder, so ⌥ presses reach the canvas without moving the pointer.
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { becomeFirstResponder() }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: Self.isOption) { onOptionKey?(true) } else { super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: Self.isOption) { onOptionKey?(false) } else { super.pressesEnded(presses, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: Self.isOption) { onOptionKey?(false) } else { super.pressesCancelled(presses, with: event) }
+    }
+
+    private static func isOption(_ press: UIPress) -> Bool {
+        press.key?.keyCode == .keyboardLeftAlt || press.key?.keyCode == .keyboardRightAlt
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -102,12 +136,19 @@ final class MetalCanvasUIView: MTKView {
     }
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        onTap?(gesture.location(in: self))
+        becomeFirstResponder()
+        onTap?(gesture.location(in: self), gesture.modifierFlags.contains(.command) ? .deep : .single)
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        onTap?(gesture.location(in: self), .double)
     }
 
     @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
         switch gesture.state {
-        case .began, .changed: onHover?(gesture.location(in: self))
+        case .began, .changed:
+            onOptionKey?(gesture.modifierFlags.contains(.alternate))
+            onHover?(gesture.location(in: self))
         default: onHover?(nil)
         }
     }
@@ -129,6 +170,19 @@ final class MetalCanvasUIView: MTKView {
     }
 }
 
+extension MetalCanvasUIView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gestureRecognizer is UITapGestureRecognizer && other is UITapGestureRecognizer
+    }
+}
+
+/// How the canvas was clicked: once, twice, or with ⌘ to reach the innermost element.
+public enum CanvasClick: Sendable {
+    case single
+    case double
+    case deep
+}
+
 extension MetalCanvasUIView: MTKViewDelegate {
     nonisolated func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
@@ -140,14 +194,25 @@ extension MetalCanvasUIView: MTKViewDelegate {
 public struct MetalCanvas: UIViewRepresentable {
     let scene: CanvasScene
     let quads: [CanvasQuad]
-    let onTap: (CGPoint) -> Void
+    let items: [SceneItem]
+    let onTap: (CGPoint, CanvasClick) -> Void
     let onHover: (CGPoint?) -> Void
+    let onOptionKey: (Bool) -> Void
 
-    public init(scene: CanvasScene, quads: [CanvasQuad], onTap: @escaping (CGPoint) -> Void, onHover: @escaping (CGPoint?) -> Void = { _ in }) {
+    public init(
+        scene: CanvasScene,
+        quads: [CanvasQuad],
+        items: [SceneItem],
+        onTap: @escaping (CGPoint, CanvasClick) -> Void,
+        onHover: @escaping (CGPoint?) -> Void = { _ in },
+        onOptionKey: @escaping (Bool) -> Void = { _ in }
+    ) {
         self.scene = scene
         self.quads = quads
+        self.items = items
         self.onTap = onTap
         self.onHover = onHover
+        self.onOptionKey = onOptionKey
     }
 
     public func makeUIView(context: Context) -> UIView {
@@ -164,10 +229,12 @@ public struct MetalCanvas: UIViewRepresentable {
     private func update(_ view: MetalCanvasUIView) {
         view.onTap = onTap
         view.onHover = onHover
+        view.onOptionKey = onOptionKey
         if scene.renderer?.quads != quads {
             scene.renderer?.quads = quads
-            view.setNeedsDisplay()
         }
+        scene.renderer?.setItems(items)
+        view.setNeedsDisplay()
     }
 }
 #endif

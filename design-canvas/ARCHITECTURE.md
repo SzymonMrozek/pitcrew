@@ -3,11 +3,25 @@
 ## Invariants
 
 - The document is SwiftUI-shaped. Node kinds map one-to-one to SwiftUI views and props
-  to modifiers in a fixed order. Rendering, inspection and code export all read the same
-  tree; nothing reimplements SwiftUI layout.
-- Layout comes from rendering. The inspector, hit testing and agents read frames
-  measured from the rendered views, never frames stored in the document. Only canvas
-  placement (`x`, `y` on page children) is stored.
+  to modifiers in a fixed order, so an agent or code export maps a design to SwiftUI
+  directly. The canvas doesn't run SwiftUI to draw it.
+- The engine draws iOS's look itself. `CanvasEngine` lays out a resolved tree with
+  SwiftUI's layout rules (stacks offer space to their least flexible child first,
+  spacers take the rest, frames center their content) and draws system components
+  (navigation stack, inset grouped list, toggle, button, status bar) from
+  `AppleMetrics`. Text is Core Text with SF Pro and iOS's type ramp; symbols are SF
+  Symbols drawn as vectors. The same document renders the same on a Mac as on an iPhone.
+- Fidelity is measured, not guessed. Colors, type metrics and component metrics come
+  from UIKit on the iOS simulator and from native renders of the sample; the fidelity
+  tests hold the engine's frames to the native ones within half a point.
+- Layout is computed, never stored. The inspector, hit testing, spacing and agents read
+  frames from the engine's layout. Only canvas placement (`x`, `y` on page children) is
+  stored.
+- The canvas is tiles. Items become display lists (plain values), and tiles of 512 px
+  at power-of-two levels of pixels per point are drawn from them with Core Graphics on
+  worker threads, then composited by Metal. Pan and zoom only move the camera; a tile
+  is drawn once per level and content version. A missing tile shows a coarser one
+  scaled; a stale one shows until its replacement is ready.
 - Every change is an `Edit` with an exact inverse. A failing edit, including one step of
   a batch, leaves the document unchanged, and no edit copies the document.
 - `set` changes one property of one node. That is the unit of conflict resolution:
@@ -26,69 +40,103 @@
   or conflict with design edits. A node pin stores the canvas item, the resolved node
   path and an offset from the node's corner, so it follows layout; its page point is
   the fallback when the node stops rendering.
-- An item's origin is the top-left of its rendered content. Titles and pins are
-  overlays, so page point = item origin + measured local point at any zoom.
-- The canvas never transforms live views. Every item renders with real SwiftUI at 1:1
-  behind an opaque Metal view; Metal draws texture snapshots of them. Pan and zoom only
-  move the camera, so they cost one Metal frame and no SwiftUI layout. A snapshot is
-  retaken when an item's resolved tree, tokens or appearance change, or when the zoom
-  needs a sharper texture level.
+- An item's origin is the top-left of its content. Titles and pins are overlays, so
+  page point = item origin + local point at any zoom.
 - A file is the document plus its comments, encoded deterministically: the same
   document always writes the same bytes. The editor writes it atomically about 0.4 s
   after the last change and whenever the app leaves the foreground.
 - The file on disk is the source of truth. An external change reloads the editor and
   wins over an edit that hasn't been written yet; the editor ignores its own writes by
   comparing bytes.
-- Tokens resolve per mode at render time. Apple semantic colors stay platform colors,
-  so they keep adapting to appearance, contrast and the platform's own palette.
+- Spacing is computed from frames (`Spacing` in `CanvasCore`), so it includes the
+  system's own insets, such as a `List` row's margins. Padding measures to the parent,
+  the nearest ancestor with a frame, zero included. A list row isn't a node, so the
+  engine reports row frames separately (`LayoutResult.rows`) and a row's content
+  measures to its row.
+- Stacks offer space like SwiftUI's: views first, least flexible first, and spacers
+  share what's left, at least `spacerMinLength` each. A screen without a navigation
+  stack lays its content out in the safe area.
+- Preview renders the same resolved tree with real SwiftUI (`NativeNodeView`), modifiers
+  in the engine's order. It is the reference the engine is held to, never the canvas.
+  It always runs on iOS: in the editor on an iPhone or iPad, and in the iOS Simulator
+  for the Mac editor, where the same app runs in preview mode and talks to the editor
+  over the MCP server's port. The Mac's preview window streams the simulator's
+  framebuffer and sends it touches and keys (`SimulatorScreen`, CoreSimulator and
+  SimulatorKit); the device's PNG renders are for agents and the fallback. The Mac
+  accepts a native render only for the current document revision. Toggles switched in the preview are editor state, applied to the
+  resolved tree, never to the document, and cleared by the next edit.
+- Only the Metal view sizes the canvas. The overlay hangs off it, so nothing the overlay
+  lays out changes the camera's view size.
+- The editor caches each item's layout by content key and rebuilds it when the document
+  changes. Pan, zoom and hover never resolve or lay out the document.
+- A property takes tokens of one kind (`Prop.tokenKind`): colors, numbers or text
+  styles, following aliases. A literal where a token of that kind exists is "unbound"
+  and flagged in the inspector and to agents; detaching a token writes the literal it
+  resolved to.
+- Tokens resolve per mode at layout time. Apple semantic colors resolve from
+  `AppleColors`, light and dark.
 
 ## Boundaries
 
-`CanvasCore` owns the model, edits, history, token and instance resolution. It has no UI
-dependency, so the MCP server and the future sync server link it. `CanvasMCP` owns
-JSON-RPC, the tools and a minimal HTTP transport; it reaches the editor only through
-the `CanvasHost` protocol, which is what its tests fake. `CanvasRender` owns the
-SwiftUI interpreter, per-screen hosting, frame measurement, the camera and the Metal
-renderer. The app owns the canvas,
-selection, inspector and commands.
+`CanvasCore` owns the model, edits, history, token and instance resolution, and spacing.
+It has no UI dependency, so the MCP server and the future sync server link it.
+`CanvasEngine` owns layout, iOS's metrics and colors, text and symbol drawing, and the
+Core Graphics rasterizer; it runs on macOS too, so `canvas-render` and the tests render
+without a simulator. `CanvasMCP` owns JSON-RPC, the tools and a minimal HTTP transport;
+it reaches the editor only through the `CanvasHost` protocol, which is what its tests
+fake. `CanvasRender` owns the camera, the tile cache and the Metal renderer. The app
+owns the canvas, selection, inspector and commands.
+
+## Calibrating
+
+`tools/ios-metrics.swift` prints UIKit's semantic colors and type metrics; build it for
+the simulator and run it with `xcrun simctl spawn`. Component metrics come from native
+renders: render a sample screen with SwiftUI on the simulator, measure frames and pixels,
+and compare with `canvas-render`'s output. A new iOS version means re-running both and
+updating `Apple.swift` and the fidelity tests.
 
 ## Next steps
 
-1. **Canvas, continued.** A texture array with instanced drawing for hundreds of
-   screens, snapshotting only the dirty region of a screen, unloading renderers for
-   screens far off screen, marquee selection, snapping and guides.
-2. **Comments, continued.** Mentions, drag to re-pin, a resolved filter, and showing
+1. **Components.** Navigation bar items and inline titles, tab bars, search fields,
+   sheets, segmented controls, steppers, sliders and text fields, each calibrated the
+   same way. Materials and Liquid Glass as an approximation. Dynamic Type sizes other
+   than the default, and iPad size classes.
+2. **Canvas, continued.** Marquee selection, snapping and guides, and redrawing only the
+   tiles under a node that changed rather than its whole item.
+3. **Inspection, continued.** Editing tokens and creating one from a literal, a
+   library file shared between documents, Enter and ⇧Enter to move the selection down
+   and up the tree, drag to reorder in the layers panel, and redlines between elements
+   in different screens.
+4. **Comments, continued.** Mentions, drag to re-pin, a resolved filter, and showing
    a pin on every copy of its screen rather than the one it was placed on.
-3. **Sync.** Comments sync as a second stream on the same channel. A Phoenix server with
+5. **Sync.** Comments sync as a second stream on the same channel. A Phoenix server with
    one process per document: clients send edits, the server assigns order and
    broadcasts, clients rebase pending local edits on top. Postgres keeps the edit log,
    snapshots go to object storage.
-4. **MCP, continued.** A headless mode that renders a document file without the editor
-   open, and a notification when the designer adds a comment.
-5. **Code export.** Components become `View` structs, overrides become init arguments,
+6. **MCP, continued.** A headless server over `canvas-render`'s engine, so agents read
+   and render a file without the editor open, and a notification when the designer
+   adds a comment.
+7. **Code export.** Components become `View` structs, overrides become init arguments,
    tokens become a Swift package.
 
 ## Pitfalls
 
-- A `NavigationStack` in the editor captures every rendered screen's `NavigationStack`:
-  their titles land in the editor's bar. The editor has no navigation container, and
-  each screen gets its own `UIHostingController`.
-- Any modifier on a `Section` turns it into one plain row inside `List`. Sections render
-  bare; their rows and header are measured instead.
-- Named coordinate spaces don't resolve inside `List` rows, which are UIKit-hosted
-  cells. Nodes report window coordinates and the registry converts them with the screen's
-  device frame, which also undoes canvas pan and zoom.
-- Measure the device frame outside the hosting controller. Inside it, the root's frame
-  is already inset by the safe area, which shifts every hit test by the status bar.
-- SwiftUI environment size classes are not enough for UIKit-backed views. Set trait
-  overrides and `overrideUserInterfaceStyle` on the hosting controller too.
-- Never scale a hosted screen. Under a scale transform the navigation bar's large
-  title lost its 16 pt margin and every node re-reported its frame on each pan frame.
-- `drawHierarchy` only draws views that are in a window and not hidden. The renderers
-  stay visible, covered by the opaque Metal view, instead of being hidden.
-- Reassigning a hosting controller's `rootView` re-renders the whole screen. Compare
-  first; SwiftUI calls `updateUIViewController` far more often than content changes.
-- sRGB render targets take clear colors in linear light; convert UIKit colors first.
+- Snapshotting live SwiftUI views into textures, the first renderer, was soft at any
+  zoom but 1:1 and slow to update: each edit and each zoom level needed a new
+  `drawHierarchy`. The engine draws display lists into tiles instead.
+- Core Text objects are thread-safe but not `Sendable`. The engine's font and line
+  caches box them in `@unchecked Sendable` classes behind a `Mutex`.
+- On macOS, palette colors fill a symbol's cut-outs (the person in
+  `person.crop.circle.fill` becomes a disc). The Mac path draws the template and paints
+  it with `.sourceIn`.
+- Use iOS's line heights and ascenders, not the font's: Core Text on macOS reports
+  different metrics for the same SF Pro, which moves every baseline.
+- iOS's status bar glyphs are smaller than SF Symbols at the same point size; the
+  engine sizes each icon separately to match.
+- Under "scaled to match iPad", a Catalyst app draws at 77% and everything is soft. The
+  editor uses the Mac idiom, which the engine allows because screens don't depend on
+  UIKit's controls.
+- sRGB render targets take colors in linear light; convert first.
 - The editor doesn't use `DocumentGroup`. Its autosave only fires on `UndoManager`
   changes, which would put comments into undo history. A small file store does the
   saving and watching instead.
@@ -96,25 +144,64 @@ selection, inspector and commands.
   firing. Re-watch after every write and every external rename.
 - Files from the document picker on iOS are readable only inside a security scope,
   and the last file is remembered as a bookmark, not a path.
-- Canvas items must not size the canvas. Put them in an overlay with `fixedSize()`,
-  or the editor toolbar is pushed off screen and rows get the wrong proposed width.
-- `ImageRenderer` draws placeholders for UIKit-backed views such as `List` and
-  `NavigationStack`. Screenshots draw the live hosting view with `drawHierarchy`;
-  only components, which are plain SwiftUI, use `ImageRenderer`.
 - The MCP server holds its host weakly, because the editor owns the server. A host
   that nothing else retains disappears and every tool answers "not running".
 - MCP edit requests use document node IDs, while reads return resolved instance
   paths. `set_property` maps a path back to an override; `apply_edits` doesn't.
 - `Document` and `Operation` clash with SwiftUI and Foundation types in app code; the
   model uses `CanvasDocument` and `Edit`.
+- `Prop` has a static `title` (the property), so an instance member named `title` on it
+  doesn't compile where a `Prop` is expected. The inspector's display name is `label`.
+- `onModifierKeysChanged` is unavailable under Mac Catalyst. The Metal view is first
+  responder and reads ⌥ from `pressesBegan`/`pressesEnded`, and from the hover
+  gesture's modifier flags when another view has focus.
+- A double-tap recognizer that the single tap must wait for delays every click. Both
+  recognize simultaneously instead: the first tap selects, the second goes deeper.
+- A canvas overlay inside the canvas's `ZStack` sized the canvas: a title as wide as a
+  zoomed-in screen widened the Metal view, so the camera's view size, its zoom anchor
+  and fit all drifted while zooming. The overlay hangs off the Metal view instead.
+- SwiftUI in a Mac-idiom Catalyst app draws macOS's controls and type (body at 13 pt, a
+  Mac switch), and overriding the hosting controller's idiom trait doesn't change that.
+  The Mac editor previews in the iOS Simulator instead.
+- A simulated tap with no duration doesn't flip a SwiftUI toggle; the switch needs the
+  touch to last a moment, like a finger's.
+- `URLSession.shared` answered the preview device's polls from its cache. The device uses
+  an ephemeral session without one.
+- The Mac preview window showed the simulator's renders as a plain image, and this Mac
+  had no Simulator.app, so the toggle couldn't be tapped anywhere.
+- A device has several `SimScreen` ports; only the main display's has a framebuffer.
+  Frame callbacks fire only while the screen changes, so a still screen sends none.
+- Sharing a simulator with other work sends the preview's input to whatever app is in
+  front. The launcher prefers one named "Canvas Preview".
+- Streaming through the main thread stuttered whenever SwiftUI was busy, and masking the
+  layer with `clipShape` re-rendered every frame offscreen. Frames are drawn on the
+  simulator's frame queue, at most two in flight, and the layer rounds its own corners.
+- The device's PNG renders block its main thread, so rendering after every tap stuttered
+  the streamed screen. They wait for 0.6 s without changes.
+- `IndigoHIDMessageForMouseNSEvent` already writes both touch payloads UIKit needs, as
+  a unit-square point; older code that duplicated the payload by hand isn't needed.
+- Measuring each side to the nearest enclosing edge apart from the node's skipped
+  parents that share an edge: a name in a VStack measured to the row around the VStack.
+  Designers expect the parent, as in Figma, and ⌥ covers other elements.
+- Offering a spacer its share like any other view leaves a text next to it half the
+  row, so "Good morning" wrapped. SwiftUI sizes views first and gives spacers the rest.
+- Showing padding and gaps on all four sides at once buries a small element under
+  labels. Each side shows one line: the gap to a neighbour, or the padding when there
+  is none, and the name and size badges hide while measuring.
 
 ## Open questions
 
-- Fidelity on the Mac. The editor runs "scaled to match iPad" and sets the phone idiom
-  as a trait override on each screen. This is verified on the iOS simulator only; it
-  still needs a side-by-side check against the simulator under Catalyst.
-- Measured frames of deleted nodes stay in the registry until the screen re-renders
-  them away. Lookups go through resolved IDs, so they are never returned, but the
-  registry should prune on resolve.
-- Texture levels stop at 4 px per point: a 402×874 screen is ~22 MB with mipmaps at that
-  level. Deep zoom on a large file needs tiles instead of whole-screen textures.
+- Separators. The native snapshot drew them 1 pt thick, devices draw a hairline; the
+  engine draws a hairline (1/3 pt). Worth checking on a device.
+- Components outside the sample (bordered buttons, labels, plain lists, scroll views)
+  follow SwiftUI's rules but aren't calibrated against native renders yet.
+- Custom designs lack gradients, images, line limits and per-edge padding beyond the
+  two axes. Gradients and images need new value kinds.
+- Preview shows differences the engine doesn't model yet. SwiftUI compresses text when a
+  screen runs out of height (Now Playing's title goes to one line and truncates), and
+  wraps some lines differently.
+- Streaming depends on private simulator APIs, which can change with each Xcode. The
+  renders and toggle clicks stay as the fallback. iOS has no scroll wheel, so trackpad
+  scrolling is a synthesized drag; a mouse wheel's steps fling less naturally.
+- Every edit re-lays out the item it touches and redraws its tiles. Large screens may
+  want layout reuse per subtree.

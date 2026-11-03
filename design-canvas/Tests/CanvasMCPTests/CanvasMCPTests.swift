@@ -17,7 +17,12 @@ private final class FakeHost: CanvasHost {
     func apply(_ edit: Edit) throws { try history.perform(edit, on: &document) }
 
     func measuredFrames(item: String) -> [String: CGRect] {
-        item == "settings#light" ? ["settings.wifi/settingRow.title": CGRect(x: 74, y: 369.4, width: 40.7, height: 20.3)] : [:]
+        guard item == "settings#light" else { return [:] }
+        return [
+            "settings.wifi": CGRect(x: 36, y: 364, width: 346, height: 30),
+            "settings.wifi/settingRow.icon": CGRect(x: 36, y: 364, width: 30, height: 30),
+            "settings.wifi/settingRow.title": CGRect(x: 74, y: 369.4, width: 40.7, height: 20.3),
+        ]
     }
 
     func snapshotPNG(item: String) -> Data? { item == "settings#light" ? Data([0x89, 0x50]) : nil }
@@ -98,6 +103,29 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         #expect(node["ancestors"]?.array?.first == "screen settings")
     }
 
+    @Test func inspectShowsTheComponentSpacingAndUnboundProps() throws {
+        let host = FakeHost()
+        let server = CanvasMCPServer(host: host)
+        let (row, _) = try call(server, "inspect_node", ["node_id": "settings.wifi"])
+        #expect(row["component"]?["name"] == "SettingRow")
+        #expect(row["component"]?["overrides"]?["settingRow.title"]?["text"] == "\"Wi-Fi\"")
+
+        let (title, _) = try call(server, "inspect_node", ["node_id": "settings.wifi/settingRow.title"])
+        #expect(title["component"]?["component"] == "component.settingRow")
+        #expect(title["component"]?["overrides"] == nil)
+        #expect(title["spacing"]?["container"] == "settings.wifi")
+        #expect(title["spacing"]?["measured_to"] == "container")
+        #expect(title["spacing"]?["leading"] == 38)
+        #expect(title["spacing"]?["top"] == 5.4)
+        #expect(title["spacing"]?["gap_to_previous"]?["value"] == 8)
+
+        let (name, _) = try call(server, "inspect_node", ["node_id": "settings.profile/profileRow.name"])
+        #expect(name["unbound"]?["font"] == ["text.row", "text.rowDetail"])
+
+        let (tokens, _) = try call(server, "get_tokens")
+        #expect(tokens["tokens"]?["space.row"]?["kind"] == "number")
+    }
+
     @Test func setPropertyInsideAnInstanceWritesAnOverride() throws {
         let host = FakeHost()
         let server = CanvasMCPServer(host: host)
@@ -157,6 +185,9 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         ])?["result"])
         #expect(shot["content"]?.array?.first?["mimeType"] == "image/png")
         #expect(try call(server, "screenshot", ["screen_id": "settings", "appearance": "dark"]).1)
+        // Native renders come from the preview device; without one there is nothing to return.
+        #expect(try call(server, "screenshot", ["screen_id": "settings", "renderer": "native"]).1)
+        #expect(try call(server, "screenshot", ["screen_id": "settings", "renderer": "metal"]).1)
     }
 }
 

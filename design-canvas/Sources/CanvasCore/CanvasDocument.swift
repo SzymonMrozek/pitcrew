@@ -194,23 +194,32 @@ private struct SortKey: Comparable {
 public struct History: Sendable {
     private var undoStack: [Edit] = []
     private var redoStack: [Edit] = []
+    /// The coalescing key of the last performed edit.
+    private var lastKey: String?
 
     public init() {}
 
     public var canUndo: Bool { !undoStack.isEmpty }
     public var canRedo: Bool { !redoStack.isEmpty }
 
-    public mutating func perform(_ edit: Edit, on document: inout CanvasDocument) throws {
-        undoStack.append(try document.apply(edit))
+    /// Applies an edit as a new undo step. Edits with the same `coalescing` key in a row
+    /// share one step that restores the value from before the first, so typing into a
+    /// field live undoes as one change.
+    public mutating func perform(_ edit: Edit, on document: inout CanvasDocument, coalescing key: String? = nil) throws {
+        let inverse = try document.apply(edit)
+        if key == nil || key != lastKey || undoStack.isEmpty { undoStack.append(inverse) }
+        lastKey = key
         redoStack.removeAll()
     }
 
     public mutating func undo(_ document: inout CanvasDocument) throws {
+        lastKey = nil
         guard let inverse = undoStack.popLast() else { return }
         redoStack.append(try document.apply(inverse))
     }
 
     public mutating func redo(_ document: inout CanvasDocument) throws {
+        lastKey = nil
         guard let edit = redoStack.popLast() else { return }
         undoStack.append(try document.apply(edit))
     }

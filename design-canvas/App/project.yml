@@ -15,6 +15,8 @@ targets:
       - package: DesignCanvas
         product: CanvasCore
       - package: DesignCanvas
+        product: CanvasEngine
+      - package: DesignCanvas
         product: CanvasRender
       - package: DesignCanvas
         product: CanvasMCP
@@ -22,9 +24,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.pitcrew.canvas-editor
         PRODUCT_NAME: Canvas Editor
-        # iPhone and iPad without the Mac idiom: on the Mac the app runs "scaled to
-        # match iPad", so screens render with iOS controls, not macOS ones.
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # The Mac idiom: the editor renders 1:1 on the Mac instead of "scaled to match
+        # iPad". Screens don't depend on it; the engine draws iOS's look itself.
+        TARGETED_DEVICE_FAMILY: "1,2,6"
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         GENERATE_INFOPLIST_FILE: YES
@@ -34,6 +36,8 @@ targets:
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: 6.0
+        # The Mac preview streams the iOS Simulator through Objective-C (Sources/Simulator).
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/CanvasEditor-Bridging-Header.h
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""

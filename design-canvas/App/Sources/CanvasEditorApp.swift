@@ -10,8 +10,12 @@ struct CanvasEditorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            EditorView(store: store)
-                .task { store.startMCP() }
+            if PreviewDevice.isEnabled {
+                PreviewDeviceView()
+            } else {
+                EditorView(store: store)
+                    .task { store.startMCP() }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { store.file.saveNow() }
@@ -23,6 +27,10 @@ struct CanvasEditorApp: App {
                 Button("Save As…") { store.isPickingFile = .saveAs }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .toolbar) {
+                PreviewButton(store: store)
+                    .keyboardShortcut(.return, modifiers: [.command, .option])
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { store.undo() }
                     .keyboardShortcut("z")
@@ -32,6 +40,14 @@ struct CanvasEditorApp: App {
                     .disabled(!store.canRedo)
             }
         }
+
+        // A window on the Mac and iPad, so the preview sits beside the canvas while editing.
+        WindowGroup("Preview", id: "preview", for: PreviewTarget.self) { $target in
+            if let target {
+                PreviewView(store: store, target: target)
+            }
+        }
+        .defaultSize(width: 520, height: 1000)
     }
 }
 
@@ -39,6 +55,7 @@ struct EditorView: View {
     @Bindable var store: EditorStore
     @State private var scene = CanvasScene()
     @State private var showsInspector = UIDevice.current.userInterfaceIdiom != .phone
+    @State private var showsLayers = UIDevice.current.userInterfaceIdiom != .phone
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     // No NavigationStack here: SwiftUI would hand its navigation controller to every
@@ -47,8 +64,29 @@ struct EditorView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            CanvasView(store: store, scene: scene)
-                .ignoresSafeArea(edges: .bottom)
+            HStack(spacing: 0) {
+                if showsLayers && sizeClass != .compact {
+                    LayersView(store: store)
+                        .frame(width: 250)
+                    Divider()
+                }
+                CanvasView(store: store, scene: scene)
+            }
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .sheet(isPresented: Binding(get: { showsLayers && sizeClass == .compact }, set: { showsLayers = $0 })) {
+            LayersView(store: store)
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: Binding(get: { store.previewSheet != nil }, set: { if !$0 { store.previewSheet = nil } })) {
+            if let target = store.previewSheet {
+                PreviewView(store: store, target: target)
+            }
+        }
+        .onChange(of: store.focusTarget) {
+            guard let rect = store.focusTarget else { return }
+            scene.camera.fit(rect)
+            store.focusTarget = nil
         }
         .inspector(isPresented: $showsInspector) {
             InspectorView(store: store)
@@ -94,30 +132,34 @@ struct EditorView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: sizeClass == .compact ? 12 : 16) {
+        // On a phone the secondary actions move into a menu so the toolbar fits.
+        let compact = sizeClass == .compact
+        return HStack(spacing: compact ? 12 : 16) {
+            if !compact { layersToggle }
             Button("Undo", systemImage: "arrow.uturn.backward") { store.undo() }
                 .disabled(!store.canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward") { store.redo() }
                 .disabled(!store.canRedo)
-            if sizeClass != .compact { fileStatus }
+            if !compact { fileStatus }
             Spacer()
-            Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
-                .labelStyle(sizeClass == .compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
-                .lineLimit(1)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-            Button("Copy node ID", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = store.selection?.node
+            if !compact {
+                Label(store.mcpStatus, systemImage: "point.3.connected.trianglepath.dotted")
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(1)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                copyNodeID
             }
-            .keyboardShortcut("c", modifiers: [.command, .shift])
-            .disabled(store.selection == nil)
             Toggle("Comment", systemImage: "bubble.left", isOn: $store.isCommenting)
                 .toggleStyle(.button)
                 .keyboardShortcut("c", modifiers: [])
-            Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
+            Toggle("Spacing", systemImage: "ruler", isOn: $store.showsSpacing)
                 .toggleStyle(.button)
-            Button("Zoom out", systemImage: "minus.magnifyingglass") { scene.camera.zoom(by: 1 / 1.25) }
-                .keyboardShortcut("-")
+                .help("Show the selection's padding and gaps (or hold ⌥)")
+            if !compact {
+                darkCopies
+                zoomOut
+            }
             Button("\(Int((scene.camera.scale * 100).rounded()))%") { scene.camera.fit(store.contentBounds) }
                 .keyboardShortcut("1", modifiers: .shift)
                 .monospacedDigit()
@@ -125,14 +167,58 @@ struct EditorView: View {
                 .fixedSize()
                 .frame(minWidth: 52)
                 .help("Zoom to fit (⇧1)")
-            Button("Zoom in", systemImage: "plus.magnifyingglass") { scene.camera.zoom(by: 1.25) }
-                .keyboardShortcut("=")
+            if compact {
+                Menu {
+                    Text(store.mcpStatus)
+                    layersToggle
+                    copyNodeID
+                    darkCopies
+                    zoomOut
+                    zoomIn
+                    Button("Open…", systemImage: "folder") { store.isPickingFile = .open }
+                    Button("Save As…", systemImage: "square.and.arrow.down") { store.isPickingFile = .saveAs }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+            } else {
+                zoomIn
+            }
+            PreviewButton(store: store)
             Button("Inspector", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }
         .labelStyle(.iconOnly)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private var layersToggle: some View {
+        Toggle("Layers", systemImage: "sidebar.leading", isOn: $showsLayers)
+            .toggleStyle(.button)
+            .keyboardShortcut("l", modifiers: [.command, .option])
+    }
+
+    private var copyNodeID: some View {
+        Button("Copy node ID", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = store.selection?.node
+        }
+        .keyboardShortcut("c", modifiers: [.command, .shift])
+        .disabled(store.selection == nil)
+    }
+
+    private var darkCopies: some View {
+        Toggle("Dark copies", systemImage: "circle.lefthalf.filled", isOn: $store.showsDarkCopies)
+            .toggleStyle(.button)
+    }
+
+    private var zoomOut: some View {
+        Button("Zoom out", systemImage: "minus.magnifyingglass") { scene.camera.zoom(by: 1 / 1.25) }
+            .keyboardShortcut("-")
+    }
+
+    private var zoomIn: some View {
+        Button("Zoom in", systemImage: "plus.magnifyingglass") { scene.camera.zoom(by: 1.25) }
+            .keyboardShortcut("=")
     }
 }
 
