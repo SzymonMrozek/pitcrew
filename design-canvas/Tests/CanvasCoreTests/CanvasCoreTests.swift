@@ -236,6 +236,30 @@ import Testing
     }
 }
 
+@MainActor @Suite struct CanvasFileStoreTests {
+    @Test func openingAFileThatIsNotACanvasKeepsTheCurrentFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let canvasURL = directory.appending(path: "Screens.canvas")
+        let otherURL = directory.appending(path: "package.json")
+        let other = Data(#"{"name": "app"}"#.utf8)
+        try CanvasFile(document: .sample()).encoded().write(to: canvasURL)
+        try other.write(to: otherURL)
+
+        let store = CanvasFileStore(url: canvasURL)
+        var file = try #require(try store.load())
+        #expect(throws: CanvasFileError.notACanvasFile) { try store.switchTo(otherURL) }
+        #expect(store.url == canvasURL)
+
+        _ = try file.document.apply(.set("settings.airplane", .isOn, .bool(true)))
+        store.scheduleSave { [file] in file }
+        store.saveNow()
+        #expect(try Data(contentsOf: otherURL) == other)
+        #expect(try CanvasFile.decode(Data(contentsOf: canvasURL)) == file)
+    }
+}
+
 @Suite struct InspectionTests {
     @Test func tokensAreGroupedByWhatTheyResolveTo() {
         let tokens = CanvasDocument.sample().tokens

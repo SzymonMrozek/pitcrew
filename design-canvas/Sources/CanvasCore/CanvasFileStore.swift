@@ -6,18 +6,18 @@ import Observation
 /// writes atomically, and reloads when something else changes the file, such as a git
 /// checkout or an agent editing the JSON.
 @MainActor @Observable
-final class CanvasFileStore {
-    enum Status: Equatable {
+public final class CanvasFileStore {
+    public enum Status: Equatable {
         case saved
         case saving
         case failed(String)
     }
 
-    private(set) var url: URL
-    private(set) var status: Status = .saved
+    public private(set) var url: URL
+    public private(set) var status: Status = .saved
 
     /// Called with the file's new contents after an external change.
-    @ObservationIgnored var onExternalChange: ((CanvasFile) -> Void)?
+    @ObservationIgnored public var onExternalChange: ((CanvasFile) -> Void)?
 
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
     @ObservationIgnored private var makeSnapshot: (() -> CanvasFile)?
@@ -29,14 +29,14 @@ final class CanvasFileStore {
     private static let bookmarkKey = "lastCanvasFile"
     static let saveDelay: Duration = .milliseconds(400)
 
-    init(url: URL) {
+    public init(url: URL) {
         self.url = url
     }
 
-    var fileName: String { url.lastPathComponent }
+    public var fileName: String { url.lastPathComponent }
 
     /// `CANVAS_FILE` wins, then the last file opened, then `Untitled.canvas` in Documents.
-    static func initialURL() -> URL {
+    public static func initialURL() -> URL {
         if let path = ProcessInfo.processInfo.environment["CANVAS_FILE"], !path.isEmpty {
             return URL(filePath: (path as NSString).expandingTildeInPath)
         }
@@ -49,18 +49,22 @@ final class CanvasFileStore {
     }
 
     /// Reads the file, or returns nil when it doesn't exist yet. Starts watching it.
-    func load() throws -> CanvasFile? {
+    public func load() throws -> CanvasFile? {
         startAccessing()
         defer { watch() }
+        guard let loaded = try Self.read(url) else { return nil }
+        knownData = loaded.data
+        return loaded.file
+    }
+
+    private static func read(_ url: URL) throws -> (file: CanvasFile, data: Data)? {
         guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return nil }
         let data = try Data(contentsOf: url)
-        let file = try CanvasFile.decode(data)
-        knownData = data
-        return file
+        return (try CanvasFile.decode(data), data)
     }
 
     /// Saves after a short pause; edits in quick succession write once.
-    func scheduleSave(_ snapshot: @escaping () -> CanvasFile) {
+    public func scheduleSave(_ snapshot: @escaping () -> CanvasFile) {
         makeSnapshot = snapshot
         pendingSave?.cancel()
         status = .saving
@@ -72,7 +76,7 @@ final class CanvasFileStore {
     }
 
     /// Writes any pending change immediately, for example when the app goes to the background.
-    func saveNow() {
+    public func saveNow() {
         pendingSave?.cancel()
         pendingSave = nil
         guard let makeSnapshot else { return }
@@ -93,23 +97,30 @@ final class CanvasFileStore {
     }
 
     /// Switches to another file. With `contents` the file is written (Save As); without,
-    /// it is read (Open) and returned.
+    /// it is read (Open) and returned. A file that can't be read leaves the store on the
+    /// current one, so later edits don't overwrite it.
     @discardableResult
-    func switchTo(_ newURL: URL, writing contents: CanvasFile? = nil) throws -> CanvasFile? {
+    public func switchTo(_ newURL: URL, writing contents: CanvasFile? = nil) throws -> CanvasFile? {
         saveNow()
+        let isScoped = newURL.startAccessingSecurityScopedResource()
+        let loaded: (file: CanvasFile, data: Data)?
+        do {
+            loaded = contents == nil ? try Self.read(newURL) : nil
+        } catch {
+            if isScoped { newURL.stopAccessingSecurityScopedResource() }
+            throw error
+        }
         stopAccessing()
-        watcher?.cancel()
         url = newURL
-        knownData = nil
+        isAccessingScope = isScoped
+        knownData = loaded?.data
         if let contents {
-            startAccessing()
             makeSnapshot = { contents }
             saveNow()
         }
-        let file = try contents ?? load()
-        if contents != nil { watch() }
+        watch()
         if let bookmark = try? newURL.bookmarkData() { UserDefaults.standard.set(bookmark, forKey: Self.bookmarkKey) }
-        return file
+        return contents ?? loaded?.file
     }
 
     // MARK: - Watching

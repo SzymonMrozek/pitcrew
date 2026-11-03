@@ -84,8 +84,9 @@
 
 ## Boundaries
 
-`CanvasCore` owns the model, edits, history, token and instance resolution, and spacing.
-It has no UI dependency, so the MCP server and the future sync server link it.
+`CanvasCore` owns the model, edits, history, token and instance resolution, spacing and
+the file store. It has no UI dependency, so the MCP server and the future sync server
+link it.
 `CanvasEngine` owns layout, iOS's metrics and colors, text and symbol drawing, and the
 Core Graphics rasterizer; it runs on macOS too, so `canvas-render` and the tests render
 without a simulator. `CanvasMCP` owns JSON-RPC, the tools and a minimal HTTP transport;
