@@ -84,6 +84,31 @@ import Testing
         #expect(abs(spacer.maxX + 12 - value.minX) < 0.01)
     }
 
+    @Test func textFitsItsOwnMeasuredWidth() {
+        // At 11 pt semibold "Later+" is a hair over a pixel boundary, 35.334 pt.
+        let spec = TextSpec(string: "Later+", size: 11, weight: 0.3, color: RGBA(hex: "#000000")!, lineHeight: 13.127, ascender: 10.474)
+        let ideal = TextEngine.measure(spec, maxWidth: nil)
+        #expect(TextEngine.measure(spec, maxWidth: ideal.width) == ideal)
+    }
+
+    @Test func stacksKeepIdealSizesThatFit() throws {
+        var document = CanvasDocument()
+        func add(_ id: NodeID, _ kind: Node.Kind, under parent: NodeID, _ props: [Prop: Value] = [:]) throws {
+            try document.apply(.insert(Node(id: id, kind: kind, parent: parent, order: document.appendOrder(in: parent), props: props)))
+        }
+        try add("component.row", .component, under: CanvasDocument.rootID)
+        try add("row", .vstack, under: "component.row", [.alignment: .string("leading"), .maxWidth: .string("infinity")])
+        try add("row.meta", .hstack, under: "row", [.spacing: .number(8)])
+        try add("row.tag", .text, under: "row.meta", [.text: .string("Full • 12m"), .font: .string("caption2"), .padding: .number(8)])
+        try add("row.detail", .text, under: "row.meta", [.text: .string("PL · playing"), .font: .string("caption")])
+        let layout = LayoutEngine(tokens: document.tokens, appearance: .light).component(try document.resolve("row"), width: 360)
+        let meta = try #require(layout.frames["row.meta"])
+        let tag = try #require(layout.frames["row.tag"])
+        let detail = try #require(layout.frames["row.detail"])
+        #expect(tag.height < 30)
+        #expect(abs(tag.width + 8 + detail.width - meta.width) < 0.01)
+    }
+
     @Test func rendersAPNGAtAnyScale() throws {
         let document = CanvasDocument.sample()
         let layout = LayoutEngine(tokens: document.tokens, appearance: .light).screen(try document.resolve("settings"), device: .named(nil))

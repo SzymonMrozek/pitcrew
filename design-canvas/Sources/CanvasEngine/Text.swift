@@ -119,5 +119,7 @@ enum TextEngine {
         return shaped
     }
 
-    static func pixelCeil(_ value: CGFloat) -> CGFloat { (value * 3 - 0.01).rounded(.up) / 3 }
+    /// The tolerance only absorbs floating-point noise: a width even a hair over a pixel
+    /// boundary rounds up, or the text wouldn't fit its own measured width and would wrap.
+    static func pixelCeil(_ value: CGFloat) -> CGFloat { (value * 3 - 0.0001).rounded(.up) / 3 }
 }

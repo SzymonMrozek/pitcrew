@@ -420,6 +420,26 @@ final class Pass {
         }
         let spacers = children.indices.filter { children[$0].kind == .spacer }
         let views = children.indices.filter { children[$0].kind != .spacer }
+        let reserved = minimum * CGFloat(spacers.count)
+        let available = alongOffer - spacing * CGFloat(children.count - 1) - reserved
+        // When every child fits at its ideal size and none grows past it, each keeps that size,
+        // as in SwiftUI. Sharing the space out first would wrap a text in a stack offered
+        // exactly its own measured length.
+        let ideals = views.map { size(children[$0], proposal(along: nil, across: acrossOffer, axis), env: env) }
+        let idealLength = ideals.reduce(0) { $0 + along($1, axis) }
+        let growing = views.contains { index in
+            let largest = along(size(children[index], proposal(along: Proposal.huge, across: acrossOffer, axis), env: env), axis)
+            return largest > along(size(children[index], proposal(along: nil, across: acrossOffer, axis), env: env), axis) + 0.01
+        }
+        if !growing, idealLength <= available + 0.01 {
+            var sizes = [CGSize](repeating: .zero, count: children.count)
+            for (index, ideal) in zip(views, ideals) { sizes[index] = ideal }
+            if !spacers.isEmpty {
+                let length = max((available - idealLength + reserved) / CGFloat(spacers.count), minimum)
+                for index in spacers { sizes[index] = spacer(length) }
+            }
+            return sizes
+        }
         let flexibility: [Int: CGFloat] = Dictionary(uniqueKeysWithValues: views.map { index in
             let child = children[index]
             let smallest = along(size(child, proposal(along: 0, across: acrossOffer, axis), env: env), axis)
@@ -427,8 +447,7 @@ final class Pass {
             return (index, largest - smallest)
         })
         var sizes = [CGSize](repeating: .zero, count: children.count)
-        let reserved = minimum * CGFloat(spacers.count)
-        var remaining = alongOffer - spacing * CGFloat(children.count - 1) - reserved
+        var remaining = available
         var left = views.count
         for index in views.sorted(by: { flexibility[$0]! < flexibility[$1]! }) {
             let share = max(remaining / CGFloat(left), 0)
