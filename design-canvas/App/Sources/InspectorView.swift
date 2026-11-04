@@ -203,12 +203,12 @@ private struct PropSection: View {
             let weight = node[.weight]?.string ?? source?[.weight]?.string
             Inherited(
                 label: "font",
-                value: StyleInfo.font(style: style, weight: weight),
+                value: StyleInfo.font(style: style, weight: weight, design: source.flatMap { StyleInfo.fontDesign($0[.font], tokens: tokens) }),
                 from: source.map { "from \(store.displayName(of: $0))" } ?? "system default · \(style)"
             )
         case .typography where node.kind.showsText:
             if let style = StyleInfo.textStyle(node[.font], tokens: tokens) {
-                Text(StyleInfo.font(style: style, weight: node[.weight]?.string))
+                Text(StyleInfo.font(style: style, weight: node[.weight]?.string, design: StyleInfo.fontDesign(node[.font], tokens: tokens)))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -405,7 +405,7 @@ private struct TokenChip: View {
         case .color(let rgba): parts.append(rgba.hex)
         case .system(let name): parts.append(name)
         case .number(let number): parts.append(number.formatted())
-        case .textStyle(let style): parts.append(style)
+        case .textStyle(let style, let design): parts.append(design.map { "\(style) \($0)" } ?? style)
         case .alias, nil: parts.append("missing")
         }
         return parts.joined(separator: " ")
@@ -587,7 +587,7 @@ private struct AssetsView: View {
         case .textStyle:
             let base = TokenChip.summary(id, tokens: tokens)
             guard let style = StyleInfo.textStyle(.token(id), tokens: tokens) else { return base }
-            return "\(base) · \(StyleInfo.font(style: style, weight: nil))"
+            return "\(base) · \(StyleInfo.font(style: style, weight: nil, design: StyleInfo.fontDesign(.token(id), tokens: tokens)))"
         case .number:
             return TokenChip.summary(id, tokens: tokens)
         }

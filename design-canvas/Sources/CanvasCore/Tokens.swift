@@ -24,18 +24,21 @@ public enum TokenValue: Hashable, Codable, Sendable {
     /// to the platform color, which adapts to appearance and contrast on its own.
     case system(String)
     case number(Double)
-    /// A Dynamic Type text style: `body`, `headline`, `largeTitle`...
-    case textStyle(String)
+    /// A Dynamic Type text style: `body`, `headline`, `largeTitle`... An optional system
+    /// font design (`serif`, `rounded`, `monospaced`), like `.font(.system(.body, design: .serif))`.
+    case textStyle(String, design: String? = nil)
     case alias(TokenID)
 
-    private enum CodingKeys: String, CodingKey { case color, system, number, textStyle, alias }
+    private enum CodingKeys: String, CodingKey { case color, system, number, textStyle, design, alias }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let value = try container.decodeIfPresent(RGBA.self, forKey: .color) { self = .color(value) }
         else if let value = try container.decodeIfPresent(String.self, forKey: .system) { self = .system(value) }
         else if let value = try container.decodeIfPresent(Double.self, forKey: .number) { self = .number(value) }
-        else if let value = try container.decodeIfPresent(String.self, forKey: .textStyle) { self = .textStyle(value) }
+        else if let value = try container.decodeIfPresent(String.self, forKey: .textStyle) {
+            self = .textStyle(value, design: try container.decodeIfPresent(String.self, forKey: .design))
+        }
         else if let value = try container.decodeIfPresent(TokenID.self, forKey: .alias) { self = .alias(value) }
         else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown token value"))
@@ -48,7 +51,9 @@ public enum TokenValue: Hashable, Codable, Sendable {
         case .color(let value): try container.encode(value, forKey: .color)
         case .system(let value): try container.encode(value, forKey: .system)
         case .number(let value): try container.encode(value, forKey: .number)
-        case .textStyle(let value): try container.encode(value, forKey: .textStyle)
+        case .textStyle(let value, let design):
+            try container.encode(value, forKey: .textStyle)
+            try container.encodeIfPresent(design, forKey: .design)
         case .alias(let value): try container.encode(value, forKey: .alias)
         }
     }

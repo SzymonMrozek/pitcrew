@@ -12,6 +12,8 @@ public struct TextSpec: Hashable, Sendable {
     /// From the top of a line box to its baseline.
     public var ascender: CGFloat
     public var alignment: TextAlignment = .leading
+    /// A system font design: `serif` (New York), `rounded` or `monospaced`; nil for SF Pro.
+    public var design: String?
 
     public enum TextAlignment: Hashable, Sendable { case leading, center, trailing }
 }

@@ -106,6 +106,14 @@ import Testing
         #expect(try tokens.resolve("accent", mode: "highContrast") == .color(RGBA(hex: "#007AFF")!))
     }
 
+    @Test func textStylesKeepTheirDesignThroughJSON() throws {
+        let serif = TokenValue.textStyle("body", design: "serif")
+        let json = try JSONEncoder().encode(serif)
+        #expect(try JSONDecoder().decode(TokenValue.self, from: json) == serif)
+        let plain = try JSONDecoder().decode(TokenValue.self, from: Data(#"{"textStyle":"body"}"#.utf8))
+        #expect(plain == .textStyle("body"))
+    }
+
     @Test func aliasCyclesAreReported() {
         let tokens = TokenSet(tokens: [Token("a", .alias("b")), Token("b", .alias("a"))])
         #expect(throws: TokenError.aliasCycle("a")) { try tokens.resolve("a", mode: "light") }

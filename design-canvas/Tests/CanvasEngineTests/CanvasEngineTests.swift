@@ -1,5 +1,7 @@
 import CanvasCore
 import CoreGraphics
+import CoreText
+import Foundation
 import Testing
 @testable import CanvasEngine
 
@@ -52,6 +54,18 @@ import Testing
         #expect(light.color(.string("systemRed"))?.hex == "#FF383C")
         #expect(light.number(.token("space.row")) == 12)
         #expect(light.textStyle(.token("text.rowDetail")) == "body")
+    }
+
+    @Test func serifTokensDrawInTheSystemSerif() throws {
+        let tokens = TokenSet(tokens: [Token("type.article", .textStyle("body", design: "serif")), Token("type.ui", .textStyle("body"))])
+        let engine = LayoutEngine(tokens: tokens, appearance: .light)
+        #expect(engine.fontDesign(.token("type.article")) == "serif")
+        #expect(engine.fontDesign(.token("type.ui")) == nil)
+        #expect(engine.textStyle(.token("type.article")) == "body")
+        let serif = TextEngine.font(size: 17, weight: 0, design: "serif")
+        let plain = TextEngine.font(size: 17, weight: 0)
+        #expect((CTFontCopyPostScriptName(serif) as String).contains("NewYork"))
+        #expect(!(CTFontCopyPostScriptName(plain) as String).contains("NewYork"))
     }
 
     @Test func screensUseTheGroupedBackgroundUnderAList() throws {

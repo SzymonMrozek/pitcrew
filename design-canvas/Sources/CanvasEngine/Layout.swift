@@ -93,9 +93,16 @@ public struct LayoutEngine: Sendable {
         switch value {
         case .string(let name): AppleType.styles[name] == nil ? nil : name
         case .token(let id):
-            if case .textStyle(let name) = try? tokens.resolve(id, mode: appearance.mode) { name } else { nil }
+            if case .textStyle(let name, _) = try? tokens.resolve(id, mode: appearance.mode) { name } else { nil }
         default: nil
         }
+    }
+
+    /// The system font design a font value asks for, such as `serif`; nil for the default design.
+    public func fontDesign(_ value: Value?) -> String? {
+        guard case .token(let id) = value, case .textStyle(_, let design) = try? tokens.resolve(id, mode: appearance.mode)
+        else { return nil }
+        return design
     }
 }
 
@@ -113,6 +120,8 @@ struct Environment {
     var style = "body"
     /// A fixed point size, from `.font(.system(size:))`; overrides the style's size.
     var size: CGFloat?
+    /// The system font design, like `.fontDesign(.serif)`; nil for SF Pro.
+    var design: String?
     var textAlignment: TextSpec.TextAlignment = .leading
     var weight: CGFloat?
     var foreground: RGBA
@@ -134,6 +143,7 @@ final class Pass {
         let height: CGFloat?
         let style: String
         let fontSize: CGFloat?
+        let design: String?
         let weight: CGFloat?
         let inList: Bool
     }
@@ -154,9 +164,11 @@ final class Pass {
         if let style = engine.textStyle(node[.font]) {
             env.style = style
             env.size = nil
+            env.design = engine.fontDesign(node[.font])
             env.weight = nil
         } else if let size = engine.number(node[.font]) {
             env.size = size
+            env.design = nil
             env.weight = nil
         }
         switch node[.multilineTextAlignment]?.string {
@@ -179,7 +191,7 @@ final class Pass {
     func size(_ node: ResolvedNode, _ proposal: Proposal, env: Environment) -> CGSize {
         let key = SizeKey(
             node: node.id, width: proposal.width, height: proposal.height, style: env.style, fontSize: env.size,
-            weight: env.weight, inList: env.inList
+            design: env.design, weight: env.weight, inList: env.inList
         )
         if let size = sizes[key] { return size }
         let env = modified(env, node)
@@ -612,7 +624,7 @@ final class Pass {
         let metrics = metrics(env)
         return TextSpec(
             string: string, size: metrics.size, weight: env.weight ?? metrics.weight, color: env.foreground,
-            lineHeight: metrics.lineHeight, ascender: metrics.ascender, alignment: env.textAlignment
+            lineHeight: metrics.lineHeight, ascender: metrics.ascender, alignment: env.textAlignment, design: env.design
         )
     }
 

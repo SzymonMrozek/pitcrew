@@ -98,7 +98,8 @@ extension CanvasDocument {
             add(NodeID("\(row).sample"), .text, under: row, [.text: .string(name), .font: .token(token)])
             let style = light.textStyle(.token(token)) ?? ""
             let size = AppleType.styles[style].map { " \(Int($0.size))" } ?? ""
-            add(NodeID("\(row).detail"), .text, under: row, text("\(style)\(size)", "caption", secondary: true))
+            let design = light.fontDesign(.token(token)).map { " · \($0)" } ?? ""
+            add(NodeID("\(row).detail"), .text, under: row, text("\(style)\(size)\(design)", "caption", secondary: true))
         case .number:
             let value = light.number(.token(token)) ?? 0
             add(row, .hstack, under: parent, [.spacing: .number(12)])

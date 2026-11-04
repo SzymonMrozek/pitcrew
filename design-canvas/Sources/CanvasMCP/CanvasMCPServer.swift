@@ -259,7 +259,7 @@ public final class CanvasMCPServer {
             case .color(let rgba): .string(rgba.hex)
             case .system(let name): .string("system:\(name)")
             case .number(let number): .number(number)
-            case .textStyle(let style): .string("textStyle:\(style)")
+            case .textStyle(let style, let design): .string("textStyle:\(style)" + (design.map { " design:\($0)" } ?? ""))
             case .alias(let target): .string("alias:\(target)")
             case nil: .null
             }

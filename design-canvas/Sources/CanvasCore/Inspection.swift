@@ -47,7 +47,7 @@ extension TokenSet {
         case .color(let rgba): .color(rgba)
         case .system(let name): .string(name)
         case .number(let number): .number(number)
-        case .textStyle(let style): .string(style)
+        case .textStyle(let style, _): .string(style)
         case .alias, nil: nil
         }
     }

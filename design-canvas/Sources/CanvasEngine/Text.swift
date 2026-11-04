@@ -4,7 +4,7 @@ import CoreText
 import Foundation
 import Synchronization
 
-/// Text shaping and drawing with Core Text and the system font (SF Pro). Line height
+/// Text shaping and drawing with Core Text and the system font (SF Pro, or one of its designs). Line height
 /// and baseline come from iOS's metrics, not the font's, so text sits the same on a Mac
 /// as on an iPhone. Shaped lines are cached; drawing happens on tile threads.
 enum TextEngine {
@@ -34,13 +34,22 @@ enum TextEngine {
     private struct FontKey: Hashable {
         let size: CGFloat
         let weight: CGFloat
+        let design: String?
     }
 
-    static func font(size: CGFloat, weight: CGFloat) -> CTFont {
-        let key = FontKey(size: size, weight: weight)
+    /// Core Text's trait values for the system font designs, as in `UIFontDescriptor.SystemDesign`.
+    private static let designs = [
+        "serif": "NSCTFontUIFontDesignSerif",
+        "rounded": "NSCTFontUIFontDesignRounded",
+        "monospaced": "NSCTFontUIFontDesignMonospaced",
+    ]
+
+    static func font(size: CGFloat, weight: CGFloat, design: String? = nil) -> CTFont {
+        let key = FontKey(size: size, weight: weight, design: design)
         if let box = fonts.withLock({ $0[key] }) { return box.font }
         let base = CTFontCreateUIFontForLanguage(.system, size, nil) ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
-        let traits = [kCTFontWeightTrait: weight] as CFDictionary
+        var traits: [String: Any] = [kCTFontWeightTrait as String: weight]
+        if let trait = design.flatMap({ designs[$0] }) { traits["NSCTFontUIFontDesignTrait"] = trait }
         let descriptor = CTFontDescriptorCreateCopyWithAttributes(
             CTFontCopyFontDescriptor(base), [kCTFontTraitsAttribute: traits] as CFDictionary
         )
@@ -83,7 +92,7 @@ enum TextEngine {
 
         let color = CGColor(srgbRed: spec.color.red, green: spec.color.green, blue: spec.color.blue, alpha: spec.color.alpha)
         let attributes: [CFString: Any] = [
-            kCTFontAttributeName: font(size: spec.size, weight: spec.weight),
+            kCTFontAttributeName: font(size: spec.size, weight: spec.weight, design: spec.design),
             kCTForegroundColorAttributeName: color,
         ]
         var lines: [CTLine] = []

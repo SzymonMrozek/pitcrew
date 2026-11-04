@@ -26,11 +26,22 @@ public enum StyleInfo {
         LayoutEngine(tokens: tokens, appearance: .light).textStyle(value)
     }
 
+    /// The system font design a font value asks for, such as `serif`.
+    public static func fontDesign(_ value: Value?, tokens: TokenSet) -> String? {
+        LayoutEngine(tokens: tokens, appearance: .light).fontDesign(value)
+    }
+
     /// For example `SF Pro · 17 pt · Regular`, at the default Dynamic Type size.
-    public static func font(style: String, weight: String?) -> String {
+    public static func font(style: String, weight: String?, design: String? = nil) -> String {
         guard let metrics = AppleType.styles[style] else { return style }
         let name = weight ?? AppleType.weights.min { abs($0.value - metrics.weight) < abs($1.value - metrics.weight) }?.key ?? "regular"
-        return "SF Pro · \(metrics.size.formatted()) pt · \(name.prefix(1).uppercased() + name.dropFirst())"
+        let family = switch design {
+        case "serif": "New York"
+        case "rounded": "SF Pro Rounded"
+        case "monospaced": "SF Mono"
+        default: "SF Pro"
+        }
+        return "\(family) · \(metrics.size.formatted()) pt · \(name.prefix(1).uppercased() + name.dropFirst())"
     }
 }
 

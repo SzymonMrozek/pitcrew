@@ -234,7 +234,7 @@ struct NativeStyling {
     func font(_ value: Value?, weight: Value?) -> Font? {
         let font: Font
         if let style = engine.textStyle(value).flatMap({ NativeStyling.textStyles[$0] }) {
-            font = .system(style)
+            font = .system(style, design: NativeStyling.designs[engine.fontDesign(value) ?? ""])
         } else if let size = number(value) {
             font = .system(size: size)
         } else {
@@ -312,6 +312,8 @@ struct NativeStyling {
     }
 
     static func weight(_ value: Value?) -> Font.Weight? { value?.string.flatMap { weights[$0] } }
+
+    static let designs: [String: Font.Design] = ["serif": .serif, "rounded": .rounded, "monospaced": .monospaced]
 
     static let textStyles: [String: Font.TextStyle] = [
         "largeTitle": .largeTitle, "title": .title, "title2": .title2, "title3": .title3,
