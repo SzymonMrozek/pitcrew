@@ -9,6 +9,7 @@ letter is a stroke, so the files render the same without any fonts.
 | `pitcrew-lockup-light.svg`, `pitcrew-lockup-dark.svg` | Board and wordmark, for light or dark backgrounds |
 | `pitcrew-wordmark-light.svg`, `pitcrew-wordmark-dark.svg` | The wordmark alone |
 | `pitcrew-favicon.svg` | A simplified board for 16 to 64 px: checkered strip and `›_` |
+| `pitcrew-design-icon.svg` | design-canvas's app icon: the board with a pen path on a dark tile |
 | `png/app-logo-1024.png` | Square app logo on a dark tile, safe for a circular crop |
 | `png/mark-transparent-1024.png` | The board alone, transparent |
 | `png/social-preview-dark.png`, `png/social-preview-light.png` | Repository social preview, 1280×640 |

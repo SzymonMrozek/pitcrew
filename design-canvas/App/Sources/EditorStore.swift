@@ -104,11 +104,20 @@ final class EditorStore {
     private(set) var selectedThread: String?
     /// The anchor of a comment being written.
     private(set) var draft: CommentAnchor?
-    var theme = CanvasTheme.both {
-        didSet { if theme != oldValue { showItems() } }
+    /// View preferences, kept across launches.
+    var theme = UserDefaults.standard.string(forKey: "theme").flatMap(CanvasTheme.init(rawValue:)) ?? .both {
+        didSet {
+            guard theme != oldValue else { return }
+            UserDefaults.standard.set(theme.rawValue, forKey: "theme")
+            showItems()
+        }
     }
-    var screenHeight = ScreenHeight.device {
-        didSet { if screenHeight != oldValue { rebuildItems() } }
+    var screenHeight = UserDefaults.standard.string(forKey: "screenHeight").flatMap(ScreenHeight.init(rawValue:)) ?? .device {
+        didSet {
+            guard screenHeight != oldValue else { return }
+            UserDefaults.standard.set(screenHeight.rawValue, forKey: "screenHeight")
+            rebuildItems()
+        }
     }
     /// The page on the canvas. Token boards aren't document nodes, so the Tokens page has
     /// no selection or comments.
