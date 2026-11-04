@@ -2889,6 +2889,8 @@ class AgentReviewTests(unittest.TestCase):
         self.assertEqual(self.review.start_agent_review()['id'], first['id'])
         self.write('Interactor.swift', 'let value = 3\n')
         self.review.refresh()
+        # Refreshing reloads the configuration from disk.
+        self.review.config['agent-review']['reviewer'] = 'codex'
         self.assertNotEqual(self.review.start_agent_review()['id'], first['id'])
 
     def test_a_missing_reviewer_cli_is_an_error_never_a_same_provider_review_and_failures_are_reported(self):
