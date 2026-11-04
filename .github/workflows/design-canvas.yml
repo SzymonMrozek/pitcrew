@@ -9,7 +9,8 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest
+    # The fidelity tests are calibrated against the Xcode 27 SDK.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
       - name: Core tests
