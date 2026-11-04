@@ -111,3 +111,41 @@ import Testing
         #expect(detail == "#111318 / #F1F2F5")
     }
 }
+
+@Suite struct ContentHeightTests {
+    /// A list longer than the screen, under a large title.
+    private func longList() throws -> ResolvedNode {
+        var document = CanvasDocument.sample()
+        let screen = Node(id: "long", kind: .screen, parent: CanvasDocument.rootID, order: "z", props: [.device: .string("iPhone 17 Pro")])
+        let stack = Node(id: "long.nav", kind: .navigationStack, parent: "long", order: "a", props: [.title: .string("Long")])
+        let list = Node(id: "long.list", kind: .list, parent: "long.nav", order: "a")
+        var edits: [Edit] = [.insert(screen), .insert(stack), .insert(list)]
+        for index in 0..<40 {
+            let order = String(format: "a%03d", index)
+            edits.append(.insert(Node(id: NodeID("long.row\(index)"), kind: .text, parent: "long.list", order: order, props: [.text: .string("Row \(index)")])))
+        }
+        _ = try document.apply(.batch(edits))
+        return try document.resolve("long")
+    }
+
+    @Test func fittingContentShowsEveryListRow() throws {
+        let engine = LayoutEngine(tokens: CanvasDocument.sample().tokens, appearance: .light)
+        let device = DeviceSpec.named("iPhone 17 Pro")
+        let screen = try longList()
+        let cut = engine.screen(screen, device: device)
+        let full = engine.screen(screen, device: device, fitsContent: true)
+        #expect(cut.size.height == device.size.height)
+        let last = try #require(full.frames["long.row39"])
+        #expect(last.maxY < full.size.height - device.safeBottom)
+        #expect(full.size.height > device.size.height)
+        // Rows above the cut sit where they did.
+        #expect(full.frames["long.row0"] == cut.frames["long.row0"])
+    }
+
+    @Test func fittingContentKeepsScreensThatFit() throws {
+        let document = CanvasDocument.sample()
+        let engine = LayoutEngine(tokens: document.tokens, appearance: .light)
+        let full = engine.screen(try document.resolve("settings"), device: .named("iPhone 17 Pro"), fitsContent: true)
+        #expect(full.size.height == 874)
+    }
+}

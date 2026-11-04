@@ -31,12 +31,21 @@ struct LayersView: View {
         var id: String { item }
     }
 
+    // The pages stay put above the layer tree, which scrolls under them.
     var body: some View {
+        VStack(spacing: 0) {
+            pages
+                .padding(.bottom, 6)
+            Divider()
+            layers
+        }
+        .background(Color(uiColor: .secondarySystemBackground))
+    }
+
+    private var layers: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    pages
-                    Divider().padding(.vertical, 6)
                     if store.isOnTokens {
                         Text("Token boards are drawn from the document's tokens. Edit tokens in the file or through MCP.")
                             .font(.footnote)
@@ -57,6 +66,7 @@ struct LayersView: View {
                         }
                     }
                 }
+                .padding(.top, 6)
                 .padding(.bottom, 20)
             }
             .onChange(of: store.selection) {
@@ -64,7 +74,6 @@ struct LayersView: View {
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(key, anchor: .center) }
             }
         }
-        .background(Color(uiColor: .secondarySystemBackground))
     }
 
     // MARK: - Pages

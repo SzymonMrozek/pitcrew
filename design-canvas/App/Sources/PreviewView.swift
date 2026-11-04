@@ -21,6 +21,9 @@ struct PreviewView: View {
     let store: EditorStore
     @State private var dark: Bool
     @State private var mode = Mode.native
+    /// Set once the window got its first size, so a size the designer picks, or one
+    /// restored with the window, stays.
+    @SceneStorage("preview.sized") private var isSized = false
     #if targetEnvironment(macCatalyst)
     /// The simulator's screen is streaming; until then, and without it, renders show.
     @State private var isLive = false
@@ -59,8 +62,20 @@ struct PreviewView: View {
             }
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .background(WindowSceneReader(onScene: sizeNewWindow))
         .onAppear { store.previewing = target }
         .onChange(of: dark) { store.previewing = target }
+    }
+
+    /// Gives a new preview window a device's proportions. It asks only this window's scene,
+    /// so the editor's window keeps its size.
+    private func sizeNewWindow(_ scene: UIWindowScene) {
+        guard !isSized else { return }
+        isSized = true
+        #if targetEnvironment(macCatalyst)
+        let frame = scene.effectiveGeometry.systemFrame
+        scene.requestGeometryUpdate(.Mac(systemFrame: CGRect(origin: frame.origin, size: CGSize(width: 520, height: 1000))))
+        #endif
     }
 
     private var header: some View {
@@ -236,5 +251,31 @@ struct PreviewButton: View {
         }
         .disabled(store.previewTarget == nil)
         .help("Preview the selected screen with SwiftUI (⌥⌘↩)")
+    }
+}
+
+/// Hands over the window scene a view is in, once it's in a window.
+private struct WindowSceneReader: UIViewRepresentable {
+    let onScene: (UIWindowScene) -> Void
+
+    func makeUIView(context: Context) -> SceneView {
+        let view = SceneView()
+        view.onScene = onScene
+        return view
+    }
+
+    func updateUIView(_ view: SceneView, context: Context) {
+        view.onScene = onScene
+    }
+
+    final class SceneView: UIView {
+        var onScene: (UIWindowScene) -> Void = { _ in }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            // After the update that put the view in its window, which mustn't change state.
+            guard let scene = window?.windowScene else { return }
+            DispatchQueue.main.async { [onScene] in onScene(scene) }
+        }
     }
 }

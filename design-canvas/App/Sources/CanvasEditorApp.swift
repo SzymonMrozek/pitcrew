@@ -30,6 +30,12 @@ struct CanvasEditorApp: App {
             CommandGroup(after: .toolbar) {
                 PreviewButton(store: store)
                     .keyboardShortcut(.return, modifiers: [.command, .option])
+                // Escape leaves the comment tool, as in Figma. A menu command takes the key
+                // before the window, which would otherwise leave full screen. While a
+                // comment is being written, Escape cancels it first.
+                Button("Stop Commenting") { store.isCommenting = false }
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .disabled(!store.isCommenting || store.draft != nil)
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { store.undo() }
@@ -42,12 +48,13 @@ struct CanvasEditorApp: App {
         }
 
         // A window on the Mac and iPad, so the preview sits beside the canvas while editing.
+        // No `defaultSize`: on Mac Catalyst it resizes the editor's window when the preview
+        // opens. The preview sizes its own window instead (`PreviewView.sizeNewWindow`).
         WindowGroup("Preview", id: "preview", for: PreviewTarget.self) { $target in
             if let target {
                 PreviewView(store: store, target: target)
             }
         }
-        .defaultSize(width: 520, height: 1000)
     }
 }
 
@@ -161,6 +168,7 @@ struct EditorView: View {
                 .help("Show the selection's padding and gaps (or hold ⌥)")
             if !compact {
                 darkCopies
+                screenHeight
                 zoomOut
             }
             Button("\(Int((scene.camera.scale * 100).rounded()))%") { scene.camera.fit(store.contentBounds) }
@@ -176,6 +184,7 @@ struct EditorView: View {
                     layersToggle
                     copyNodeID
                     darkCopies
+                    screenHeight
                     zoomOut
                     zoomIn
                     Button("Open…", systemImage: "folder") { store.isPickingFile = .open }
@@ -242,6 +251,21 @@ struct EditorView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Theme: \(store.theme.rawValue)")
+    }
+
+    private var screenHeight: some View {
+        Menu {
+            Picker("Screen Height", selection: $store.screenHeight) {
+                ForEach(ScreenHeight.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Screen Height", systemImage: store.screenHeight.symbol)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(store.isOnTokens)
+        .help("Screens: \(store.screenHeight.rawValue.lowercased())")
     }
 
     private var zoomOut: some View {

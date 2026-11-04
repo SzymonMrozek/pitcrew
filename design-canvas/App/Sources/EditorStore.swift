@@ -62,6 +62,20 @@ enum CanvasTheme: String, CaseIterable {
     }
 }
 
+/// How tall the canvas draws screens: cut at the device's screen, or as tall as their
+/// content, with every list row and scroll view's content shown.
+enum ScreenHeight: String, CaseIterable {
+    case device = "Device height"
+    case content = "Full content"
+
+    var symbol: String {
+        switch self {
+        case .device: "iphone"
+        case .content: "arrow.up.and.down.text.horizontal"
+        }
+    }
+}
+
 struct Selection: Equatable {
     let item: String
     let node: String
@@ -92,6 +106,9 @@ final class EditorStore {
     private(set) var draft: CommentAnchor?
     var theme = CanvasTheme.both {
         didSet { if theme != oldValue { showItems() } }
+    }
+    var screenHeight = ScreenHeight.device {
+        didSet { if screenHeight != oldValue { rebuildItems() } }
     }
     /// The page on the canvas. Token boards aren't document nodes, so the Tokens page has
     /// no selection or comments.
@@ -230,7 +247,27 @@ final class EditorStore {
             }
         }
         layoutCache = next
+        if screenHeight == .content { allItems = makingRoomForTallScreens(allItems) }
         showItems()
+    }
+
+    /// Screens drawn taller than their device would cover the rows below them, so each
+    /// item moves down by how much the tallest screen grew in every row above it.
+    private func makingRoomForTallScreens(_ items: [CanvasItem]) -> [CanvasItem] {
+        var growth: [CanvasPage: [(bottom: CGFloat, extra: CGFloat)]] = [:]
+        for item in items {
+            guard case .screen(let screen, _) = item.content, let layout = layout(of: item.id) else { continue }
+            let device = DeviceSpec.named(screen[.device]?.string)
+            let extra = layout.size.height - device.size.height
+            if extra > 0 { growth[item.page, default: []].append((item.origin.y + device.size.height, extra)) }
+        }
+        guard !growth.isEmpty else { return items }
+        return items.map { item in
+            let above = (growth[item.page] ?? []).filter { $0.bottom <= item.origin.y }
+            let rows = Dictionary(grouping: above, by: \.bottom).values.map { $0.map(\.extra).max() ?? 0 }
+            let shift = rows.reduce(0, +)
+            return shift > 0 ? item.moved(to: CGPoint(x: item.origin.x, y: item.origin.y + shift)) : item
+        }
     }
 
     /// Picks the page's items in the theme. With only dark, dark copies take the light ones'
@@ -293,7 +330,7 @@ final class EditorStore {
         switch item.content {
         case .screen(let screen, let scheme):
             LayoutEngine(tokens: document.tokens, appearance: scheme == .dark ? .dark : .light)
-                .screen(screen, device: DeviceSpec.named(screen[.device]?.string))
+                .screen(screen, device: DeviceSpec.named(screen[.device]?.string), fitsContent: screenHeight == .content)
         case .component(_, let root, let scheme), .tokens(_, let root, let scheme):
             LayoutEngine(tokens: document.tokens, appearance: scheme == .dark ? .dark : .light).component(root)
         }
@@ -742,6 +779,7 @@ final class EditorStore {
         case .screen(let screen, let scheme):
             hasher.combine(screen)
             hasher.combine(scheme == .dark)
+            hasher.combine(screenHeight)
         case .component(_, let root, let scheme), .tokens(_, let root, let scheme):
             hasher.combine(root)
             hasher.combine(scheme == .dark)

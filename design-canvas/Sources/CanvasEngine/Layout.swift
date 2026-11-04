@@ -17,9 +17,25 @@ public struct LayoutEngine: Sendable {
         self.appearance = appearance
     }
 
-    /// A screen at its device's size, with the status bar.
-    public func screen(_ root: ResolvedNode, device: DeviceSpec) -> LayoutResult {
-        let pass = Pass(engine: self, device: device)
+    /// A screen at its device's size, with the status bar. `fitsContent` makes the screen
+    /// as tall as its content instead, so lists and scroll views show every row, like a
+    /// full-page capture.
+    public func screen(_ root: ResolvedNode, device: DeviceSpec, fitsContent: Bool = false) -> LayoutResult {
+        guard fitsContent else { return screen(root, device: device, pass: Pass(engine: self, device: device)) }
+        // Growing the screen gives the extra height to flexible views, which lists and
+        // scroll views are, so a few passes settle even when spacers share it.
+        var device = device
+        var pass = Pass(engine: self, device: device)
+        var result = screen(root, device: device, pass: pass)
+        for _ in 0..<4 where pass.overflow > 0.5 {
+            device = device.withHeight(device.size.height + pass.overflow)
+            pass = Pass(engine: self, device: device)
+            result = screen(root, device: device, pass: pass)
+        }
+        return result
+    }
+
+    private func screen(_ root: ResolvedNode, device: DeviceSpec, pass: Pass) -> LayoutResult {
         let rect = CGRect(origin: .zero, size: device.size)
         let grouped = root.first { $0.kind == .list && ($0[.style]?.string ?? "insetGrouped") != "plain" } != nil
         var ops: [DrawOp] = []
@@ -135,6 +151,8 @@ final class Pass {
     let device: DeviceSpec?
     private(set) var frames: [String: CGRect] = [:]
     private(set) var rows: [String: CGRect] = [:]
+    /// How far the content of the most overflowing list or scroll view runs past its frame.
+    private(set) var overflow: CGFloat = 0
     private var sizes: [SizeKey: CGSize] = [:]
 
     private struct SizeKey: Hashable {
@@ -351,6 +369,8 @@ final class Pass {
             // Content gets its ideal height and is clipped to the scroll view.
             var content: [DrawOp] = []
             placeStack(node, axis: .vertical, in: rect, env: env, spacing: spacing(node), scrolls: true, ops: &content)
+            let sizes = stackSizes(node, axis: .vertical, Proposal(width: rect.width, height: nil), env: env)
+            overflow = max(overflow, stackSize(sizes, axis: .vertical, spacing: spacing(node)).height - rect.height)
             // A scroll view ending at the bottom safe area scrolls on under the home indicator.
             var clip = rect
             if let device, abs(rect.maxY - (device.size.height - device.safeBottom)) < 0.5 {
@@ -512,7 +532,10 @@ final class Pass {
     private func placeList(_ list: ResolvedNode, in rect: CGRect, env: Environment, ops: inout [DrawOp]) {
         let plain = list[.style]?.string == "plain"
         ops.append(.fill(rect, radius: 0, color: engine.system(plain ? "systemBackground" : "systemGroupedBackground")))
-        _ = layoutList(list, in: rect, env: env, ops: &ops, emit: true)
+        var content = layoutList(list, in: rect, env: env, ops: &ops, emit: true)
+        // A list reaching the bottom of the screen scrolls its last rows above the home indicator.
+        if let device, abs(rect.maxY - device.size.height) < 0.5 { content += device.safeBottom }
+        overflow = max(overflow, content - rect.height)
     }
 
     /// Lays out sections as inset grouped cards, or full-width rows for a plain list.

@@ -136,6 +136,14 @@ public struct DeviceSpec: Sendable {
     public static func named(_ name: String?) -> DeviceSpec {
         all.first { $0.name == name } ?? all[0]
     }
+
+    /// The same device with a taller or shorter screen, for screens drawn at their content's height.
+    func withHeight(_ height: CGFloat) -> DeviceSpec {
+        DeviceSpec(
+            name: name, size: CGSize(width: size.width, height: height), safeTop: safeTop, safeBottom: safeBottom,
+            cornerRadius: cornerRadius, island: island
+        )
+    }
 }
 
 /// System component metrics, measured from native iOS 26 renders.
