@@ -39,8 +39,8 @@ them to another architecture.
 Public fixtures use neutral `DesignColor`, `DesignSpacing`, `DesignRadius`,
 `DesignTypography` and `DesignText` names. Keep your own naming and module
 name pattern in a JSON file and pass `--rules-config path/to/rules.json`.
-See [examples/rules.json](examples/rules.json) for the complete schema. All four
-fields are required when supplying a file; an invalid file fails the command.
+See [examples/rules.json](examples/rules.json) for the complete schema. The first
+four fields are required when supplying a file; an invalid file fails the command.
 The module pattern is a regular expression matched against names under
 `Modules/UIComponents/`; new matching modules are exempt automatically. Use a
 negative lookahead for any consumer that shares the prefix but should still be
@@ -51,6 +51,16 @@ always exercises the bundled neutral fixtures.
 
 The configuration controls design-system names and module exemptions, the custom
 color factory name, and generated paths excluded from nested-call formatting.
+Three optional fields fit the rules to other repositories:
+
+- `sourceRoot` treats a subdirectory as the repository root, for Swift code in a
+  monorepo such as `ios/`. Only files under it are checked; rules, exemptions and
+  `formatExcludedPrefixes` see paths relative to it, diagnostics print repository
+  paths, and standard SwiftLint reads `<sourceRoot>/.swiftlint.yml`.
+- `disabledRules` lists rule IDs whose findings aren't reported, for conventions a
+  project doesn't share. Unknown IDs fail the command.
+- `fontFactories` lists static `Font` members that are design-system fonts, so
+  `.font(.brandUI(.body))` passes `design_system_typography`.
 [examples/lint-swift-diff.sh](examples/lint-swift-diff.sh) and
 [examples/mise.toml](examples/mise.toml) show consumer integration.
 

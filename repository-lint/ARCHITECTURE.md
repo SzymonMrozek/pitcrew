@@ -26,8 +26,10 @@ cached compilation. Consumers own their SwiftLint version/configuration and thei
 repository-specific names and exemption patterns. No app dependency is introduced.
 
 The current rules intentionally retain their modular SwiftUI architecture
-conventions. Names and design-system exemptions are configuration; other repository
-layout conventions are source-level adaptation points. This is a reference tool,
+conventions. Names, design-system exemptions and fonts, the source root and disabled
+rules are configuration; other repository layout conventions are source-level
+adaptation points. A source root strips its prefix before rules see a path, so
+layout checks stay written against `Modules/` and diagnostics keep repository paths. This is a reference tool,
 not a general-purpose lint plugin framework.
 
 ## Pitfalls

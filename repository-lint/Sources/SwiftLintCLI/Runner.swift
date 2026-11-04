@@ -12,7 +12,12 @@ func inspectFiles(_ files: [String], jobs: Int, configuration: LintConfiguration
         func submit(_ path: String) {
             group.addTask {
                 let source = try String(contentsOfFile: path, encoding: .utf8)
-                return FileResult(path: path, inspection: inspect(path: path, source: source, configuration: configuration))
+                // Rules see source-root paths; diagnostics keep the repository path.
+                let rulePath = configuration.rulePath(path) ?? path
+                return FileResult(
+                    path: path,
+                    inspection: inspect(path: rulePath, source: source, configuration: configuration)
+                )
             }
         }
         for _ in 0 ..< min(jobs, files.count) {
@@ -96,7 +101,9 @@ func run(_ options: Options) async throws -> Int32 {
             .sorted()
     let candidates = try options.all ? paths(git("ls-files", "-z", "--", "*.swift")) : metrics.diffFiles
         .filter { $0.hasSuffix(".swift") }
-    metrics.files = candidates.filter { FileManager.default.fileExists(atPath: $0) }.sorted()
+    metrics.files = candidates.filter {
+        options.configuration.rulePath($0) != nil && FileManager.default.fileExists(atPath: $0)
+    }.sorted()
     if options.format { return try formatFiles(&metrics, configuration: options.configuration) }
     if metrics.files.isEmpty {
         let message = options.all ? "SwiftLint: no Swift files." : "SwiftLint: no changed Swift files."
@@ -115,7 +122,7 @@ func formatFiles(_ metrics: inout Metrics, configuration: LintConfiguration) thr
         "DerivedData/",
     ] + configuration.formatExcludedPrefixes
     var changed = 0
-    for path in metrics.files where !excluded.contains(where: path.hasPrefix) {
+    for path in metrics.files where !excluded.contains(where: (configuration.rulePath(path) ?? path).hasPrefix) {
         let source = try String(contentsOfFile: path, encoding: .utf8)
         let formatted = formatNestedCalls(source)
         if
@@ -135,9 +142,9 @@ func checkFiles(_ options: Options, untracked: [String], metrics: inout Metrics)
     }
     if !options.customOnly {
         let lintStarted = DispatchTime.now().uptimeNanoseconds
+        let config = options.configuration.sourceRoot + ".swiftlint.yml"
         metrics.swiftlintExit = try command(
-            ["swiftlint", "lint", "--quiet", "--strict", "--force-exclude", "--config", ".swiftlint.yml"] + metrics
-                .files,
+            ["swiftlint", "lint", "--quiet", "--strict", "--force-exclude", "--config", config] + metrics.files,
             capture: false
         ).1
         metrics.builtInNS = DispatchTime.now().uptimeNanoseconds - lintStarted
@@ -166,7 +173,8 @@ func report(_ results: [FileResult], options: Options, touched: [String: Set<Int
         metrics.parseNS += result.inspection.parseNS
         metrics.walkNS += result.inspection.walkNS
         for finding in result.inspection.findings
-            where options.all || !finding.affected.isDisjoint(with: touched[result.path] ?? []) {
+            where !options.configuration.disabledRules.contains(finding.rule)
+            && (options.all || !finding.affected.isDisjoint(with: touched[result.path] ?? [])) {
             metrics.findings += 1
             if options.json {
                 output.append([

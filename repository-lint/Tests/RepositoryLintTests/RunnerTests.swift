@@ -138,3 +138,87 @@ private func execute(_ arguments: [String], in directory: URL) throws -> (Int32,
     try FileManager.default.removeItem(at: file)
     #expect(try execute([executable, "--custom-only"], in: directory).0 == 0)
 }
+
+@Test func sourceRootScopesRulePathsAndDisabledRulesAreSkipped() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for arguments in [
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.name", "Lint Test"],
+        ["git", "config", "user.email", "lint@example.invalid"],
+    ] {
+        let result = try execute(arguments, in: directory)
+        #expect(result.0 == 0, "\(result.1)")
+    }
+    let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+    let executable = ProcessInfo.processInfo.environment["REPOSITORY_LINT_BINARY"]
+        ?? package.appendingPathComponent(".build/release/repository-lint").path
+    func write(_ source: String, to path: String) throws {
+        let file = directory.appendingPathComponent(path)
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try source.write(to: file, atomically: true, encoding: .utf8)
+    }
+    let scene = "app/Modules/Scenes/Example/Sources/View.swift"
+    try write(
+        "let view = content.padding(12)\nlet icon = Image(systemName: \"xmark\")\n"
+            + "let title = Text(name).font(.brandUI(.body))\n",
+        to: scene
+    )
+    try write("let view = content.padding(12)\n", to: "app/Modules/UIComponents/BrandButton/Sources/Button.swift")
+    try write("let icon = Image(systemName: \"xmark\")\n", to: "tools/Script.swift")
+    #expect(try execute(["git", "add", "."], in: directory).0 == 0)
+    #expect(try execute(["git", "commit", "-m", "fixture"], in: directory).0 == 0)
+
+    // Without a source root, layout rules don't recognize app/Modules/ and every file is checked.
+    let unscoped = try execute([executable, "--all", "--custom-only"], in: directory)
+    #expect(unscoped.0 == 1)
+    #expect(!unscoped.1.contains("design_system_spacing"))
+    #expect(unscoped.1.contains("tools/Script.swift"))
+    #expect(!unscoped.1.contains("design_system_typography"))
+
+    let configuration = directory.appendingPathComponent("rules.json")
+    try """
+    {"designSystemPrefix":"Brand","colorFactory":"brand","designSystemModulePattern":"^Brand.+$",
+     "formatExcludedPrefixes":[],"sourceRoot":"app","disabledRules":["no_sf_symbols"]}
+    """.write(to: configuration, atomically: true, encoding: .utf8)
+    // Rules see Modules/Scenes/, so the implicit font is checked; listing its factory accepts it.
+    let unlisted = try execute([executable, "--all", "--custom-only", "--rules-config", configuration.path], in: directory)
+    #expect(unlisted.1.contains("design_system_typography"))
+    try """
+    {"designSystemPrefix":"Brand","colorFactory":"brand","designSystemModulePattern":"^Brand.+$",
+     "formatExcludedPrefixes":[],"sourceRoot":"app","disabledRules":["no_sf_symbols"],"fontFactories":["brandUI"]}
+    """.write(to: configuration, atomically: true, encoding: .utf8)
+    let scoped = try execute(
+        [executable, "--all", "--custom-only", "--json", "--rules-config", configuration.path],
+        in: directory
+    )
+    #expect(scoped.0 == 1)
+    let diagnostics = try JSONSerialization.jsonObject(with: Data(scoped.1.utf8)) as? [[String: Any]]
+    #expect(diagnostics?.count == 1, "\(scoped.1)")
+    #expect(diagnostics?.first?["rule"] as? String == "design_system_spacing")
+    #expect(diagnostics?.first?["path"] as? String == scene)
+
+    // Changed-line filtering keys on repository paths, so unchanged lines stay quiet.
+    try write(
+        "let view = content.padding(12)\nlet icon = Image(systemName: \"checkmark\")\n"
+            + "let title = Text(name).font(.brandUI(.body))\n",
+        to: scene
+    )
+    let diff = try execute([executable, "--custom-only", "--rules-config", configuration.path], in: directory)
+    #expect(diff.0 == 0, "\(diff.1)")
+
+    for invalid in [#""sourceRoot":"../app""#, #""sourceRoot":"/app""#, #""disabledRules":["no_such_rule"]"#] {
+        try """
+        {"designSystemPrefix":"Brand","colorFactory":"brand","designSystemModulePattern":"^Brand.+$",
+         "formatExcludedPrefixes":[],\(invalid)}
+        """.write(to: configuration, atomically: true, encoding: .utf8)
+        let result = try execute([executable, "--custom-only", "--rules-config", configuration.path], in: directory)
+        #expect(result.0 == 1, "\(invalid)")
+        #expect(result.1.contains("repository-lint:"), "\(invalid)")
+    }
+}

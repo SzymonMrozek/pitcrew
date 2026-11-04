@@ -237,6 +237,14 @@ extension Inspector {
             }
             typography = typography || implicit(argument)
         }
+        // A consumer's design-system Font factories, such as `.font(.brandUI(.body))`, are tokens.
+        if name == "font", let argument = node.arguments.first?.expression {
+            let member = argument.as(MemberAccessExprSyntax.self)
+                ?? argument.as(FunctionCallExprSyntax.self)?.calledExpression.as(MemberAccessExprSyntax.self)
+            if
+                let member, member.base == nil || nominalName(member.base) == "Font",
+                configuration.fontFactories.contains(member.declName.baseName.text) { typography = false }
+        }
         if typography {
             // Type constructors report their type token; modifiers report their dot.
             if
