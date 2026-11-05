@@ -32,11 +32,11 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.12.0'
+RELEASE = '0.13.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
-WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
+WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'summary.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
 DEFAULTS = {
     "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
     "exclude": [], "imageScale": 70, "diffMode": "split",
@@ -65,6 +65,15 @@ AGENT_MARKERS = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PA
 # The only tools a Claude reviewer has: it reads the diff and the worktree. Even read-like Git commands can
 # write (git diff --output), so it gets no shell; Codex reviews in its read-only sandbox instead.
 AGENT_REVIEW_TOOLS = ('Read', 'Glob', 'Grep')
+# The agent's change summary is data the Summary tab draws, so its text stays short and factual.
+SUMMARY_LIMITS = {'headline': 120, 'text': 160, 'changes': 12, 'files': 8, 'nodes': 20, 'edges': 40, 'label': 40, 'note': 60, 'edge': 24, 'focus': 5}
+SUMMARY_CHANGE_KINDS = ('added', 'changed', 'removed', 'fixed')
+SUMMARY_NODE_KINDS = ('module', 'type', 'protocol', 'view', 'service', 'data', 'external')
+SUMMARY_STATUSES = ('added', 'changed', 'removed', 'unchanged')
+# Prose only: words that carry no fact. Code in backticks and node labels name real things and are never checked.
+SUMMARY_FILLER = re.compile(r'\b(seamless(ly)?|robust(ly|ness)?|comprehensive(ly)?|streamlin\w*|holistic\w*|cutting-edge|'
+                            r'best-in-class|world-class|state-of-the-art|delv(e|es|ing)|empower\w*|game-?chang\w*)\b', re.I)
+MODULE_GRAPH_TIMEOUT = 120
 AGENT_REVIEW_TIMEOUT = 1200
 # Strict, so Codex accepts it as an output schema: every property required, no extras.
 AGENT_REVIEW_SCHEMA = {
@@ -141,6 +150,10 @@ CONFIG = {
     # reviewer is "opposite" (the other provider than the change's author), "claude" or "codex";
     # instructions is the repository's review policy, relative to its root; nits caps minor findings.
     'agent-review': {'reviewer': 'opposite', 'instructions': 'REVIEW.md', 'nits': 5},
+    # The Summary tab diffs the module graph when a scope changes a file matching manifests. command runs
+    # once per side with {root} replaced by a directory holding that side's manifests at their paths, and
+    # prints {"nodes": [{id, module?, group?}], "edges": [{from, to}]}.
+    'module-graph': {'manifests': [], 'command': []},
 }
 
 
@@ -212,6 +225,14 @@ def load_config(root, strict=None):
             raise ValueError(f'[run] {key} in {path} must be a list of strings')
     if bool(run['destinations']) != bool(run['command']) or (run['command'] and not any('{destination}' in arg for arg in run['command'])):
         raise ValueError(f'[run] in {path} needs both destinations and a command that uses {{destination}}')
+    graph = config['module-graph']
+    for key in ('manifests', 'command'):
+        if not isinstance(graph[key], list) or not all(isinstance(arg, str) for arg in graph[key]):
+            raise ValueError(f'[module-graph] {key} in {path} must be a list of strings')
+    if bool(graph['manifests']) != bool(graph['command']) or (graph['command'] and not any('{root}' in arg for arg in graph['command'])):
+        raise ValueError(f'[module-graph] in {path} needs both manifests and a command that uses {{root}}')
+    for pattern in graph['manifests']:
+        re.compile(pattern)
     agent_review = config['agent-review']
     if agent_review['reviewer'] not in AGENT_PROVIDERS + ('opposite',):
         raise ValueError(f'[agent-review] reviewer in {path} must be opposite, claude or codex')
@@ -712,6 +733,153 @@ def diff_rows(old, new):
     return rows
 
 
+def summary_text(value, field, limit, prose=True):
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > limit or '\n' in value.strip():
+        raise ValueError(f'{field} must be one line of at most {limit} characters')
+    if prose and (match := SUMMARY_FILLER.search(re.sub(r'`[^`]+`', '', value))):
+        raise ValueError(f'{field} uses filler ("{match[0]}"). State what changed and why, in plain words')
+    return value.strip()
+
+
+def summary_fields(value, field, allowed):
+    if not isinstance(value, dict):
+        raise ValueError(f'{field} must be an object')
+    if unknown := sorted(set(value) - set(allowed)):
+        raise ValueError(f'{field} has unknown field {", ".join(unknown)}; allowed: {", ".join(allowed)}')
+    return value
+
+
+def validate_change_summary(data):
+    """Check an agent's change summary and return it normalized: short, factual, drawable."""
+    limits = SUMMARY_LIMITS
+    summary_fields(data, 'Summary', ('headline', 'changes', 'design', 'focus'))
+    result = {'headline': summary_text(data.get('headline'), 'headline', limits['headline']), 'changes': []}
+    changes = data.get('changes')
+    if not isinstance(changes, list) or not 1 <= len(changes) <= limits['changes']:
+        raise ValueError(f'changes must list 1 to {limits["changes"]} changes')
+    for index, change in enumerate(changes, 1):
+        summary_fields(change, f'changes[{index}]', ('kind', 'text', 'files'))
+        if change.get('kind') not in SUMMARY_CHANGE_KINDS:
+            raise ValueError(f'changes[{index}].kind must be one of {", ".join(SUMMARY_CHANGE_KINDS)}')
+        files = change.get('files', [])
+        if not isinstance(files, list) or len(files) > limits['files'] or not all(isinstance(f, str) and 0 < len(f) <= 400 for f in files):
+            raise ValueError(f'changes[{index}].files must list at most {limits["files"]} repository paths')
+        result['changes'].append({'kind': change['kind'], 'text': summary_text(change.get('text'), f'changes[{index}].text', limits['text']), 'files': files})
+    if (focus := data.get('focus')) is not None:
+        if not isinstance(focus, list) or len(focus) > limits['focus']:
+            raise ValueError(f'focus must list at most {limits["focus"]} things for the reviewer to check')
+        result['focus'] = [summary_text(item, f'focus[{index}]', limits['text']) for index, item in enumerate(focus, 1)]
+    if (design := data.get('design')) is not None:
+        summary_fields(design, 'design', ('nodes', 'edges'))
+        nodes, edges = design.get('nodes'), design.get('edges', [])
+        if not isinstance(nodes, list) or not 2 <= len(nodes) <= limits['nodes']:
+            raise ValueError(f'design.nodes must list 2 to {limits["nodes"]} nodes')
+        if not isinstance(edges, list) or len(edges) > limits['edges']:
+            raise ValueError(f'design.edges must list at most {limits["edges"]} edges')
+        result['design'] = {'nodes': [], 'edges': []}
+        for index, node in enumerate(nodes, 1):
+            field = f'design.nodes[{index}]'
+            summary_fields(node, field, ('id', 'label', 'kind', 'status', 'note', 'file'))
+            if not isinstance(node.get('id'), str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,60}', node['id']):
+                raise ValueError(f'{field}.id must be 1 to 60 letters, digits or _.:-')
+            if any(n['id'] == node['id'] for n in result['design']['nodes']):
+                raise ValueError(f'{field}.id {node["id"]} is not unique')
+            if node.get('kind', 'type') not in SUMMARY_NODE_KINDS or node.get('status', 'unchanged') not in SUMMARY_STATUSES:
+                raise ValueError(f'{field} kind must be one of {", ".join(SUMMARY_NODE_KINDS)} and status one of {", ".join(SUMMARY_STATUSES)}')
+            item = {'id': node['id'], 'label': summary_text(node.get('label', node['id']), f'{field}.label', limits['label'], prose=False),
+                    'kind': node.get('kind', 'type'), 'status': node.get('status', 'unchanged')}
+            if node.get('note') is not None:
+                item['note'] = summary_text(node['note'], f'{field}.note', limits['note'])
+            if node.get('file') is not None:
+                if not isinstance(node['file'], str) or not 0 < len(node['file']) <= 400:
+                    raise ValueError(f'{field}.file must be a repository path')
+                item['file'] = node['file']
+            result['design']['nodes'].append(item)
+        ids = {n['id'] for n in result['design']['nodes']}
+        for index, edge in enumerate(edges, 1):
+            field = f'design.edges[{index}]'
+            summary_fields(edge, field, ('from', 'to', 'label', 'status'))
+            if edge.get('from') not in ids or edge.get('to') not in ids:
+                raise ValueError(f'{field} must connect two design node ids')
+            if edge.get('status', 'unchanged') not in ('added', 'removed', 'unchanged'):
+                raise ValueError(f'{field}.status must be one of added, removed or unchanged')
+            item = {'from': edge['from'], 'to': edge['to'], 'status': edge.get('status', 'unchanged')}
+            if edge.get('label') is not None:
+                item['label'] = summary_text(edge['label'], f'{field}.label', limits['edge'])
+            result['design']['edges'].append(item)
+    return result
+
+
+def read_module_graph(data):
+    """Normalize a module graph command's output to node attributes and a set of edges."""
+    if not isinstance(data, dict) or not isinstance(data.get('nodes', []), list) or not isinstance(data.get('edges', []), list):
+        raise ValueError('The module graph command must print {"nodes": [...], "edges": [...]}')
+    nodes = {}
+    for node in data.get('nodes', []):
+        if not isinstance(node, dict) or not isinstance(node.get('id'), str) or not node['id']:
+            raise ValueError('Each module graph node needs a string id')
+        nodes[node['id']] = {'module': str(node.get('module') or node['id']), 'group': str(node.get('group') or '')}
+    edges = set()
+    for edge in data.get('edges', []):
+        if not isinstance(edge, dict) or not isinstance(edge.get('from'), str) or not isinstance(edge.get('to'), str):
+            raise ValueError('Each module graph edge needs string from and to ids')
+        edges.add((edge['from'], edge['to']))
+        for end in (edge['from'], edge['to']):
+            nodes.setdefault(end, {'module': end, 'group': ''})
+    return nodes, edges
+
+
+def diff_module_graphs(before, after):
+    """Changed modules, their changed nodes and dependencies, and the totals on each side."""
+    (old_nodes, old_edges), (new_nodes, new_edges) = before, after
+    added_edges, removed_edges = sorted(new_edges - old_edges), sorted(old_edges - new_edges)
+    attributes = {**old_nodes, **new_nodes}
+    old_groups = {info['module']: info['group'] for info in old_nodes.values()}
+    new_groups = {info['module']: info['group'] for info in new_nodes.values()}
+    changed = {}
+    # A module's status and group come from both sides' module maps, never from whichever target is visited first.
+    def module(name):
+        if name not in changed:
+            old, new = old_groups.get(name), new_groups.get(name)
+            status = 'added' if name not in old_groups else 'removed' if name not in new_groups else 'moved' if old != new else 'changed'
+            changed[name] = {'name': name, 'group': new if name in new_groups else old, 'status': status, 'targets': {}}
+            if status == 'moved':
+                changed[name]['from'] = old
+        return changed[name]
+    def target(node_id):
+        status = 'added' if node_id not in old_nodes else 'removed' if node_id not in new_nodes else 'changed'
+        return module(attributes[node_id]['module'])['targets'].setdefault(node_id, {'id': node_id, 'status': status, 'added': [], 'removed': []})
+    for node_id in sorted(set(old_nodes) ^ set(new_nodes)):
+        target(node_id)
+    # A module emptied or created by moving targets has no target of its own in the diff.
+    for name in sorted(set(old_groups) ^ set(new_groups)):
+        module(name)
+    # A target whose module or group changed moved, even when its dependencies did not.
+    for node_id in sorted(set(old_nodes) & set(new_nodes)):
+        if old_nodes[node_id] != new_nodes[node_id]:
+            old = old_nodes[node_id]
+            target(node_id).update(status='moved', **{'from': f'{old["group"]}/{old["module"]}' if old['group'] else old['module']})
+    for source, dependency in added_edges:
+        target(source)['added'].append(dependency)
+    for source, dependency in removed_edges:
+        target(source)['removed'].append(dependency)
+    groups = {group: 0 for group in (*old_groups.values(), *new_groups.values())}
+    for group in new_groups.values():
+        groups[group] += 1
+    involved = {end for edge in added_edges + removed_edges for end in edge} | (set(old_nodes) ^ set(new_nodes))
+    order = {'added': 0, 'removed': 1, 'moved': 2, 'changed': 3}
+    return {
+        'before': {'modules': len(old_groups), 'nodes': len(old_nodes), 'edges': len(old_edges)},
+        'after': {'modules': len(new_groups), 'nodes': len(new_nodes), 'edges': len(new_edges)},
+        'groups': groups,
+        'modules': [{**module, 'targets': sorted(module['targets'].values(), key=lambda t: (order[t['status']], t['id']))}
+                    for module in sorted(changed.values(), key=lambda m: (m['group'], order[m['status']], m['name']))],
+        'edges': {'added': [list(edge) for edge in added_edges], 'removed': [list(edge) for edge in removed_edges]},
+        'nodes': {node_id: {**attributes[node_id], 'status': 'added' if node_id not in old_nodes else 'removed' if node_id not in new_nodes else 'unchanged'}
+                  for node_id in sorted(involved)},
+    }
+
+
 class Review:
     def __init__(self, repo, target, state_dir=None, auto_rank=True, saved=None):
         self.repo = Path(repo).resolve()
@@ -734,6 +902,7 @@ class Review:
         self.ranking = {'status': 'idle', 'fallbacks': 0}
         self.rank_again = False
         self.definitions = {}
+        self.module_graphs = {}
         if saved:
             self.branch, self.session_id = saved['branch'], saved['sessionId']
             self.head, self.target_head = saved['head'], saved['targetHead']
@@ -851,6 +1020,7 @@ class Review:
             self.cache = read_json(self.store / 'scores.json', {})
             self.head, self.target_head, self.base, self.files, self.blobs, self.revision = self.capture()
             self.definitions = {}
+            self.module_graphs = {}  # Refresh also picks up a changed graph command.
             self.historical.clear()
             if self.job['status'] == 'failed':
                 self.job = {'status': 'idle', 'log': ''}
@@ -1636,8 +1806,10 @@ class Review:
                                            'agent': self.origin_agent(), 'startedAt': datetime.now(timezone.utc).isoformat()}
         self.save_session('pendingIteration')
 
-    def finish_iteration(self, iteration, summary, title, description):
+    def finish_iteration(self, iteration, summary, title, description, change_summary=None):
         self.validate_message(title, description)
+        if change_summary is not None:
+            change_summary = validate_change_summary(change_summary)
         if not isinstance(summary, str) or not 1 <= len(summary.strip()) <= 10000:
             raise ValueError('Provide a completion summary of at most 10000 characters')
         existing = next((i for i in self.session['iterations'] if i['id'] == iteration), None)
@@ -1651,6 +1823,9 @@ class Review:
         item = {**(existing or pending), 'number': existing['number'] if existing else len(self.session['iterations']) + 1,
                 'after': after, 'summary': summary.strip(), 'finishedAt': datetime.now(timezone.utc).isoformat()}
         item.setdefault('agent', self.origin_agent())
+        if change_summary is not None:
+            item['changeSummary'] = change_summary
+            self.session['changeSummary'] = {**change_summary, 'iteration': iteration}
         if existing:
             self.session['iterations'][self.session['iterations'].index(existing)] = item
         else:
@@ -1659,7 +1834,70 @@ class Review:
         self.session['mergeDraft'] = {'title': title.strip(), 'description': description.strip()}
         self.historical.pop(iteration, None)
         self.historical.pop('thread', None)
-        self.save_session('iterations', 'pendingIteration', 'mergeDraft')
+        self.save_session('iterations', 'pendingIteration', 'mergeDraft', 'changeSummary')
+
+    def change_summary(self, iteration=None):
+        """The agent's summary of the whole branch: the latest one, or the one written when an interaction finished."""
+        item = next((i for i in self.session['iterations'] if i['id'] == iteration), None)
+        if item:
+            return {**item['changeSummary'], 'iteration': item['id']} if item.get('changeSummary') else None
+        return self.session.get('changeSummary')
+
+    def module_graph_side(self, files):
+        graph = self.config['module-graph']
+        with tempfile.TemporaryDirectory(dir=self.store) as directory:
+            for path, data in files.items():
+                file = Path(directory) / path
+                if not file.resolve().is_relative_to(Path(directory).resolve()):
+                    raise ValueError(f'Manifest path {path} escapes the graph directory')
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(data)
+            command = [arg.replace('{root}', directory) for arg in graph['command']]
+            # A removed worktree's review runs the command from the main checkout, where relative scripts still resolve.
+            checkout = self.repo if self.repo.exists() else self.common.parent
+            if not checkout.is_dir():
+                raise ValueError('The module graph command needs a checkout of the repository')
+            result = subprocess.run(command, cwd=checkout, capture_output=True, text=True,
+                                    timeout=MODULE_GRAPH_TIMEOUT, env=clean_env())
+            if result.returncode:
+                raise ValueError(f'The module graph command failed: {(result.stderr or result.stdout).strip()[-2000:]}')
+            try:
+                return read_module_graph(json.loads(result.stdout))
+            except json.JSONDecodeError as error:
+                raise ValueError(f'The module graph command printed invalid JSON: {error}')
+
+    def module_graph(self, iteration=None):
+        """How the scope changes the module graph, built from each side's manifests; None when no manifest changed."""
+        graph = self.config['module-graph']
+        if not graph['command']:
+            return None
+        files, blobs, _, base = self.view(iteration)
+        manifest = lambda path: any(re.search(pattern, path, re.I) for pattern in graph['manifests'])
+        changed = [file for file in files if manifest(file['path'])]
+        if not changed:
+            return None
+        key = digest(json.dumps([base, graph, [(file['path'], file['fingerprint']) for file in changed]]).encode())
+        if key not in self.module_graphs:
+            try:
+                entries = {path: entry for path, entry in tree_entries(self.git, base).items() if entry[1] == 'blob' and manifest(path)}
+                contents = read_blobs(self.git, [entry[2] for entry in entries.values()])
+                before = {path: contents[entry[2]] for path, entry in entries.items()}
+                after = dict(before)
+                for file in changed:
+                    if file['status'] == 'D':
+                        after.pop(file['path'], None)
+                    else:
+                        after[file['path']] = blobs[file['id']]['new']
+                result = diff_module_graphs(self.module_graph_side(before), self.module_graph_side(after))
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                result = {'error': str(error)}
+            result['manifests'] = [file['path'] for file in changed]
+            self.module_graphs = {key: result}
+        return self.module_graphs[key]
+
+    def summary(self, iteration=None):
+        with self.lock:
+            return {'summary': self.change_summary(iteration), 'moduleGraph': self.module_graph(iteration)}
 
     def agent_review_paths(self):
         directory = self.store / 'agent-reviews'
@@ -2705,6 +2943,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, review.merge_queue())
             elif url.path == '/api/feedback':
                 self.send(200, review.feedback())
+            elif url.path == '/api/summary':
+                self.send(200, review.summary(iteration))
             elif url.path == '/api/merge-progress':
                 self.send(200, review.merge_progress(parse_qs(url.query).get('merge', [None])[0]))
             elif url.path == '/api/run/destinations':
@@ -2936,6 +3176,7 @@ def main():
     parser.add_argument('--summary', default='')
     parser.add_argument('--title', default='')
     parser.add_argument('--description-file', type=Path)
+    parser.add_argument('--summary-file', type=Path, help='JSON change summary for the Summary tab, with --finish-iteration')
     parser.add_argument('--file', type=Path, help='Movie for --add-demo')
     parser.add_argument('--appearance', choices=APPEARANCES, help='Appearance for --record-demo (default: [demos] appearance, dark)')
     args = parser.parse_args()
@@ -3054,7 +3295,16 @@ def main():
             print('Recorded baseline for user interaction ' + args.begin_iteration)
             return
         description = args.description_file.read_text() if args.description_file else ''
-        review.finish_iteration(args.finish_iteration, args.summary, args.title, description)
+        change_summary = None
+        if args.summary_file:
+            try:
+                change_summary = json.loads(args.summary_file.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                parser.error(f'--summary-file: {error}')
+        review.finish_iteration(args.finish_iteration, args.summary, args.title, description, change_summary)
+        if not review.session.get('changeSummary'):
+            print(f'Summary reminder: this review has no change summary. Pass --summary-file to {launcher(config)} --finish-iteration; '
+                  'see the Summary tab section of the local-review README.', file=sys.stderr)
         if reminder := review.demo_reminder():
             print(f'Demo reminder: {reminder} See {launcher(config)} --help for --record-demo, --stop-demo and --skip-demo.', file=sys.stderr)
     def show_url(url):

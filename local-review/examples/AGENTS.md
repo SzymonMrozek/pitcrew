@@ -106,8 +106,24 @@ its validation to a file, then run:
 ```bash
 review --finish-iteration <id> --summary "<result of this interaction>" \
   --title "feat(scope): describe the final change" \
-  --description-file /absolute/path/to/description.txt
+  --description-file /absolute/path/to/description.txt \
+  --summary-file /absolute/path/to/summary.json
 ```
+
+The summary file is the review's **Summary** tab: a JSON change summary of the
+whole branch, in the format the local-review README describes. The reviewer
+reads it before any code, so write it for a glance:
+
+- The headline says what the branch does for its user, in one line.
+- One change per card: what changed and, if it isn't obvious, why. Name the
+  types, functions and modules in `backticks`. No adjectives, no "improved",
+  no restating the request, no validation details.
+- `focus` lists what a reviewer must check: risky assumptions, behavior you
+  chose without being asked, untested paths. Leave it out when nothing qualifies.
+- Add `design` only when the structure matters, for example new types or
+  changed collaborations: the significant types and how they call each other,
+  marked added, changed or removed, plus the unchanged ones they connect to.
+  Skip it for a change that stays inside one type.
 
 Include both printed URLs as **Full review** and **This iteration** links in
 your reply. When the full diff includes imported queued changes or work from

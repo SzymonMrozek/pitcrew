@@ -248,6 +248,27 @@ test('marking a file viewed jumps to the next unreviewed file and wraps to the t
   assert.deepEqual(notices, ['Every shown file is reviewed.']);
 });
 
+test('file shortcuts act only where diffs are shown', async () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf("document.addEventListener('keydown', event =>");
+  const handler = source.slice(start, source.indexOf('\n', start));
+  const calls = [];
+  let listener;
+  const context = vm.createContext({
+    tab: 'summary', active: 'a', visibleFiles: () => [{id: 'a'}, {id: 'b'}], run: action => action(),
+    selectFile: async id => calls.push(`select ${id}`), markAndNext: async () => calls.push('viewed'), load: async () => calls.push(`load ${context.tab}`),
+    document: {querySelector: () => null, activeElement: {tagName: 'BODY'}, addEventListener: (type, fn) => {listener = fn;}},
+  });
+  vm.runInContext(handler, context);
+  for (const key of ['j', 'k', 'v']) await listener({key});
+  assert.deepEqual(calls, [], 'Summary has no file in view to move to or mark viewed');
+  await listener({key: 's'});
+  assert.deepEqual(calls, ['load snapshot']);
+  context.tab = 'all';
+  await listener({key: 'v'}); await listener({key: 'j'});
+  assert.deepEqual(calls, ['load snapshot', 'viewed', 'select b']);
+});
+
 test('send to agent reflects blockers, unsent comments and the last delivery', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const render = source.slice(source.indexOf('function agentName('), source.indexOf('async function updateMergeProgress('));

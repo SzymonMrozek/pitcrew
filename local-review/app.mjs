@@ -7,6 +7,7 @@ import {NAVIGATION, navigationLinks, rankDefinitions} from './definitions.mjs';
 import {mountQueue} from './queue.mjs';
 import {isMarkdown, renderMarkdown} from './markdown.mjs';
 import {diffStats, signed} from './stats.mjs';
+import {codeSpans, layoutGraph, moduleFootprint, hotspots, moduleGraphDrawing} from './summary.mjs';
 const $ = selector => document.querySelector(selector);
 const token = location.hash.slice(1) || sessionStorage.getItem('review-token');
 if (token) sessionStorage.setItem('review-token', token);
@@ -133,7 +134,7 @@ function updateChrome() {
   const files = visibleFiles();
   $('#file-count').textContent = `${files.length} shown · ${state.files.filter(hidden).length} filtered`;
   $('#files').replaceChildren(...files.map(file => {
-    const node = button('', () => selectFile(file.id), 'file-button' + (file.id === active ? ' active' : '') + (viewed(file) ? ' reviewed' : ''));
+    const node = button('', () => tab === 'summary' ? openInChanges(file.path) : selectFile(file.id), 'file-button' + (file.id === active ? ' active' : '') + (viewed(file) ? ' reviewed' : ''));
     const name = el('span', 'file-name');
     name.append(el('strong', '', file.path.split('/').pop()), el('small', '', file.path.split('/').slice(0, -1).join('/')));
     const module = moduleNode(file); if (module) name.append(module);
@@ -147,11 +148,11 @@ function updateChrome() {
   const excluded = state.files.filter(hidden);
   $('#filtered-summary').textContent = `Filtered out · ${excluded.length}`;
   $('#filtered-list').replaceChildren(...excluded.map(file => {
-    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (['comments', 'stats', 'demos'].includes(tab) || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
+    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (['summary', 'comments', 'stats', 'demos'].includes(tab) || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
     const name = el('span', 'file-name'); name.append(el('strong', '', file.path), el('small', '', filterReason(file))); node.append(name); return node;
   }));
   $('#filtered-files').hidden = !excluded.length;
-  $('#mode').hidden = ['snapshot', 'comments', 'stats', 'demos'].includes(tab);
+  $('#mode').hidden = ['summary', 'snapshot', 'comments', 'stats', 'demos'].includes(tab);
   for (const card of document.querySelectorAll('.review-file')) {
     const file = state.files.find(f => f.id === card.dataset.file);
     if (file) card.querySelector('.viewed-check').checked = viewed(file);
@@ -173,6 +174,7 @@ async function load(refresh = false) {
   if (state.job.status === 'running' || state.job.status === 'merged' || state.job.status === 'failed') {renderJob(); return;}
   if (tab === 'comments') {renderComments(); return;}
   if (tab === 'stats') {renderStats(); return;}
+  if (tab === 'summary') {await renderSummary(version); return;}
   if (tab === 'demos') {renderDemos(); return;}
   feedObserver?.disconnect();
   if (!visibleFiles().some(f => f.id === active)) active = visibleFiles()[0]?.id;
@@ -288,7 +290,7 @@ function updateSelection(id) {
   }
 }
 function syncSelection() {
-  if (tab === 'comments' || tab === 'stats' || tab === 'demos') return;
+  if (['summary', 'comments', 'stats', 'demos'].includes(tab)) return;
   const cards = [...document.querySelectorAll('.review-file')];
   const top = $('#content').getBoundingClientRect().top + 64;
   const main = $('#content'), atEnd = main.scrollHeight - main.scrollTop - main.clientHeight < 2;
@@ -590,6 +592,196 @@ function renderStats() {
   main.replaceChildren(el('h1', '', 'Diff stats'), summary, el('p', 'muted', notes.join(' · ')));
   if (!stats.files) {main.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to count them.' : 'No changes to review.')); return;}
   main.append(el('h2', 'comments-title', 'By kind'), statsTable('Kind', stats.byKind, max), el('h2', 'comments-title', 'By file type'), statsTable('Type', stats.byType, maxType));
+}
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgNode(tag, attributes = {}, text) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function codeText(className, text) {
+  const node = el('span', className);
+  for (const part of codeSpans(text)) node.append(part.code ? el('code', '', part.text) : document.createTextNode(part.text));
+  return node;
+}
+async function openInChanges(path) {
+  const file = state.files.find(f => f.path === path);
+  if (!file) {notice(`${path} is not in this review scope.`); return;}
+  if (hidden(file)) $('#show-hidden').checked = true;
+  $('#search').value = ''; $('#only-unviewed').checked = false; tab = 'all'; active = file.id; await load();
+}
+function fileChip(path) {
+  const known = state.files.some(f => f.path === path), chip = button(path.split('/').pop(), () => openInChanges(path), 'summary-file' + (known ? '' : ' missing'));
+  chip.title = known ? `${path}\nOpen in Changes` : `${path}\nNot changed in this scope`;
+  chip.disabled = !known;
+  return chip;
+}
+const KIND_TAGS = {module: 'M', type: 'T', protocol: 'P', view: 'V', service: 'S', data: 'D', external: 'E'};
+let graphIds = 0;
+// Draws a laid-out graph; status colors nodes and edges, and kind sets a node's tag and outline.
+function graphSvg(nodes, edges, {label, onNode} = {}) {
+  const layout = layoutGraph(nodes, edges), pad = 14, id = `graph-${++graphIds}`;
+  const linked = Boolean(onNode && layout.nodes.some(node => node.file));
+  // A diagram with file links is a group of links; without them it reads as one image.
+  const svg = svgNode('svg', {class: 'summary-graph', viewBox: `${-pad} ${-pad} ${layout.width + 2 * pad} ${layout.height + 2 * pad}`, width: layout.width + 2 * pad, role: linked ? 'group' : 'img', 'aria-label': label || 'Diagram'});
+  const defs = svgNode('defs');
+  for (const status of ['added', 'removed', 'unchanged']) {
+    const marker = svgNode('marker', {id: `${id}-${status}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse'});
+    marker.append(svgNode('path', {d: 'M0,0 L10,5 L0,10 z', class: `arrow ${status}`})); defs.append(marker);
+  }
+  svg.append(defs);
+  for (const edge of layout.edges) {
+    const group = svgNode('g', {class: `edge ${edge.status || 'unchanged'}`});
+    group.append(svgNode('path', {d: edge.path, 'marker-end': `url(#${id}-${edge.status || 'unchanged'})`}));
+    if (edge.label) group.append(svgNode('text', {x: edge.mid.x, y: edge.mid.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, edge.label));
+    svg.append(group);
+  }
+  for (const node of layout.nodes) {
+    const group = svgNode('g', {class: `node ${node.status || 'unchanged'} kind-${node.kind || 'type'}${onNode && node.file ? ' linked' : ''}`, transform: `translate(${node.x},${node.y})`});
+    group.append(svgNode('title', {}, [node.label, node.kind && node.kind !== 'module' ? node.kind : '', node.status && node.status !== 'unchanged' ? node.status : '', node.file || ''].filter(Boolean).join(' · ')));
+    group.append(svgNode('rect', {width: node.w, height: node.h, rx: node.kind === 'view' ? node.h / 2 : node.kind === 'module' ? 3 : 7}));
+    const text = svgNode('text', {x: node.w / 2 + (node.tag ? 7 : 0), y: node.note ? 17 : node.h / 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle'});
+    text.append(svgNode('tspan', {class: 'label'}, node.label));
+    group.append(text);
+    if (node.tag) group.append(svgNode('text', {x: 12, y: node.note ? 17 : node.h / 2, class: 'tag', 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, node.tag));
+    if (node.note) group.append(svgNode('text', {x: node.w / 2, y: 33, class: 'note', 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, node.note));
+    if (onNode && node.file) {
+      Object.entries({tabindex: 0, role: 'link', 'aria-label': `${node.label}, ${node.status || 'unchanged'} ${node.kind || 'type'}. Open ${node.file}`}).forEach(([name, value]) => group.setAttribute(name, value));
+      group.addEventListener('click', () => onNode(node));
+      group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); onNode(node);}});
+    }
+    svg.append(group);
+  }
+  const frame = el('div', 'summary-graph-frame'); frame.append(svg);
+  return frame;
+}
+function graphLegend(items) {
+  const legend = el('div', 'summary-legend');
+  for (const [className, text] of items) {const item = el('span', ''); item.append(el('i', className), document.createTextNode(text)); legend.append(item);}
+  return legend;
+}
+function summarySection(title, ...children) {const section = el('section', 'summary-section'); section.append(el('h2', '', title), ...children); return section;}
+function kindBar(stats) {
+  const total = stats.byKind.reduce((sum, row) => sum + row.added + row.deleted, 0) || 1, bar = el('div', 'kind-bar'), legend = el('div', 'summary-legend');
+  for (const row of stats.byKind) {
+    const lines = row.added + row.deleted, part = el('span', `kind-${row.key}`);
+    part.style.flexGrow = Math.max(lines, 0.4); part.title = `${row.label}: ${row.files} file${row.files === 1 ? '' : 's'}, ${signed(row.added)} ${signed(-row.deleted)}`;
+    bar.append(part);
+    const item = el('span'); item.append(el('i', `kind-${row.key}`), document.createTextNode(`${row.label} ${Math.round(100 * lines / total)}%`)); legend.append(item);
+  }
+  const wrap = el('div', 'kind-bar-wrap'); wrap.append(bar, legend);
+  return wrap;
+}
+function footprintNode(files) {
+  const rows = moduleFootprint(files, moduleFor), max = Math.max(1, ...rows.map(row => row.added + row.deleted)), list = el('div', 'footprint');
+  for (const row of rows.slice(0, 10)) {
+    const line = el('div', 'footprint-row'), name = row.name ? el('span', `module-tag module-color-${moduleColorMap.get(row.name) ?? 0}`, row.name) : el('span', 'muted', 'Outside modules');
+    const track = el('span', 'footprint-track'), bar = el('span', 'stats-bar');
+    bar.style.width = `${100 * (row.added + row.deleted) / max}%`;
+    bar.style.setProperty('--added', `${row.added + row.deleted ? 100 * row.added / (row.added + row.deleted) : 0}%`);
+    track.append(bar);
+    line.title = `${row.name || 'Outside modules'}${row.group ? ` · ${row.group}` : ''}: ${row.files} file${row.files === 1 ? '' : 's'}`;
+    line.append(name, track, el('span', 'added', signed(row.added)), el('span', 'removed', signed(-row.deleted)));
+    list.append(line);
+  }
+  if (rows.length > 10) list.append(el('p', 'muted', `${rows.length - 10} more module${rows.length - 10 === 1 ? '' : 's'}`));
+  return list;
+}
+function hotspotNode(files) {
+  const list = el('div', 'hotspots');
+  for (const file of hotspots(files)) {
+    const row = button('', () => openInChanges(file.path), 'hotspot'), name = el('span', 'file-name');
+    name.append(el('strong', '', file.path.split('/').pop()), el('small', '', file.path.split('/').slice(0, -1).join('/')));
+    const module = moduleNode(file);
+    row.append(el('span', 'score' + (file.score >= 75 ? ' high' : ''), file.score), name, module || el('span'), el('span', 'added', file.binary ? '' : signed(file.added)), el('span', 'removed', file.binary ? '' : signed(-file.deleted)));
+    row.title = `${file.path}\nImportance ${file.score}/100 · ${file.scorer}`;
+    list.append(row);
+  }
+  return list;
+}
+const STATUS_MARKS = {added: '+', removed: '−', moved: '→', changed: '~', unchanged: '·'};
+function countTile(label, before, after) {
+  const node = el('div', 'stats-tile'), delta = after - before;
+  node.append(el('strong', delta > 0 ? 'added' : delta < 0 ? 'removed' : '', `${before.toLocaleString()} → ${after.toLocaleString()}`), el('span', '', `${label} · ${signed(delta)}`));
+  return node;
+}
+function moduleGraphNode(graph) {
+  if (graph.error) return summarySection('Module graph', el('div', 'demo-note attention', `The module graph changed in ${graph.manifests.length} manifest${graph.manifests.length === 1 ? '' : 's'}, but it could not be read: ${graph.error}`));
+  const tiles = el('div', 'stats-summary');
+  tiles.append(countTile('modules', graph.before.modules, graph.after.modules), countTile('targets', graph.before.nodes, graph.after.nodes), countTile('dependencies', graph.before.edges, graph.after.edges));
+  const tree = el('div', 'module-tree');
+  let group;
+  for (const module of graph.modules) {
+    if (module.group !== group) {group = module.group; tree.append(el('div', 'module-tree-group', `${group || 'Ungrouped'} · ${graph.groups[group] ?? 0} module${graph.groups[group] === 1 ? '' : 's'}`));}
+    const row = el('div', `module-tree-module ${module.status}`);
+    row.append(el('span', 'mark', STATUS_MARKS[module.status]), el('strong', '', module.name), el('small', 'muted', module.status === 'moved' ? `moved from ${module.from || 'no group'}` : module.status === 'changed' ? '' : `${module.status} module`));
+    tree.append(row);
+    for (const target of module.targets) {
+      const line = el('div', `module-tree-target ${target.status}`), deps = el('span', 'deps');
+      for (const dep of target.added) deps.append(el('span', 'dep added', `+ ${dep}`));
+      for (const dep of target.removed) deps.append(el('span', 'dep removed', `− ${dep}`));
+      line.append(el('span', 'mark', STATUS_MARKS[target.status]), el('span', 'target-name', target.id));
+      if (target.status === 'moved') line.append(el('small', 'muted', `from ${target.from}`));
+      line.append(deps);
+      tree.append(line);
+    }
+  }
+  const children = [tiles, tree], drawing = moduleGraphDrawing(graph);
+  if (drawing) children.push(graphSvg(drawing.nodes, drawing.edges, {label: 'Changed module dependencies'}), graphLegend([['added', 'added'], ['removed', 'removed'], ['unchanged', 'existing']]));
+  else if (Object.keys(graph.nodes).length) children.push(el('p', 'muted', `${Object.keys(graph.nodes).length} targets take part in these changes, too many to draw; the tree above lists every change.`));
+  children.push(el('p', 'muted', `Built from ${graph.manifests.length} changed manifest${graph.manifests.length === 1 ? '' : 's'}: ${graph.manifests.join(', ')}`));
+  return summarySection('Module graph', ...children);
+}
+async function renderSummary(version) {
+  feedObserver?.disconnect();
+  const main = $('#content');
+  if (!main.querySelector('.summary')) main.replaceChildren(el('div', 'empty', 'Preparing the summary…'));
+  const data = await api('summary');
+  if (version !== loadVersion) return;
+  const included = $('#show-hidden').checked ? state.files : state.files.filter(file => !hidden(file)), stats = diffStats(included), summary = data.summary;
+  const page = el('div', 'summary'), head = el('div', 'summary-head');
+  if (summary) {
+    const written = state.iterations.find(i => i.id === summary.iteration);
+    head.append(codeText('summary-headline', summary.headline), el('small', 'muted', `${agentName(state.agent)} summary of the whole branch${written ? ` · written at iteration ${written.number}` : ''}`));
+  } else head.append(el('div', 'summary-headline muted', state.merge.draft.title || 'No summary yet'), el('small', 'muted', 'The agent has not written a change summary. It adds one with --summary-file when it finishes an interaction.'));
+  const tiles = el('div', 'stats-summary'), modules = new Set(included.map(file => moduleFor(file.path)?.name).filter(Boolean));
+  const tile = (label, value, className = '') => {const node = el('div', 'stats-tile'); node.append(el('strong', className, value), el('span', '', label)); return node;};
+  tiles.append(tile('files', stats.files.toLocaleString()), tile('added', signed(stats.added), 'added'), tile('removed', signed(-stats.deleted), 'removed'), tile('modules', modules.size.toLocaleString()));
+  if (state.demos.total) tiles.append(tile('demos', state.demos.total.toLocaleString()));
+  page.append(head, tiles);
+  if (stats.files) page.append(kindBar(stats));
+  if (summary) {
+    const grid = el('div', 'change-grid');
+    for (const change of summary.changes) {
+      const card = el('div', `change-card ${change.kind}`), files = el('div', 'change-files');
+      files.append(...change.files.map(fileChip));
+      card.append(el('span', 'change-kind', change.kind), codeText('change-text', change.text));
+      if (change.files.length) card.append(files);
+      grid.append(card);
+    }
+    page.append(summarySection('What changed', grid));
+    if (summary.focus?.length) {
+      const list = el('ul', 'focus-list');
+      list.append(...summary.focus.map(item => {const line = el('li'); line.append(codeText('', item)); return line;}));
+      page.append(summarySection('Check before approving', list));
+    }
+    if (summary.design) {
+      const nodes = summary.design.nodes.map(node => ({...node, tag: KIND_TAGS[node.kind]}));
+      // Context nodes and files outside this scope open in the source viewer instead of the diff.
+      const openNode = node => state.files.some(f => f.path === node.file) ? openInChanges(node.file) : openSource(node.file, 1);
+      page.append(summarySection('Design', graphSvg(nodes, summary.design.edges, {label: 'Program design', onNode: node => run(() => openNode(node))}),
+        graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context'], ['tags', 'M module · T type · P protocol · V view · S service · D data · E external']])));
+    }
+  }
+  // Manifest edits that leave every module and dependency as it was add nothing to read.
+  if (data.moduleGraph && (data.moduleGraph.error || data.moduleGraph.modules.length)) page.append(moduleGraphNode(data.moduleGraph));
+  if (stats.files) {
+    const columns = el('div', 'summary-columns');
+    columns.append(summarySection('Read first', hotspotNode(included)), summarySection('Lines by module', footprintNode(included)));
+    page.append(columns);
+  } else page.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to include them.' : 'No changes to review.'));
+  main.replaceChildren(page);
 }
 // Changed UI paths with neither a recording nor the agent's reason for skipping one.
 function demoMissing(demos) {return Boolean(demos?.uiPaths.length && !demos.total && !demos.skipped);}
@@ -1014,7 +1206,7 @@ $('#merge-form').onsubmit = event => {
     } finally {submit.disabled = false;}
   });
 };
-document.addEventListener('keydown', event => {if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || event.metaKey || event.ctrlKey || event.altKey) return; run(async () => {const files = visibleFiles(), index = files.findIndex(f => f.id === active); if (event.key.toLowerCase() === 'j' && files[index + 1]) await selectFile(files[index + 1].id); if (event.key.toLowerCase() === 'k' && files[index - 1]) await selectFile(files[index - 1].id); if (event.key.toLowerCase() === 'v' && active) await markAndNext(); if (event.key.toLowerCase() === 's') {tab = tab === 'snapshot' ? 'all' : 'snapshot'; await load();}});});
+document.addEventListener('keydown', event => {if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || event.metaKey || event.ctrlKey || event.altKey) return; if (['summary', 'comments', 'stats', 'demos'].includes(tab) && 'jkv'.includes(event.key.toLowerCase())) return; run(async () => {const files = visibleFiles(), index = files.findIndex(f => f.id === active); if (event.key.toLowerCase() === 'j' && files[index + 1]) await selectFile(files[index + 1].id); if (event.key.toLowerCase() === 'k' && files[index - 1]) await selectFile(files[index - 1].id); if (event.key.toLowerCase() === 'v' && active) await markAndNext(); if (event.key.toLowerCase() === 's') {tab = tab === 'snapshot' ? 'all' : 'snapshot'; await load();}});});
 setInterval(() => {if (!state || !(mergeLogRunning || state.job.status === 'running' || state.ranking?.status === 'running' || state.mergeRequest?.status === 'pending' || state.mergeRequest?.status === 'working' || state.handoff?.last?.status === 'running' || state.demos?.recording || state.run?.last?.status === 'running')) return; run(async () => {const version = loadVersion, scope = iteration, nextState = await api('state'); if (version !== loadVersion || scope !== iteration) return; const demos = JSON.stringify(state.demos), runStatus = state.run?.last?.status; state = nextState; updateChrome(); if ($('#run-dialog').open || runStatus !== state.run?.last?.status) renderRun(); if (runStatus === 'running' && state.run?.last?.status !== 'running') notice(runSummary(state.run.last)); if (state.job.status !== 'idle') renderJob(); else if (tab === 'demos' && JSON.stringify(state.demos) !== demos) renderDemos();});}, 1500);
 run(loadFeedback);
 run(async () => {await load(); if (!state.jevAvailable) notice('Jev is unavailable without JEV_API_KEY in the review server environment. Files use clearly labeled fallback scores.');});

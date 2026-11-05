@@ -69,7 +69,11 @@ Keep these, whatever your stack.
    opens review pages.
 10. **Failure returns the same approval to pending.** Retries don't create new
     approvals, new iterations or new queue positions.
-11. **The reviewer never shares the author's context and never writes.** It's
+11. **The module graph diff reads manifests, never a build.** Each side's
+    manifests are written to a temporary directory and read by the same
+    command, so the base and the change compare on equal terms without
+    checking anything out or running the build tool.
+12. **The reviewer never shares the author's context and never writes.** It's
     a new session, of the other provider by default, limited to read tools or
     a read-only sandbox. Its findings are comments the author must answer
     before finishing; they never approve or block a merge on their own. A
