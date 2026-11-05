@@ -15,6 +15,8 @@ build step, no dependency to install, and no hosting.
 
 - **The diff you'd actually review:** the branch against its merge base, plus
   staged, unstaged and untracked files.
+- **Summary first:** the agent's change summary drawn as cards and a design
+  diagram, the module graph's diff, and the files to read first.
 - **Importance ranking:** files sort by importance. Optionally,
   [Jev](#importance-ranking-with-jev) scores each diff.
 - **Snapshots:** old, new and a pixel diff side by side, preloaded and scrolled
@@ -77,7 +79,8 @@ review --begin-iteration turn-3 --request "Improve snapshot navigation"
 # ... the agent edits and validates ...
 review --finish-iteration turn-3 --summary "Improved snapshot navigation" \
   --title "feat(review): add snapshot navigation" \
-  --description-file /absolute/path/to/description.txt
+  --description-file /absolute/path/to/description.txt \
+  --summary-file /absolute/path/to/summary.json
 ```
 
 `--finish-iteration` prints the full review URL and a link to this iteration.
@@ -139,6 +142,74 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   `review --implement-feedback <id>` marks one shipped.
 - **Tab title.** The browser tab shows the originating agent's thread title,
   read from local Codex or Claude logs.
+
+### Summary
+
+The **Summary** tab is the change on one screen, drawn rather than written:
+
+- **Headline and change cards** from the agent's summary: one line per change,
+  tagged added, changed, removed or fixed, with chips that open its files.
+- **Check before approving:** what the agent says a reviewer should verify.
+- **Design:** when the change has a structure worth seeing, the agent's
+  diagram of the types it added or changed and how they connect, colored by
+  status. Click a node to open its file.
+- **Module graph:** when the scope changes a module manifest, which modules,
+  targets and dependencies were added, removed or moved between groups, as a
+  tree and a graph. It's
+  computed, not written by the agent; see [Module graph](#module-graph).
+- **Read first and lines by module:** the highest-importance files and where
+  the lines changed, from the same data as the feed.
+
+Tiles and the kind bar follow the selected scope and **Show filtered files**.
+The agent's summary always describes the whole branch; an iteration scope
+shows the one written when that interaction finished.
+
+The agent writes the summary as JSON and passes it with
+`--finish-iteration --summary-file`:
+
+```json
+{
+  "headline": "Reorder retries a failed `OrderService` call once",
+  "changes": [
+    {"kind": "fixed", "text": "A failed reorder retries once, then shows the error", "files": ["Sources/ReorderInteractor.swift"]}
+  ],
+  "focus": ["Retry count is fixed at one; no backoff"],
+  "design": {
+    "nodes": [
+      {"id": "interactor", "label": "ReorderInteractor", "kind": "type", "status": "changed", "file": "Sources/ReorderInteractor.swift"},
+      {"id": "service", "label": "OrderService", "kind": "protocol"}
+    ],
+    "edges": [{"from": "interactor", "to": "service", "label": "retries", "status": "added"}]
+  }
+}
+```
+
+The tool rejects a summary that won't read well at a glance: a headline over
+120 characters, more than 12 changes, change text over 160 characters or on
+several lines, unknown fields, and filler such as "seamless", "robust" or
+"comprehensive" in prose; code in backticks and node labels aren't checked. `kind` is `added`, `changed`, `removed` or `fixed`. Design nodes
+take `kind` (`module`, `type`, `protocol`, `view`, `service`, `data` or
+`external`), `status` (`added`, `changed`, `removed` or `unchanged`), an
+optional `note` and `file`; at most 20 nodes and 40 edges. Text in
+`backticks` renders as code.
+
+#### Module graph
+
+Set `[module-graph]` to diff your module dependencies. When a scope changes a
+file matching `manifests`, the tool writes every matching file from each side
+of the comparison into a temporary directory and runs `command` there, with
+`{root}` replaced by that directory. The command prints:
+
+```json
+{"nodes": [{"id": "HomeImplementation", "module": "Home", "group": "Scenes"}],
+ "edges": [{"from": "HomeImplementation", "to": "HomeInterface"}]}
+```
+
+Nodes are build targets; `module` and `group` default to the ID and nothing.
+An edge to an ID that isn't a node adds that node. The command reads only the
+manifests it's given, never the worktree's build, so both sides compare on
+equal terms and the result is cached until a manifest changes. A failing
+command shows its error on the tab.
 
 ### Importance ranking with Jev
 
@@ -486,6 +557,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
 | `[demos]` | dark, no paths | `paths` whose changes should come with a demo recording, and the recording `appearance` |
 | `[run]` | none | `destinations` and `command` for **Run…** |
+| `[module-graph]` | none | `manifests` path regexes and the `command` that prints the module graph for **Summary** |
 | `[agent-review]` | `opposite`, `REVIEW.md`, 5 | `reviewer` (`opposite`, `claude` or `codex`), review `instructions` path and the `nits` cap for `--agent-review` |
 
 An unknown key is an error for the tool checked out in that repository. A

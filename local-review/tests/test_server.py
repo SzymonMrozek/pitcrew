@@ -486,6 +486,155 @@ class ReviewTests(unittest.TestCase):
         self.review.refresh()
         self.assertEqual([f['path'] for f in self.review.view('thread')[0]], ['Second.swift'])
 
+    def change_summary(self, **overrides):
+        return {'headline': 'Reorder retries a failed `OrderService` call once', 'changes': [
+            {'kind': 'fixed', 'text': 'A failed reorder retries once before showing an error', 'files': ['Interactor.swift']}], **overrides}
+
+    def test_finish_iteration_keeps_the_agents_change_summary_for_the_branch_and_the_interaction(self):
+        self.review.begin_iteration('first', 'Retry reorders')
+        self.write('Interactor.swift', 'let value = 3\n')
+        design = {'nodes': [{'id': 'interactor', 'label': 'ReorderInteractor', 'status': 'changed', 'file': 'Interactor.swift'},
+                            {'id': 'service', 'label': 'OrderService', 'kind': 'protocol'}],
+                  'edges': [{'from': 'interactor', 'to': 'service', 'label': 'retries', 'status': 'added'}]}
+        self.review.finish_iteration('first', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.', self.change_summary(design=design, focus=['Retry count is fixed at one']))
+        summary = self.review.summary()['summary']
+        self.assertEqual(summary['iteration'], 'first')
+        self.assertEqual(summary['design']['nodes'][1], {'id': 'service', 'label': 'OrderService', 'kind': 'protocol', 'status': 'unchanged'})
+        self.assertEqual(summary['design']['edges'], [{'from': 'interactor', 'to': 'service', 'status': 'added', 'label': 'retries'}])
+        self.review.begin_iteration('second', 'Polish')
+        self.write('Interactor.swift', 'let value = 4\n')
+        self.review.finish_iteration('second', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.', self.change_summary(headline='Reorder retries once, then shows the error'))
+        self.assertEqual(self.review.summary()['summary']['headline'], 'Reorder retries once, then shows the error')
+        self.assertEqual(self.review.summary('first')['summary']['headline'], 'Reorder retries a failed `OrderService` call once')
+        self.review.begin_iteration('third', 'No summary this time')
+        self.review.finish_iteration('third', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.')
+        self.assertEqual(self.review.summary()['summary']['iteration'], 'second', 'An interaction without a summary keeps the latest one')
+        self.assertIsNone(self.review.summary('third')['summary'])
+        self.assertIsNone(self.review.summary()['moduleGraph'], 'No module graph without configuration')
+
+    def test_change_summaries_stay_short_factual_and_drawable(self):
+        valid = self.change_summary()
+        self.assertEqual(m.validate_change_summary(valid)['changes'][0]['kind'], 'fixed')
+        invalid = [
+            ({**valid, 'headline': 'x' * 121}, 'headline must be one line'),
+            ({**valid, 'headline': 'Two\nlines'}, 'headline must be one line'),
+            ({**valid, 'headline': 'Seamlessly handle reorders'}, 'filler'),
+            ({**valid, 'changes': [{**valid['changes'][0], 'text': 'A robust retry'}]}, 'filler'),
+            ({**valid, 'changes': []}, 'changes must list 1 to 12'),
+            ({**valid, 'changes': [{**valid['changes'][0], 'kind': 'improved'}]}, 'kind must be one of'),
+            ({**valid, 'changes': [{**valid['changes'][0], 'why': 'because'}]}, 'unknown field why'),
+            ({**valid, 'focus': ['a'] * 6}, 'focus must list at most 5'),
+            ({**valid, 'design': {'nodes': [{'id': 'a'}]}}, 'design.nodes must list 2 to 20'),
+            ({**valid, 'design': {'nodes': [{'id': 'a'}, {'id': 'a'}]}}, 'not unique'),
+            ({**valid, 'design': {'nodes': [{'id': 'a'}, {'id': 'b', 'kind': 'class'}]}}, 'kind must be one of'),
+            ({**valid, 'design': {'nodes': [{'id': 'a'}, {'id': 'b'}], 'edges': [{'from': 'a', 'to': 'c'}]}}, 'connect two design node ids'),
+            ({**valid, 'design': {'nodes': [{'id': 'a'}, {'id': 'b'}], 'edges': [{'from': 'a', 'to': 'b', 'status': 'changed'}]}}, 'added, removed or unchanged'),
+            ({**valid, 'extra': 1}, 'unknown field extra'),
+            ({**valid, 'focus': ['A comprehensive check']}, 'filler'),
+        ]
+        for data, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                m.validate_change_summary(data)
+        domain = m.validate_change_summary({**valid, 'headline': 'Fix `RobustRetry` rounding in leverage selection',
+                                            'design': {'nodes': [{'id': 'a', 'label': 'SeamlessScroller'}, {'id': 'b'}]}})
+        self.assertEqual(domain['design']['nodes'][0]['label'], 'SeamlessScroller', 'Names in code and labels are not prose')
+        self.review.begin_iteration('first', 'Change')
+        with self.assertRaisesRegex(ValueError, 'filler'):
+            self.review.finish_iteration('first', 'Done', 'fix(test): change', 'Change. Tests pass.', {**valid, 'headline': 'Seamless retries'})
+        self.assertEqual(self.review.session['pendingIteration']['id'], 'first', 'A rejected summary leaves the interaction pending')
+
+    def write_graph_tool(self):
+        # Each manifest line "A -> B" declares a dependency; the module is the manifest's directory.
+        self.write('graph.py', 'import json, sys\nfrom pathlib import Path\nnodes, edges = {}, []\n'
+                   'for manifest in Path(sys.argv[1]).rglob("deps.txt"):\n'
+                   '    module = manifest.parent.name\n'
+                   '    for line in manifest.read_text().split("\\n"):\n'
+                   '        if "->" in line:\n'
+                   '            a, b = (part.strip() for part in line.split("->"))\n'
+                   '            nodes[a] = {"id": a, "module": module, "group": manifest.parent.parent.name}\n'
+                   '            edges.append({"from": a, "to": b})\n'
+                   'print(json.dumps({"nodes": list(nodes.values()), "edges": edges}))\n')
+        self.write('.config/local-review.toml', "[module-graph]\nmanifests = ['(^|/)deps\\.txt$']\ncommand = ['python3', 'graph.py', '{root}']\n")
+
+    def test_module_graph_diffs_dependencies_declared_on_each_side(self):
+        self.write_graph_tool()
+        self.write('Modules/Scenes/Home/deps.txt', 'HomeImplementation -> HomeInterface\nHomeImplementation -> AssetsList\n')
+        self.write('Modules/Shared/AssetsList/deps.txt', 'AssetsList -> Coordinator\n')
+        self.write('Modules/Shared/Untouched/deps.txt', 'Untouched -> Coordinator\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'feat(test): modules')
+        self.git('checkout', 'main')
+        self.git('merge', '--ff-only', 'feature')
+        self.git('checkout', 'feature')
+        self.review.refresh()
+        self.assertIsNone(self.review.summary()['moduleGraph'], 'No manifest changed')
+        self.write('Modules/Scenes/Home/deps.txt', 'HomeImplementation -> HomeInterface\nHomeImplementation -> Portfolio\n')
+        self.write('Modules/Scenes/Portfolio/deps.txt', 'Portfolio -> Coordinator\n')
+        self.git('rm', '-q', 'Modules/Shared/AssetsList/deps.txt')
+        self.review.refresh()
+        graph = self.review.summary()['moduleGraph']
+        self.assertEqual(graph['before'], {'modules': 5, 'nodes': 5, 'edges': 4}, 'Undeclared dependencies count as their own modules')
+        self.assertEqual(graph['after'], {'modules': 5, 'nodes': 5, 'edges': 4})
+        self.assertEqual(graph['edges'], {'added': [['HomeImplementation', 'Portfolio'], ['Portfolio', 'Coordinator']],
+                                          'removed': [['AssetsList', 'Coordinator'], ['HomeImplementation', 'AssetsList']]})
+        modules = {module['name']: module for module in graph['modules']}
+        self.assertEqual(modules['Home']['status'], 'changed')
+        self.assertEqual(modules['Home']['targets'], [{'id': 'HomeImplementation', 'status': 'changed', 'added': ['Portfolio'], 'removed': ['AssetsList']}])
+        self.assertEqual(modules['Portfolio']['status'], 'added')
+        self.assertEqual((modules['AssetsList']['status'], modules['AssetsList']['targets']), ('removed', [{'id': 'AssetsList', 'status': 'removed', 'added': [], 'removed': ['Coordinator']}]))
+        self.assertNotIn('Untouched', modules)
+        self.assertEqual(graph['groups'], {'Scenes': 2, 'Shared': 1, '': 2})
+        self.assertEqual(graph['nodes']['Portfolio']['status'], 'added')
+        self.assertEqual(sorted(graph['manifests']), ['Modules/Scenes/Home/deps.txt', 'Modules/Scenes/Portfolio/deps.txt', 'Modules/Shared/AssetsList/deps.txt'])
+        self.assertIs(self.review.summary()['moduleGraph'], graph, 'Unchanged manifests reuse the computed graph')
+        self.write('graph.py', 'print(\'{"nodes": [], "edges": []}\')\n')
+        self.assertIs(self.review.summary()['moduleGraph'], graph)
+        self.review.refresh()
+        self.assertEqual(self.review.summary()['moduleGraph']['after'], {'modules': 0, 'nodes': 0, 'edges': 0}, 'Refresh reruns a changed command')
+
+    def test_module_graph_shows_modules_moved_between_groups(self):
+        before = ({'Feed': {'module': 'Feed', 'group': 'Scenes'}, 'Coordinator': {'module': 'Coordinator', 'group': 'Utilities'}}, {('Feed', 'Coordinator')})
+        after = ({'Feed': {'module': 'Feed', 'group': 'Features'}, 'Coordinator': {'module': 'Coordinator', 'group': 'Utilities'}}, {('Feed', 'Coordinator')})
+        graph = m.diff_module_graphs(before, after)
+        self.assertEqual(graph['modules'], [{'name': 'Feed', 'group': 'Features', 'status': 'moved', 'from': 'Scenes',
+                                             'targets': [{'id': 'Feed', 'status': 'moved', 'added': [], 'removed': [], 'from': 'Scenes/Feed'}]}])
+        self.assertEqual(graph['groups'], {'Scenes': 0, 'Features': 1, 'Utilities': 1})
+        retargeted = m.diff_module_graphs(({'FeedKit': {'module': 'Feed', 'group': 'Scenes'}}, set()), ({'FeedKit': {'module': 'FeedCore', 'group': 'Scenes'}}, set()))
+        self.assertEqual([(module['name'], module['status']) for module in retargeted['modules']], [('FeedCore', 'added'), ('Feed', 'removed')])
+        self.assertEqual(retargeted['modules'][0]['targets'][0]['from'], 'Scenes/Feed')
+        # Moved and split at once: no target survives, and the removed target is visited first.
+        split = m.diff_module_graphs(({'Foo': {'module': 'Foo', 'group': 'Scenes'}}, set()),
+                                     ({'FooInterface': {'module': 'Foo', 'group': 'Features'}, 'FooImplementation': {'module': 'Foo', 'group': 'Features'}}, set()))
+        self.assertEqual([(module['name'], module['group'], module['status'], module.get('from')) for module in split['modules']], [('Foo', 'Features', 'moved', 'Scenes')])
+        self.assertEqual([(t['id'], t['status']) for t in split['modules'][0]['targets']], [('FooImplementation', 'added'), ('FooInterface', 'added'), ('Foo', 'removed')])
+
+    def test_module_graph_of_a_removed_worktree_runs_from_the_main_checkout(self):
+        self.write_graph_tool()
+        worktree = self.root / 'removed-worktree'
+        self.git('worktree', 'add', '-q', '-b', 'graph-feature', str(worktree), 'main')
+        (worktree / '.config').mkdir()
+        shutil.copy(self.root / '.config/local-review.toml', worktree / '.config/local-review.toml')
+        (worktree / 'Modules/Scenes/Home').mkdir(parents=True)
+        (worktree / 'Modules/Scenes/Home/deps.txt').write_text('Home -> Coordinator\n')
+        review = m.Review(worktree, 'main', auto_rank=False)
+        shutil.rmtree(worktree)
+        graph = review.summary()['moduleGraph']
+        self.assertNotIn('error', graph)
+        self.assertEqual(graph['edges']['added'], [['Home', 'Coordinator']])
+
+    def test_module_graph_reports_a_failing_command_instead_of_failing_the_summary(self):
+        self.write('.config/local-review.toml', "[module-graph]\nmanifests = ['deps\\.txt$']\ncommand = ['python3', '-c', 'import sys; sys.exit(\"broken {root}\")']\n")
+        self.write('deps.txt', 'A -> B\n')
+        self.review.refresh()
+        graph = self.review.summary()['moduleGraph']
+        self.assertIn('module graph command failed', graph['error'])
+        self.assertEqual(graph['manifests'], ['deps.txt'])
+        for invalid in ("[module-graph]\nmanifests = ['x']\n", "[module-graph]\ncommand = ['tool', '{root}']\n",
+                        "[module-graph]\nmanifests = ['x']\ncommand = ['tool']\n", "[module-graph]\nmanifests = ['(']\ncommand = ['tool', '{root}']\n"):
+            self.write('.config/local-review.toml', invalid)
+            with self.subTest(invalid=invalid), self.assertRaises((ValueError, m.re.error)):
+                m.load_config(self.root, strict=True)
+
     def test_shared_registry_routes_reviews_and_restores_removed_worktrees(self):
         m.register_review(self.review)
         worktree = self.root / 'another-review'

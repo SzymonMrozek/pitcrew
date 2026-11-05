@@ -86,6 +86,13 @@ appearance = "dark"
 destinations = ["scripts/run-app.py", "--list-destinations"]
 command = ["scripts/run-app.py", "--destination", "{destination}"]
 
+# The Summary tab diffs the module graph when a scope changes a manifest. command runs once per side with
+# {root} replaced by a directory holding that side's matching files, and prints
+# {"nodes": [{id, module, group}], "edges": [{from, to}]}.
+[module-graph]
+manifests = ['(^|/)Package\.swift$']
+command = ["python3", "scripts/module-graph.py", "{root}"]
+
 # --agent-review has a fresh, read-only reviewer agent review the diff before you do. "opposite" picks
 # the provider other than the change's author, so Codex reviews Claude's work and the other way round;
 # "claude" or "codex" always uses that one. instructions is your review policy; nits caps minor findings.
