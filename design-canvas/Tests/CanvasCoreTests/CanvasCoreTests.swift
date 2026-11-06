@@ -288,6 +288,15 @@ import Testing
         #expect(tokens.groups(of: .number).map(\.name) == ["", "space"])
     }
 
+    @Test func tokenGroupsStayWholeAroundDeeperIDs() {
+        let tokens = TokenSet(tokens: [
+            Token("color.z", .system("label")), Token("color.b.c", .system("label")), Token("color.a", .system("label")),
+        ])
+        let groups = tokens.groups(of: .color)
+        #expect(groups.map(\.name) == ["color", "color.b"])
+        #expect(groups.map(\.ids) == [["color.a", "color.z"], ["color.b.c"]])
+    }
+
     @Test func detachingATokenGivesItsLiteral() {
         let tokens = CanvasDocument.sample().tokens
         #expect(tokens.literal("space.row") == .number(12))

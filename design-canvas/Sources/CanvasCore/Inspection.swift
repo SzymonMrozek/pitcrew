@@ -31,14 +31,15 @@ extension TokenSet {
     }
 
     /// Tokens of one kind, grouped by the ID up to its last dot: `color.text.ink` is in
-    /// `color.text`, `space.4` in `space`. Groups and their tokens are sorted by ID.
+    /// `color.text`, `space.4` in `space`. Groups are sorted by name and their tokens by
+    /// ID. Sorted IDs alone would split a group around a deeper one: `color.b.c` falls
+    /// between `color.a` and `color.z`.
     public func groups(of kind: TokenKind) -> [(name: String, ids: [TokenID])] {
-        var groups: [(name: String, ids: [TokenID])] = []
-        for id in ids(of: kind) {
-            let name = id.rawValue.lastIndex(of: ".").map { String(id.rawValue[..<$0]) } ?? ""
-            if groups.last?.name == name { groups[groups.count - 1].ids.append(id) } else { groups.append((name, [id])) }
+        Dictionary(grouping: ids(of: kind)) { id in
+            id.rawValue.lastIndex(of: ".").map { String(id.rawValue[..<$0]) } ?? ""
         }
-        return groups
+        .map { (name: $0.key, ids: $0.value) }
+        .sorted { $0.name < $1.name }
     }
 
     /// The literal a token resolves to in a mode, for detaching a property from it.

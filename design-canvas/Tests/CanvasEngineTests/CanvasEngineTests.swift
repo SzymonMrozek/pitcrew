@@ -135,6 +135,13 @@ import Testing
         let detail = boards[1].root.first { $0.id == "tokens.color.text.ink.detail" }?[.text]?.string
         #expect(detail == "#111318 / #F1F2F5")
     }
+
+    @Test func aGroupAroundADeeperOneIsOneBoard() {
+        let tokens = TokenSet(tokens: [
+            Token("color.a", .system("label")), Token("color.b.c", .system("label")), Token("color.z", .system("label")),
+        ])
+        #expect(tokens.boards().map(\.id) == ["color", "color.b"])
+    }
 }
 
 @Suite struct ContentHeightTests {
