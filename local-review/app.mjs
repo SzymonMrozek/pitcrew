@@ -102,7 +102,7 @@ function updateChrome() {
   const context = $('#iteration-context');
   context.hidden = !current && !['thread', 'branch-start', 'target'].includes(iteration);
   context.replaceChildren();
-  if (current) context.append(el('strong', '', `Iteration ${current.number}`), el('p', '', current.request), el('p', 'muted', current.summary));
+  if (current) {const summary = el('p', 'muted', current.summary); summary.dataset.content = 'agent-iteration:summary'; context.append(el('strong', '', `Iteration ${current.number}`), el('p', '', current.request), summary);}
   if (iteration === 'thread') context.append(el('strong', '', 'This thread'), el('p', 'muted', 'Changes from recorded interactions in this chat. Imported changes remain visible in Full review. Approval covers the full branch diff against its merge base.'));
   if (iteration === 'branch-start') context.append(el('strong', '', 'Branch start'), el('p', 'muted', `Current contents compared with branch creation commit ${state.base.slice(0, 8)}. This baseline stays fixed after rebases. Approval covers the full branch diff against its merge base.`));
   if (iteration === 'target') context.append(el('strong', '', `Latest local ${state.target}`), el('p', 'muted', `Current contents compared directly with local ${state.target} at ${state.base.slice(0, 8)}. Refresh to pick up local target updates. Approval covers the full branch diff against its merge base.`));
@@ -552,6 +552,7 @@ function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
   const finding = comment.author?.kind === 'agent-review', speaker = provider => provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Agent';
   const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : '') + (finding ? ` agent-finding ${comment.severity}` : ''));
+  if (finding) node.dataset.content = `agent-review:${comment.id}`;
   node.append(button(comment.resolved ? 'Reopen' : 'Resolve', async () => {state = await api('resolve', {id: comment.id, resolved: !comment.resolved}); await updateFileComments(comment.file);}));
   const location = button(`${comment.path}${comment.line ? `:${comment.line}${comment.endLine && comment.endLine !== comment.line ? `–${comment.endLine}` : ''}` : ''}`, async () => {
     await showInDiff(file, stale || comment.side === 'file' ? 0 : comment.line, comment.side);
@@ -693,6 +694,7 @@ function hotspotNode(files) {
   const list = el('div', 'hotspots');
   for (const file of hotspots(files)) {
     const row = button('', () => openInChanges(file.path), 'hotspot'), name = el('span', 'file-name');
+    row.dataset.content = `ranking:${file.path}`;
     name.append(el('strong', '', file.path.split('/').pop()), el('small', '', file.path.split('/').slice(0, -1).join('/')));
     const module = moduleNode(file);
     row.append(el('span', 'score' + (file.score >= 75 ? ' high' : ''), file.score), name, module || el('span'), el('span', 'added', file.binary ? '' : signed(file.added)), el('span', 'removed', file.binary ? '' : signed(-file.deleted)));
@@ -744,7 +746,8 @@ async function renderSummary(version) {
   const page = el('div', 'summary'), head = el('div', 'summary-head');
   if (summary) {
     const written = state.iterations.find(i => i.id === summary.iteration);
-    head.append(codeText('summary-headline', summary.headline), el('small', 'muted', `${agentName(state.agent)} summary of the whole branch${written ? ` · written at iteration ${written.number}` : ''}`));
+    const headline = codeText('summary-headline', summary.headline); headline.dataset.content = 'agent-summary:headline';
+    head.append(headline, el('small', 'muted', `${agentName(state.agent)} summary of the whole branch${written ? ` · written at iteration ${written.number}` : ''}`));
   } else head.append(el('div', 'summary-headline muted', state.merge.draft.title || 'No summary yet'), el('small', 'muted', 'The agent has not written a change summary. It adds one with --summary-file when it finishes an interaction.'));
   const tiles = el('div', 'stats-summary'), modules = new Set(included.map(file => moduleFor(file.path)?.name).filter(Boolean));
   const tile = (label, value, className = '') => {const node = el('div', 'stats-tile'); node.append(el('strong', className, value), el('span', '', label)); return node;};
@@ -754,8 +757,9 @@ async function renderSummary(version) {
   if (stats.files) page.append(kindBar(stats));
   if (summary) {
     const grid = el('div', 'change-grid');
-    for (const change of summary.changes) {
+    for (const [index, change] of summary.changes.entries()) {
       const card = el('div', `change-card ${change.kind}`), files = el('div', 'change-files');
+      card.dataset.content = `agent-summary:changes[${index}]`;
       files.append(...change.files.map(fileChip));
       card.append(el('span', 'change-kind', change.kind), codeText('change-text', change.text));
       if (change.files.length) card.append(files);
@@ -764,15 +768,16 @@ async function renderSummary(version) {
     page.append(summarySection('What changed', grid));
     if (summary.focus?.length) {
       const list = el('ul', 'focus-list');
-      list.append(...summary.focus.map(item => {const line = el('li'); line.append(codeText('', item)); return line;}));
+      list.append(...summary.focus.map((item, index) => {const line = el('li', 'focus-item'); line.dataset.content = `agent-summary:focus[${index}]`; line.append(codeText('', item)); return line;}));
       page.append(summarySection('Check before approving', list));
     }
     if (summary.design) {
       const nodes = summary.design.nodes.map(node => ({...node, tag: KIND_TAGS[node.kind]}));
       // Context nodes and files outside this scope open in the source viewer instead of the diff.
       const openNode = node => state.files.some(f => f.path === node.file) ? openInChanges(node.file) : openSource(node.file, 1);
-      page.append(summarySection('Design', graphSvg(nodes, summary.design.edges, {label: 'Program design', onNode: node => run(() => openNode(node))}),
-        graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context'], ['tags', 'M module · T type · P protocol · V view · S service · D data · E external']])));
+      const design = summarySection('Design', graphSvg(nodes, summary.design.edges, {label: 'Program design', onNode: node => run(() => openNode(node))}),
+        graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context'], ['tags', 'M module · T type · P protocol · V view · S service · D data · E external']]));
+      design.dataset.content = 'agent-summary:design'; page.append(design);
     }
   }
   // Manifest edits that leave every module and dependency as it was add nothing to read.
@@ -829,7 +834,8 @@ function renderDemos() {
   grid.append(...items.map(demo => {
     const card = el('section', 'demo'), info = el('div', 'demo-info');
     const appearance = demo.appearance && demo.appearance[0].toUpperCase() + demo.appearance.slice(1);
-    info.append(el('strong', '', demo.title), el('small', '', [formatDuration(demo.durationSeconds), formatBytes(demo.bytes), demoInteraction(demo), demo.device, appearance, new Date(demo.recordedAt).toLocaleString()].filter(Boolean).join(' · ')));
+    const title = el('strong', '', demo.title); title.dataset.content = `agent-demo:${demo.id}`;
+    info.append(title, el('small', '', [formatDuration(demo.durationSeconds), formatBytes(demo.bytes), demoInteraction(demo), demo.device, appearance, new Date(demo.recordedAt).toLocaleString()].filter(Boolean).join(' · ')));
     const quickTime = button('Open in QuickTime Player', () => openDemos([demo.id]), 'quicktime');
     quickTime.disabled = !demos.canOpen || !demo.available;
     quickTime.title = !demo.available ? 'The recording file is missing from the review store' : demos.canOpen ? `Play ${demo.title} in QuickTime Player` : 'QuickTime Player requires macOS';
@@ -992,7 +998,7 @@ $('#feedback-export').onclick = () => run(async () => {
   link.href = url; link.download = 'review-tool-feedback.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 const elementFeedback = mountElementFeedback({token,
-  view: () => ({tabLabel: document.querySelector('[data-tab].selected')?.firstChild.textContent.trim() ?? tab, tab, scope: reviewScope, comparison, mode: $('#mode').value, activeFile: state?.files.find(file => file.id === active)?.path ?? null,
+  view: () => ({agent: state?.agent ? agentName(state.agent) : null, tabLabel: document.querySelector('[data-tab].selected')?.firstChild.textContent.trim() ?? tab, tab, scope: reviewScope, comparison, mode: $('#mode').value, activeFile: state?.files.find(file => file.id === active)?.path ?? null,
     filters: {search: $('#search').value, showHidden: $('#show-hidden').checked, onlyUnviewed: $('#only-unviewed').checked}, contentScrollTop: Math.round($('#content').scrollTop), viewport: {width: innerWidth, height: innerHeight}}),
   save: async feedback => {await api('feedback', feedback); await loadFeedback();}});
 $('#feedback-comment').onclick = () => {$('#feedback-dialog').close(); elementFeedback.start();};

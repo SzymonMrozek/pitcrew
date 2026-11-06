@@ -441,7 +441,12 @@ class ReviewTests(unittest.TestCase):
         self.assertIn('"selector": "header > button#refresh"', report)
         self.assertNotIn('Where:', m.feedback_report(self.review.feedback()['entries'][1]))
         self.review.save_feedback('Non-ASCII page text fits', context={'html': '語' * 5000})
-        for bad in ('text', ['list'], {'html': 'x' * m.FEEDBACK_CONTEXT_LIMIT}, {'componentPath': 1}, {'componentPath': [1]}, {'tab': 3}, {'dialog': []}):
+        about = {**context, 'subject': 'content', 'content': {'source': 'agent-summary', 'field': 'changes[1]', 'quote': 'Adds a cursor'}}
+        note = self.review.save_feedback('Too much detail for a summary', context=about)['entries'][0]
+        self.assertIn('About: content', m.feedback_report(note))
+        self.assertIn('Content: agent-summary changes[1]: Adds a cursor', m.feedback_report(note))
+        self.assertIn('About: interface', report)
+        for bad in ('text', ['list'], {'html': 'x' * m.FEEDBACK_CONTEXT_LIMIT}, {'componentPath': 1}, {'componentPath': [1]}, {'tab': 3}, {'dialog': []}, {'subject': 'other'}, {'content': 'text'}, {'content': {'source': 'agent-summary'}}):
             with self.assertRaisesRegex(ValueError, 'Invalid feedback context'):
                 self.review.save_feedback('Bad context', context=bad)
 

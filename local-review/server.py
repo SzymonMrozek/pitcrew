@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.14.0'
+RELEASE = '0.15.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -287,14 +287,20 @@ def clean_env():
 def valid_feedback_context(context):
     if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False)) > FEEDBACK_CONTEXT_LIMIT:
         return False
-    path = context.get('componentPath', [])
-    return isinstance(path, list) and all(isinstance(name, str) for name in path) and all(isinstance(context.get(key), (str, type(None))) for key in ('tab', 'dialog'))
+    path, content = context.get('componentPath', []), context.get('content')
+    return (isinstance(path, list) and all(isinstance(name, str) for name in path)
+            and all(isinstance(context.get(key), (str, type(None))) for key in ('tab', 'dialog'))
+            and context.get('subject') in (None, 'content', 'interface')
+            and (content is None or isinstance(content, dict) and all(isinstance(content.get(key), str) for key in ('source', 'field', 'quote'))))
 
 
 def feedback_report(entry):
     lines = [f"{entry['id']}  {entry['status']:<11}  {entry['createdAt'][:10]}  {entry.get('path') or '-'}", f"    {entry['text']}"]
     if context := entry.get('context'):
         where = ' › '.join(filter(None, [context.get('tab'), context.get('dialog'), *context.get('componentPath', [])]))
+        lines.append(f"    About: {context.get('subject') or 'interface'}")
+        if content := context.get('content'):
+            lines.append(f"    Content: {content['source']} {content['field']}: {content['quote']}")
         lines += [f'    Where: {where}', f"    Seen on: {entry.get('branch') or 'detached HEAD'}, release {entry.get('release')}",
                   f'    Context: {json.dumps(context, ensure_ascii=False)}']
     return '\n'.join(lines)

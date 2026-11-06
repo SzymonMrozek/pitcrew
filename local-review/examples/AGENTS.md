@@ -140,4 +140,6 @@ The person leaves notes about the review tool itself from its comment mode.
 When asked to analyse them, run `review --feedback <N>` for the latest N open
 notes. Each one carries the tab, component path, selector, text, file and view
 it was written on. Group them by component, find the code from the selector,
-and mark what you ship with `review --implement-feedback <id>`.
+and mark what you ship with `review --implement-feedback <id>`. A note marked
+`About: content` asks to change what was said, so its fix belongs where that
+content is written, such as your summary instructions, not in the page's code.

@@ -1,15 +1,16 @@
 // Comment mode: point at anything on the review page and leave tool feedback that says what was there.
-const LIMITS = {text: 400, code: 400, value: 400, componentText: 1000, selector: 1000, path: 1000, activeFile: 1000, html: 2000}, NAME_LIMIT = 80;
+const LIMITS = {text: 400, code: 400, value: 400, quote: 1000, componentText: 1000, selector: 1000, path: 1000, field: 1000, activeFile: 1000, html: 2000}, NAME_LIMIT = 80;
 const CONTROLS = [['button', 'Button'], ['a', 'Link'], ['summary', 'Disclosure'], ['select', 'Picker'], ['textarea', 'Text field'], ['input', 'Field'], ['label', 'Label']];
-// Outermost first. Anything unnamed here still records its selector, text and markup.
+// Later entries win on the same node. Anything unnamed here still records its selector, text and markup.
 export const COMPONENTS = [
+  ['p', 'Paragraph'], ['small', 'Caption'], ['h1', 'Heading'], ['h2', 'Heading'], ['h3', 'Heading'], ['li', 'List item'], ['tr', 'Table row'],
   ['header', 'Header'], ['.iteration-bar', 'Scope bar'], ['#iteration-context', 'Scope context'], ['.toolbar', 'Toolbar'], ['.tabs', 'Tabs'],
   ['#notice', 'Notice'], ['#merge-request-status', 'Merge status'], ['#review-handoff-status', 'Handoff status'], ['#merge-progress', 'Merge agent output'],
   ['aside', 'File sidebar'], ['#filtered-files', 'Filtered files'], ['.file-button', 'File row'], ['.keyboard-hint', 'Keyboard hint'],
   ['.review-file', 'Changed file'], ['.file-header', 'File header'], ['.file-actions', 'File actions'], ['.diff-box', 'Diff'], ['.diff-tools', 'Diff tools'],
   ['.diff-row', 'Diff row'], ['.gap-row', 'Collapsed context'], ['.line-number', 'Line number'],
   ['.image-grid', 'Snapshot comparison'], ['.image-panel', 'Snapshot panel'], ['.snapshot-tools', 'Snapshot tools'],
-  ['.summary', 'Summary'], ['.summary-section', 'Summary section'], ['.summary-graph-frame', 'Module graph'], ['.hotspots', 'Hotspots'], ['.change-grid', 'Change cards'],
+  ['.summary', 'Summary page'], ['.summary-section', node => clean(node.querySelector('h2')?.textContent) || 'Summary section'], ['.summary-graph-frame', 'Module graph'], ['.hotspots', 'Hotspots'], ['.hotspot', 'Read first row'], ['.change-grid', 'Change cards'], ['.change-card', 'Change card'], ['.summary-headline', 'Summary headline'], ['.focus-item', 'Check before approving item'], ['.kind-bar-wrap', 'Code kind bar'], ['.footprint-row', 'Module lines row'],
   ['.demo-grid', 'Demos'], ['.demo', 'Demo'], ['.stats-summary', 'Stats tiles'], ['.stats-tile', 'Stats tile'], ['.stats-table', 'Stats table'],
   ['.comment', 'Comment'], ['.comment-reply', 'Comment reply'], ['.merge-status', 'Merge status'], ['.search-group', 'Search result'], ['.source-line', 'Source line'],
 ];
@@ -29,7 +30,7 @@ function dialogName(node) {
 }
 function namedNodes(target) {
   return ancestors(target).flatMap(node => {
-    const component = COMPONENTS.filter(([selector]) => node.matches(selector)).at(-1)?.[1] ?? controlName(node);
+    const entry = COMPONENTS.filter(([selector]) => node.matches(selector)).at(-1)?.[1], component = typeof entry === 'function' ? entry(node) : entry ?? controlName(node);
     return component ? [{node, name: component}] : [];
   });
 }
@@ -47,6 +48,13 @@ function fileContext(target) {
   return {id: owner.dataset.file ?? null, path: owner.dataset.path ?? null, side: number?.dataset.side ?? null, line: Number(number?.dataset.line ?? number?.textContent) || null, code: row ? visibleText(row.querySelector('code') ?? row) : null};
 }
 const bounded = (key, value) => {const limit = LIMITS[key] ?? NAME_LIMIT; return typeof value === 'string' && value.length > limit ? value.slice(0, limit - 1) + '…' : value;};
+// Renderers mark what somebody wrote or computed with data-content="source:field", so a note can address it rather than the page.
+function contentContext(target) {
+  const node = target.closest('[data-content]');
+  if (!node) return null;
+  const [source, ...field] = node.dataset.content.split(':');
+  return {source, field: field.join(':'), quote: visibleText(node)};
+}
 // The token sits in the page's own links, so it goes first: a cut through it would leave a prefix no search can find.
 const saveable = (context, token) => {const json = JSON.stringify(context); return JSON.parse(token ? json.split(token).join('[token]') : json, bounded);};
 export function elementContext(target, point, view, token) {
@@ -56,13 +64,13 @@ export function elementContext(target, point, view, token) {
     selector: selectorPath(target),
     element: {tag: target.tagName.toLowerCase(), id: target.id || null, classes: [...target.classList], role: target.getAttribute('role'), name: accessibleName(target) || null, value: target.value, checked: target.checked},
     text: visibleText(target), componentText: visibleText(node), html: node.outerHTML,
-    file: fileContext(target),
+    file: fileContext(target), content: contentContext(target),
     pin: {x: Math.round(point.x), y: Math.round(point.y), inComponent: {x: Math.round(point.x - rect.left), y: Math.round(point.y - rect.top)}},
     rect: {x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height)},
     view,
   }, token);
 }
-export const feedbackWhere = context => [context.tab, context.dialog, ...(context.componentPath || [])].filter(Boolean).join(' › ');
+export const feedbackWhere = context => [context.subject === 'content' ? 'Content' : null, context.tab, context.dialog, ...(context.componentPath || [])].filter(Boolean).join(' › ');
 export const isCommentShortcut = event => (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'c';
 export function composerPosition(point, size, viewport, gap = 16) {
   const left = point.x + gap + size.width <= viewport.width - gap ? point.x + gap : point.x - gap - size.width;
@@ -98,9 +106,10 @@ export function mountElementFeedback({view, save, token}) {
     target = elementContext(node, {x: event.clientX, y: event.clientY}, view(), token);
     Object.assign(pin.style, {left: event.clientX + 'px', top: event.clientY + 'px'}); pin.hidden = false;
     $('#feedback-composer-where').textContent = feedbackWhere(target);
-    $('#feedback-composer-shows').textContent = target.text || target.componentText;
-    $('#feedback-composer-shows').hidden = !(target.text || target.componentText);
-    form.reset(); form.querySelector('.primary').disabled = false; composer.showModal(); form.elements.text.focus();
+    const shows = target.content?.quote || target.text || target.componentText;
+    $('#feedback-composer-shows').textContent = shows; $('#feedback-composer-shows').hidden = !shows;
+    form.reset(); form.elements.subject.value = target.content ? 'content' : 'interface';
+    form.querySelector('.primary').disabled = false; composer.showModal(); form.elements.text.focus();
     const {left, top} = composerPosition({x: event.clientX, y: event.clientY}, composer.getBoundingClientRect(), {width: innerWidth, height: innerHeight});
     Object.assign(composer.style, {left: left + 'px', top: top + 'px'});
   }
@@ -133,7 +142,7 @@ export function mountElementFeedback({view, save, token}) {
     if (submitting === target) return;
     const note = submitting = target, submit = form.querySelector('.primary'); submit.disabled = true;
     try {
-      await save({text: form.elements.text.value, file: note.file?.id ?? undefined, context: note});
+      await save({text: form.elements.text.value, file: note.file?.id ?? undefined, context: {...note, subject: form.elements.subject.value}});
       saved += 1; status.textContent = `${saved} saved · Click anything to comment on the review tool · Esc to finish`;
       if (target === note) composer.close();
     } catch (error) {
