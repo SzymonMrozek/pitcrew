@@ -102,6 +102,44 @@ class WorktreeSimulatorTests(unittest.TestCase):
             self.assertIn(message, result.stderr)
         self.assertEqual(len(self.load()['devices']), 2, 'Failures must not create a device')
 
+    def add_single_device_runtime(self):
+        data = self.load()
+        data['runtimes'].insert(0, {'identifier': 'runtime.iOS-27-2-iPhone19-4', 'version': '27.2', 'platform': 'iOS',
+                                    'isAvailable': True, 'supportedDeviceTypes': device_types('iPhone Duo')})
+        self.save(data)
+
+    def test_default_runtime_skips_a_newer_runtime_without_a_numbered_iphone(self):
+        self.add_single_device_runtime()
+        result = self.run_tool('create', '--name', 'App default')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        device = self.load()['devices'][0]
+        self.assertEqual((device['type'], device['runtime']), ('type.iPhone-18', 'runtime.iOS-27-0'))
+
+    def test_requested_device_type_decides_the_default_runtime(self):
+        self.add_single_device_runtime()
+        result = self.run_tool('create', '--name', 'App duo', '--device-type', 'type.iPhone-Duo')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_tool('create', '--name', 'App old', '--metadata', 'old.env', '--device-type', 'type.iPhone-16')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([d['runtime'] for d in self.load()['devices']], ['runtime.iOS-27-2-iPhone19-4', 'runtime.iOS-26-0'])
+
+    def test_explicit_runtime_without_a_numbered_iphone_is_not_replaced(self):
+        self.add_single_device_runtime()
+        result = self.run_tool('create', '--name', 'App pinned', '--runtime', 'runtime.iOS-27-2-iPhone19-4')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('runtime.iOS-27-2-iPhone19-4 supports no numbered iPhone', result.stderr)
+        self.assertEqual(self.load()['devices'], [])
+
+    def test_no_runtime_with_a_numbered_iphone_is_reported(self):
+        data = self.load()
+        data['runtimes'] = [r for r in data['runtimes'] if r['platform'] != 'iOS']
+        self.save(data)
+        self.add_single_device_runtime()
+        result = self.run_tool('create', '--name', 'App none')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no available iOS runtime supports a numbered iPhone', result.stderr)
+        self.assertEqual(self.load()['devices'], [])
+
     def test_delete_shuts_down_deletes_and_forgets_only_the_recorded_device(self):
         udid = self.run_tool('create', '--name', 'App gone').stdout.strip()
         other = self.run_tool('create', '--name', 'App other', '--metadata', 'other.env').stdout.strip()

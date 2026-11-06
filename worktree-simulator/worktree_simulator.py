@@ -63,7 +63,24 @@ def write_metadata(path, prefix, udid, name):
     temp.replace(path)
 
 
-def choose_runtime(requested):
+def supported_device_types(runtime):
+    supported = runtime.get('supportedDeviceTypes')
+    if supported is None:
+        supported = json.loads(simctl('list', 'devicetypes', '--json')).get('devicetypes', [])
+    return supported
+
+
+def numbered_iphones(runtime):
+    # Plain numbered models (iPhone 17 rather than 17 Pro, Plus or 16e); simctl's order is not a contract.
+    return [(int(match[1]), t['identifier']) for t in supported_device_types(runtime)
+            if (match := re.fullmatch(r'iPhone (\d+)', t.get('name', '')))]
+
+
+def supports(runtime, device_type):
+    return any(t.get('identifier') == device_type for t in supported_device_types(runtime))
+
+
+def choose_runtime(requested, device_type):
     runtimes = [r for r in json.loads(simctl('list', 'runtimes', '--json')).get('runtimes', [])
                 if r.get('isAvailable', True) and r.get('platform', 'iOS') == 'iOS' and 'iOS' in r.get('identifier', '')]
     if requested:
@@ -73,20 +90,21 @@ def choose_runtime(requested):
         return runtime
     if not runtimes:
         raise SystemExit('error: no available iOS simulator runtime; install one in Xcode > Settings > Components')
-    return max(runtimes, key=lambda r: tuple(int(part) for part in re.findall(r'\d+', r.get('version', '0'))))
+    # Xcode also installs runtimes for a single new device, which can be the newest or tie with the regular one.
+    usable = [r for r in runtimes if (supports(r, device_type) if device_type else numbered_iphones(r))]
+    if device_type and not usable:
+        raise SystemExit(f'error: device type {device_type} is not supported by any available iOS runtime')
+    if not usable:
+        raise SystemExit('error: no available iOS runtime supports a numbered iPhone; pass --device-type or install one in Xcode > Settings > Components')
+    return max(usable, key=lambda r: tuple(int(part) for part in re.findall(r'\d+', r.get('version', '0'))))
 
 
 def choose_device_type(runtime, requested):
-    supported = runtime.get('supportedDeviceTypes')
-    if supported is None:
-        supported = json.loads(simctl('list', 'devicetypes', '--json')).get('devicetypes', [])
     if requested:
-        if not any(t.get('identifier') == requested for t in supported):
+        if not supports(runtime, requested):
             raise SystemExit(f'error: device type {requested} is not supported by {runtime["identifier"]}')
         return requested
-    # The newest plain numbered model (iPhone 17 rather than 17 Pro, Plus or 16e); simctl's order is not a contract.
-    plain = [(int(match[1]), t['identifier']) for t in supported
-             if (match := re.fullmatch(r'iPhone (\d+)', t.get('name', '')))]
+    plain = numbered_iphones(runtime)
     if not plain:
         raise SystemExit(f'error: {runtime["identifier"]} supports no numbered iPhone; pass --device-type')
     return max(plain)[1]
@@ -101,8 +119,9 @@ def create(args):
         udid = device['udid']
         log(f'Using existing simulator {device["name"]} ({udid})')
     else:
-        runtime = choose_runtime(args.runtime or os.environ.get(args.env_prefix + '_RUNTIME'))
-        device_type = choose_device_type(runtime, args.device_type or os.environ.get(args.env_prefix + '_DEVICE_TYPE'))
+        requested_type = args.device_type or os.environ.get(args.env_prefix + '_DEVICE_TYPE')
+        runtime = choose_runtime(args.runtime or os.environ.get(args.env_prefix + '_RUNTIME'), requested_type)
+        device_type = choose_device_type(runtime, requested_type)
         udid = simctl('create', args.name, device_type, runtime['identifier']).strip()
         if not UDID.fullmatch(udid):
             raise SystemExit(f'error: simctl create returned an unexpected identifier: {udid!r}')
@@ -145,7 +164,7 @@ def main():
         command.add_argument('--env-prefix', default=PREFIX, help=f'Variable prefix in the metadata file (default: {PREFIX})')
         if name == 'create':
             command.add_argument('--name', required=True, help='Device name; an available device with this name is reused')
-            command.add_argument('--runtime', help='Runtime identifier (default: <PREFIX>_RUNTIME, else the newest iOS runtime)')
+            command.add_argument('--runtime', help='Runtime identifier (default: <PREFIX>_RUNTIME, else the newest iOS runtime with a numbered iPhone or the requested device type)')
             command.add_argument('--device-type', help='Device type identifier (default: <PREFIX>_DEVICE_TYPE, else the newest plain iPhone)')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Z][A-Z0-9_]*', args.env_prefix):

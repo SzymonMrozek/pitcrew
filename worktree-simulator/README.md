@@ -34,7 +34,7 @@ name. Otherwise it creates one:
 
 | Option | Environment | Default |
 | --- | --- | --- |
-| `--runtime` | `<PREFIX>_RUNTIME` | The newest available iOS runtime |
+| `--runtime` | `<PREFIX>_RUNTIME` | The newest available iOS runtime that supports a plain numbered iPhone, or the requested device type |
 | `--device-type` | `<PREFIX>_DEVICE_TYPE` | The newest plain numbered iPhone the runtime supports, such as iPhone 17 rather than 17 Pro or 16e |
 
 An explicit runtime or device type that isn't installed is an error, not a

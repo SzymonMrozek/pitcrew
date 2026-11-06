@@ -47,6 +47,10 @@ record.
 - **"The first iPhone" is usually a Pro.** simctl lists device types newest
   first, starting with the Pro models, and nothing guarantees that order. Pick
   by name and model number instead.
+- **"The newest runtime" may run one device.** Xcode also installs runtimes for
+  a single new device, such as `iOS-27-2-iPhone19-4`, with the same version as
+  the regular runtime. Choose among the runtimes that support the device you
+  want, not by version alone.
 - **The Xcode GUI has its own run destination.** Xcode stores the selected
   destination in the workspace's per-user `UserInterfaceState.xcuserstate`,
   not in anything the CLI reads. Decide deliberately whether people running from
