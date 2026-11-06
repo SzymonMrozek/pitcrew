@@ -138,8 +138,15 @@ trigger actions you didn't take. The tool doesn't open browsers either.
 - **Markdown** files offer **Preview Markdown**. Raw HTML is shown as text, and
   remote images aren't loaded.
 - **Tool feedback** is an inbox for the review tool itself, separate from code
-  comments. `review --feedback` lists open entries, and
-  `review --implement-feedback <id>` marks one shipped.
+  comments. `review --feedback` lists open entries, `review --feedback 15` the
+  latest 15, and `review --implement-feedback <id>` marks one shipped.
+- **Comment mode.** ⇧⌘C or Ctrl+Shift+C, or **Comment on the page** in Tool
+  feedback, turns the cursor into a comment bubble. Click any part of the page,
+  dialogs included, and write a note; nothing you click runs. The note goes to
+  the Tool feedback inbox with what was under the pointer: tab, dialog, named
+  component path, selector, text, markup, file and line, and the view's scope,
+  layout and filters. `--feedback` prints it, so an agent can read the latest
+  notes and find the code they mean. Esc finishes.
 - **Tab title.** The browser tab shows the originating agent's thread title,
   read from local Codex or Claude logs.
 

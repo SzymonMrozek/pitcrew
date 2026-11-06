@@ -932,3 +932,20 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
 .hotspot .file-name {display:flex; flex-direction:column; min-width:0}
 .hotspot .file-name small {color:var(--muted); overflow:hidden; text-overflow:ellipsis}
 @media(max-width:700px) {.summary-columns {grid-template-columns:1fr}.footprint-row {grid-template-columns:110px 1fr 48px 48px}}
+
+html.feedback-mode, html.feedback-mode *, html.feedback-mode dialog::backdrop {cursor:url(/comment-cursor.svg) 3 29, crosshair !important}
+#feedback-layer {position:fixed; inset:0; width:100vw; height:100vh; max-width:none; max-height:none; margin:0; padding:0; border:0; overflow:hidden; background:none; color:inherit; pointer-events:none}
+#feedback-outline {position:fixed; border:2px solid #2c6bed; border-radius:4px; background:#2c6bed14}
+#feedback-outline[hidden],#feedback-pin[hidden] {display:none}
+#feedback-outline-label {position:absolute; left:-2px; bottom:100%; margin-bottom:4px; max-width:60vw; padding:2px 7px; overflow:hidden; border-radius:4px; background:#2c6bed; color:#fff; font-size:11px; white-space:nowrap; text-overflow:ellipsis}
+#feedback-outline-label.inside {top:4px; bottom:auto; left:4px; margin:0}
+#feedback-pin {position:fixed; width:28px; height:28px; transform:translate(-3px, -25px); background:url(/comment-cursor.svg) center/contain no-repeat}
+#feedback-mode-status {position:fixed; left:50%; bottom:20px; transform:translateX(-50%); padding:7px 14px; border:1px solid var(--border); border-radius:999px; background:#202024; color:#e1e1e5; font-size:12px; white-space:nowrap; box-shadow:0 8px 30px #00000060}
+#feedback-composer {position:fixed; margin:0; width:340px; padding:14px}
+#feedback-composer::backdrop {background:none}
+#feedback-composer textarea {width:100%; margin-top:10px}
+#feedback-composer .dialog-footer {margin-top:10px}
+#feedback-composer-where {margin:0; color:var(--accent); font-size:12px; font-weight:600; overflow-wrap:anywhere}
+#feedback-composer-shows {display:-webkit-box; margin:6px 0 0; overflow:hidden; color:var(--muted); font-size:12px; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow-wrap:anywhere}
+#feedback-composer-shows[hidden] {display:none}
+.feedback-where {display:block; margin-top:2px; color:var(--accent) !important}
