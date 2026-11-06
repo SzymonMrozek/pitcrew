@@ -440,4 +440,34 @@ import Testing
         #expect(document.page(of: "button") == "parts")
         #expect(document.items(onPage: CanvasDocument.rootID).isEmpty)
     }
+
+    @Test func undoingAnAddedPageFallsBackToTheFirst() throws {
+        var document = CanvasDocument()
+        var history = History()
+        let flows = Node(id: "flows", kind: .page, parent: CanvasDocument.rootID, order: "a")
+        try history.perform(.insert(flows), on: &document)
+        try history.perform(.insert(Node(id: "parts", kind: .page, parent: CanvasDocument.rootID, order: "b")), on: &document)
+        #expect(document.existingPage("parts") == "parts")
+        try history.undo(&document)
+        #expect(document.existingPage("parts") == "flows")
+        #expect(document.existingPage("flows") == "flows")
+    }
+
+    @Test func previewStaysOnItsPage() throws {
+        var document = CanvasDocument()
+        try document.apply(.batch([
+            .insert(Node(id: "flows", kind: .page, parent: CanvasDocument.rootID, order: "a")),
+            .insert(Node(id: "parts", kind: .page, parent: CanvasDocument.rootID, order: "b")),
+            .insert(Node(id: "empty", kind: .page, parent: CanvasDocument.rootID, order: "c")),
+            .insert(Node(id: "home", kind: .screen, parent: "flows", order: "a")),
+            .insert(Node(id: "settings", kind: .screen, parent: "flows", order: "b")),
+            .insert(Node(id: "button", kind: .component, parent: "parts", order: "a")),
+        ]))
+        #expect(document.previewScreen(onPage: "flows", selected: nil) == "home")
+        #expect(document.previewScreen(onPage: "flows", selected: "settings") == "settings")
+        // A selected component isn't a screen, and a screen on another page doesn't count.
+        #expect(document.previewScreen(onPage: "flows", selected: "button") == "home")
+        #expect(document.previewScreen(onPage: "parts", selected: "settings") == nil)
+        #expect(document.previewScreen(onPage: "empty", selected: nil) == nil)
+    }
 }

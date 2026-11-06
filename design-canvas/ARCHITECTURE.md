@@ -43,6 +43,8 @@
 - Pages are `page` nodes under the root, and canvas items are their children. A file
   with items directly under the root, from before pages, is one page, converted when a
   second page is added. A free comment pin records its page; a node pin follows its item.
+  The canvas always shows a page that exists: when undo or a reload removes it, the first
+  takes over. Preview opens a screen on the page shown, never one from another page.
 - The Tokens page is generated (`TokenSet.boards()`): one card per token group, the ID
   up to its last dot, rows of colors, then text styles, then numbers. It is never
   stored, so it can't drift from the tokens.

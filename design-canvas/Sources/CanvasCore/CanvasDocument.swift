@@ -71,6 +71,18 @@ public struct CanvasDocument: Hashable, Codable, Sendable {
         children(of: page).filter { $0.kind != .page }
     }
 
+    /// The page to show in place of one: itself while it exists, else the first.
+    public func existingPage(_ page: NodeID) -> NodeID? {
+        pages.contains { $0.id == page } ? page : pages.first?.id
+    }
+
+    /// The screen a preview of a page opens: the selected one, else the page's first.
+    /// A selection on another page doesn't count.
+    public func previewScreen(onPage page: NodeID, selected: NodeID?) -> NodeID? {
+        let screens = items(onPage: page).filter { $0.kind == .screen }.map(\.id)
+        return screens.first { $0 == selected } ?? screens.first
+    }
+
     /// Every screen and component, page by page.
     public var canvasItems: [Node] { pages.flatMap { items(onPage: $0.id) } }
 

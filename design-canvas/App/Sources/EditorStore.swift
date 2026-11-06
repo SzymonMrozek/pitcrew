@@ -201,9 +201,6 @@ final class EditorStore {
     func replaceContents(with contents: CanvasFile) {
         document = contents.document
         commentStore = contents.comments
-        if case .document(let id) = page, !document.pages.contains(where: { $0.id == id }) {
-            page = document.pages.first.map { .document($0.id) } ?? .tokens
-        }
         history = History()
         selection = nil
         selectedThread = nil
@@ -257,7 +254,15 @@ final class EditorStore {
         }
         layoutCache = next
         if screenHeight == .content { allItems = makingRoomForTallScreens(allItems) }
+        keepPageInDocument()
         showItems()
+    }
+
+    /// Undo or a reload can remove the page on the canvas, which would show nothing.
+    private func keepPageInDocument() {
+        guard case .document(let id) = page else { return }
+        let existing = document.existingPage(id).map(CanvasPage.document) ?? .tokens
+        if existing != page { page = existing }
     }
 
     /// Screens drawn taller than their device would cover the rows below them, so each
@@ -412,14 +417,12 @@ final class EditorStore {
 
     /// The screen the preview opens: the selected one, else the first on the page.
     var previewTarget: PreviewTarget? {
-        let screens = document.canvasItems.filter { $0.kind == .screen }
-        if let item = selection?.item {
-            let parts = item.split(separator: "#").map(String.init)
-            if let id = parts.first, screens.contains(where: { $0.id.rawValue == id }) {
-                return PreviewTarget(screen: id, dark: parts.last == "dark")
-            }
+        guard case .document(let id) = page else { return nil }
+        let parts = selection?.item.split(separator: "#").map(String.init) ?? []
+        let selected = parts.first.map(NodeID.init(_:))
+        return document.previewScreen(onPage: id, selected: selected).map {
+            PreviewTarget(screen: $0.rawValue, dark: $0 == selected && parts.last == "dark")
         }
-        return screens.first.map { PreviewTarget(screen: $0.id.rawValue) }
     }
 
     var selectedNode: ResolvedNode? { context(of: selection)?.path.last }
