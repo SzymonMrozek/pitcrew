@@ -455,7 +455,7 @@ test('navigation links follow each language provider and carry the name they res
 test('demos tab plays recordings inline, keeps QuickTime as an option and flags UI changes without one', async () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const demos = source.slice(source.indexOf('// Changed UI paths with neither'), source.indexOf('function renderJob('));
-  const node = (tag, className = '', text) => ({tag, className, textContent: text, disabled: false, children: [], append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;}});
+  const node = (tag, className = '', text) => ({tag, className, textContent: text, disabled: false, children: [], dataset: {}, append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;}});
   const main = node('main'), requests = [], notices = [];
   const context = vm.createContext({
     $: () => main, el: node, button: (text, action, className) => ({...node('button', className, text), action}), feedObserver: null, renderVersion: 0,
@@ -573,14 +573,15 @@ test('comment locations jump to their exact side and line and handle file, stale
 test('agent review findings show their reviewer, severity and the author replies', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const fn = source.slice(source.indexOf('function commentNode('), source.indexOf('function renderComments('));
-  const node = (tag, className, text) => ({tag, className, textContent: text, children: [], append(...items) {this.children.push(...items);}});
+  const node = (tag, className, text) => ({tag, className, textContent: text, children: [], dataset: {}, append(...items) {this.children.push(...items);}});
   const context = vm.createContext({state: {files: [{id: 'file', fingerprint: 'current'}]}, el: node,
     button: (text, action, className) => ({...node('button', className, text), action})});
   vm.runInContext(fn, context);
-  const comment = {file: 'file', path: '<file>.swift', fingerprint: 'current', side: 'new', line: 4, endLine: 4, text: 'The limit is never read.',
+  const comment = {id: 'finding', file: 'file', path: '<file>.swift', fingerprint: 'current', side: 'new', line: 4, endLine: 4, text: 'The limit is never read.',
     severity: 'important', category: 'bugs', author: {kind: 'agent-review', provider: 'claude'}, replies: [{provider: 'codex', text: 'Read it in the interactor.'}]};
   const finding = context.commentNode(comment);
   assert.equal(finding.className, 'comment agent-finding important');
+  assert.equal(finding.dataset.content, 'agent-review:finding');
   assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude review · important · bugs · new line 4');
   const reply = finding.children.find(child => child.className === 'comment-reply');
   assert.deepEqual(reply.children.map(child => child.textContent), ['Codex replied', 'Read it in the interactor.']);

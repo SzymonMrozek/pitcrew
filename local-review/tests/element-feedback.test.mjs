@@ -74,6 +74,32 @@ test('the token is removed before anything is cut, so no prefix of it survives',
   assert.ok(!JSON.stringify(context).includes('secret'));
 });
 
+test('a card reports what it says and who wrote it, whichever part was clicked', () => {
+  const text = new Node('code', {text: 'element-feedback.mjs'});
+  const card = new Node('div', {classes: ['change-card', 'added'], text: 'ADDED element-feedback.mjs adds a cursor', data: {content: 'agent-summary:changes[1]'}, children: [text]});
+  new Node('div', {classes: ['change-grid'], children: [card]});
+  const context = elementContext(text, pin, view, '');
+  assert.equal(context.component, 'Change card');
+  assert.deepEqual(context.content, {source: 'agent-summary', field: 'changes[1]', quote: 'ADDED element-feedback.mjs adds a cursor'});
+  assert.equal(feedbackWhere({...context, subject: 'content'}), 'Content › Changes › Change cards › Change card');
+});
+
+test('summary sections go by their heading', () => {
+  const heading = new Node('h2'); heading.textContent = 'What changed';
+  const card = new Node('div', {classes: ['change-card'], text: 'Card'});
+  new Node('section', {classes: ['summary-section'], children: [heading, card]});
+  assert.deepEqual(elementContext(card, pin, view, '').componentPath, ['What changed', 'Change card']);
+});
+
+test('content fields keep colons and text outside any content has none', () => {
+  const row = new Node('button', {classes: ['hotspot'], text: 'App.swift', data: {content: 'ranking:Sources/A:B.swift'}});
+  assert.equal(elementContext(row, pin, view, '').content.field, 'Sources/A:B.swift');
+  const path = 'Sources/' + 'Nested/'.repeat(20) + 'File.swift', ranked = new Node('button', {classes: ['hotspot'], text: 'File.swift', data: {content: `ranking:${path}`}});
+  assert.equal(elementContext(ranked, pin, view, '').content.field, path);
+  assert.equal(elementContext(new Node('p', {text: 'Plain'}), pin, view, '').content, null);
+  assert.equal(elementContext(new Node('p', {text: 'Plain'}), pin, view, '').component, 'Paragraph');
+});
+
 test('the review token never reaches saved markup or text', () => {
   const link = new Node('a', {text: 'Open secrettoken', html: '<a href="/queue.html#secrettoken">Open</a>'});
   const context = elementContext(link, pin, view, 'secrettoken');

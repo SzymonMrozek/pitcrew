@@ -147,6 +147,14 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   component path, selector, text, markup, file and line, and the view's scope,
   layout and filters. `--feedback` prints it, so an agent can read the latest
   notes and find the code they mean. Esc finishes.
+
+  A note is about the **content** or the **interface**. Anything somebody wrote
+  or computed starts on Content and quotes itself with where it came from:
+  summary cards, focus items and design (`agent-summary`), a finding
+  (`agent-review`), an iteration summary (`agent-iteration`), a demo title
+  (`agent-demo`) and a Read first row (`ranking`). So "too much detail for a
+  summary" reaches the instructions that produced the card, not the code that
+  draws it. Renderers opt in with `data-content="source:field"`.
 - **Tab title.** The browser tab shows the originating agent's thread title,
   read from local Codex or Claude logs.
 

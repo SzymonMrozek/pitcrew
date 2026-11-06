@@ -949,3 +949,4 @@ html.feedback-mode, html.feedback-mode *, html.feedback-mode dialog::backdrop {c
 #feedback-composer-shows {display:-webkit-box; margin:6px 0 0; overflow:hidden; color:var(--muted); font-size:12px; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow-wrap:anywhere}
 #feedback-composer-shows[hidden] {display:none}
 .feedback-where {display:block; margin-top:2px; color:var(--accent) !important}
+.feedback-subject {margin-top:10px; font-size:12px}
