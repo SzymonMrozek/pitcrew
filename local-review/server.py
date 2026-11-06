@@ -32,11 +32,11 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.13.0'
+RELEASE = '0.14.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
-WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'summary.mjs', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
+WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'summary.mjs', 'element-feedback.mjs', 'comment-cursor.svg', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
 DEFAULTS = {
     "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
     "exclude": [], "imageScale": 70, "diffMode": "split",
@@ -50,6 +50,7 @@ APPEARANCES = ('dark', 'light')
 # QuickTime and MPEG-4 share a container. Browsers report no QuickTime support, so H.264 movies are served as MPEG-4.
 DEMO_MEDIA_TYPE = 'video/mp4'
 MAX_RUN_DESTINATIONS = 100
+FEEDBACK_CONTEXT_LIMIT = 20_000
 # The page shows the end of a run's log; build output can be far longer.
 MAX_RUN_LOG = 200_000
 RUN_LOCK = threading.Lock()
@@ -281,6 +282,22 @@ def clean_env():
     for name in AGENT_MARKERS:
         env.pop(name, None)
     return env
+
+
+def valid_feedback_context(context):
+    if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False)) > FEEDBACK_CONTEXT_LIMIT:
+        return False
+    path = context.get('componentPath', [])
+    return isinstance(path, list) and all(isinstance(name, str) for name in path) and all(isinstance(context.get(key), (str, type(None))) for key in ('tab', 'dialog'))
+
+
+def feedback_report(entry):
+    lines = [f"{entry['id']}  {entry['status']:<11}  {entry['createdAt'][:10]}  {entry.get('path') or '-'}", f"    {entry['text']}"]
+    if context := entry.get('context'):
+        where = ' › '.join(filter(None, [context.get('tab'), context.get('dialog'), *context.get('componentPath', [])]))
+        lines += [f'    Where: {where}', f"    Seen on: {entry.get('branch') or 'detached HEAD'}, release {entry.get('release')}",
+                  f'    Context: {json.dumps(context, ensure_ascii=False)}']
+    return '\n'.join(lines)
 
 
 def launcher(config):
@@ -1230,9 +1247,11 @@ class Review:
         write_json(paths[0], entry)
         return self.feedback()
 
-    def save_feedback(self, text, file_id=None, iteration=None):
+    def save_feedback(self, text, file_id=None, iteration=None, context=None):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 10000:
             raise ValueError('Feedback must contain 1–10000 characters')
+        if context is not None and not valid_feedback_context(context):
+            raise ValueError('Invalid feedback context')
         file = self.file(file_id, iteration) if file_id is not None else None
         if file_id is not None and file is None:
             if not isinstance(file_id, str) or not re.fullmatch(r'[0-9a-f]{20}', file_id):
@@ -1242,7 +1261,8 @@ class Review:
         entry = {'id': secrets.token_hex(16), 'createdAt': datetime.now(timezone.utc).isoformat(),
                  'text': text.strip(), 'branch': self.branch, 'target': self.target,
                  'scope': iteration or 'full', 'revision': self.revision,
-                 'repo': str(self.repo), 'sessionId': self.session_id, 'path': file['path'] if file else None}
+                 'repo': str(self.repo), 'sessionId': self.session_id, 'path': file['path'] if file else None,
+                 'release': RELEASE, 'context': context}
         write_json(self.store / 'feedback' / (entry['createdAt'].replace(':', '-') + '-' + entry['id'] + '.json'), entry)
         return self.feedback()
 
@@ -3042,7 +3062,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with review.lock:
                 if route == '/api/feedback':
-                    self.send(200, review.save_feedback(body.get('text'), body.get('file'), iteration))
+                    self.send(200, review.save_feedback(body.get('text'), body.get('file'), iteration, body.get('context')))
                     return
                 if route == '/api/feedback/status':
                     self.send(200, review.set_feedback_status(body.get('id'), body.get('implemented')))
@@ -3152,7 +3172,7 @@ def main():
     iterations.add_argument('--merge-request', metavar='ID', help='Inspect a pending user approval without merging')
     iterations.add_argument('--execute-merge-request', metavar='ID', help='Agent-only: validate and merge a matching approval')
     parser.add_argument('--merge-worker', action='store_true', help=argparse.SUPPRESS)
-    iterations.add_argument('--feedback', action='store_true', help='List open review tool feedback')
+    iterations.add_argument('--feedback', metavar='N', nargs='?', type=int, const=0, help='List open review tool feedback with its page context, newest first; N keeps the latest N')
     iterations.add_argument('--queue', action='store_true', help='Print repository merge queue and pending Git snapshots as JSON')
     iterations.add_argument('--queue-page', action='store_true', help='Open the lightweight repository merge queue page')
     iterations.add_argument('--resume-merge-request', metavar='ID', help='Resume an interrupted or blocked approval in its existing worktree')
@@ -3214,14 +3234,18 @@ def main():
             review.notify_merge_request(request)
             print('Resumed merge request ' + request['id'])
             return
-        if args.feedback or args.implement_feedback or args.reopen_feedback:
+        if args.feedback is not None or args.implement_feedback or args.reopen_feedback:
+            if (args.feedback or 0) < 0:
+                parser.error('--feedback N cannot be negative')
             for entry_id in args.implement_feedback or []:
                 review.set_feedback_status(entry_id, True)
             for entry_id in args.reopen_feedback or []:
                 review.set_feedback_status(entry_id, False)
             changed = (args.implement_feedback or []) + (args.reopen_feedback or [])
-            for entry in (e for e in review.feedback()['entries'] if e['id'] in changed or (args.feedback and e['status'] == 'open')):
-                print(f"{entry['id']}  {entry['status']:<11}  {entry['createdAt'][:10]}  {entry.get('path') or '-'}\n    {entry['text']}")
+            entries = review.feedback()['entries']
+            listed = [e for e in entries if e['status'] == 'open'][:args.feedback or None] if args.feedback is not None else []
+            for entry in [e for e in entries if e['id'] in changed] + listed:
+                print(feedback_report(entry))
             return
         if args.record_demo or args.stop_demo or args.add_demo or args.remove_demo or args.skip_demo or args.demos:
             if args.record_demo:

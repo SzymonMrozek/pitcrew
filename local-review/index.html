@@ -22,7 +22,7 @@
 <button id="refresh">Refresh</button>
 <button id="code-search" title="Search file contents (⇧⌘F or Ctrl+Shift+F)">Search code</button>
 <button id="settings">Defaults</button>
-<button id="feedback">Tool feedback</button>
+<button id="feedback" title="Ideas and issues for this tool. Press ⇧⌘C or Ctrl+Shift+C to comment on any part of the page">Tool feedback</button>
 <button id="queue">Merge queue</button>
 <button id="simulator" disabled>Open Simulator</button>
 <button id="dev-menu" disabled>Trigger Dev Menu</button>
@@ -93,7 +93,8 @@
 <details id="filtered-files" hidden><summary id="filtered-summary">Filtered out</summary><div id="filtered-list"></div></details></div>
 <div class="keyboard-hint">
 <kbd>J</kbd> / <kbd>K</kbd> next / previous<br>
-<kbd>V</kbd> reviewed, next unreviewed · <kbd>S</kbd> snapshots</div>
+<kbd>V</kbd> reviewed, next unreviewed · <kbd>S</kbd> snapshots<br>
+<kbd>⇧⌘C</kbd> comment on this tool</div>
 </aside>
 <main id="content">
 <div class="empty">Preparing your review…</div>
@@ -110,7 +111,7 @@
 <div class="dialog-heading"><h2>Review tool feedback</h2><button type="button" data-close aria-label="Close feedback">×</button></div>
 <p id="feedback-directory"></p>
 <label>What should improve?<textarea name="text" rows="4" required maxlength="10000" placeholder="Save an idea or issue to fix later…"></textarea></label>
-<div class="dialog-footer"><button type="button" data-close>Close</button><button class="primary">Save feedback</button></div>
+<div class="dialog-footer"><button id="feedback-comment" type="button" title="Point at any part of the page and comment on it">Comment on the page <kbd>⇧⌘C</kbd></button><button type="button" data-close>Close</button><button class="primary">Save feedback</button></div>
 </form>
 <div class="feedback-inbox-heading"><h3>Repository feedback inbox</h3><button id="feedback-export" type="button">Export all feedback</button></div>
 <div class="tabs feedback-tabs" role="tablist" aria-label="Feedback status"><button type="button" role="tab" data-feedback-tab="open" class="selected">Open <span id="feedback-open-count"></span></button><button type="button" role="tab" data-feedback-tab="implemented">Implemented <span id="feedback-implemented-count"></span></button></div>
@@ -230,6 +231,19 @@
 </div>
 </form>
 </dialog>
+<dialog id="feedback-composer" aria-labelledby="feedback-composer-where">
+<form id="feedback-composer-form">
+<p id="feedback-composer-where"></p>
+<p id="feedback-composer-shows"></p>
+<textarea name="text" rows="4" placeholder="What should change here?" aria-label="Comment" required maxlength="10000"></textarea>
+<div class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" title="Save comment (⌘Enter or Ctrl+Enter)">Save <kbd>⌘Enter</kbd></button></div>
+</form>
+</dialog>
+<div id="feedback-layer" popover="manual">
+<div id="feedback-outline" hidden><span id="feedback-outline-label"></span></div>
+<div id="feedback-pin" hidden></div>
+<div id="feedback-mode-status" role="status"></div>
+</div>
 <script type="module" src="/app.mjs">
 </script>
 </body>

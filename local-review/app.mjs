@@ -8,6 +8,7 @@ import {mountQueue} from './queue.mjs';
 import {isMarkdown, renderMarkdown} from './markdown.mjs';
 import {diffStats, signed} from './stats.mjs';
 import {codeSpans, layoutGraph, moduleFootprint, hotspots, moduleGraphDrawing} from './summary.mjs';
+import {feedbackWhere, mountElementFeedback} from './element-feedback.mjs';
 const $ = selector => document.querySelector(selector);
 const token = location.hash.slice(1) || sessionStorage.getItem('review-token');
 if (token) sessionStorage.setItem('review-token', token);
@@ -967,7 +968,9 @@ async function loadFeedback() {
   $('#feedback-list').replaceChildren(...entries.map(entry => {
     const node = el('div', 'comment feedback-entry' + (entry.status === 'implemented' ? ' implemented' : ''));
     node.append(button(entry.status === 'implemented' ? 'Reopen' : 'Mark implemented', async () => {await api('feedback/status', {id: entry.id, implemented: entry.status !== 'implemented'}); await loadFeedback();}));
-    node.append(el('small', '', `${feedbackDate(entry.createdAt)} · ${entry.branch || 'Detached HEAD'}${entry.path ? ` · ${entry.path}` : ''}`), el('p', '', entry.text));
+    node.append(el('small', '', `${feedbackDate(entry.createdAt)} · ${entry.branch || 'Detached HEAD'}${entry.path ? ` · ${entry.path}` : ''}`));
+    if (entry.context) node.append(el('small', 'feedback-where', feedbackWhere(entry.context)));
+    node.append(el('p', '', entry.text));
     if (entry.status === 'implemented') node.append(el('small', 'feedback-implemented', `Implemented ${entry.implementedAt ? feedbackDate(entry.implementedAt) : ''}${entry.implementedBranch ? ` on ${entry.implementedBranch}` : ''}`));
     return node;
   }));
@@ -988,6 +991,11 @@ $('#feedback-export').onclick = () => run(async () => {
   const inbox = await loadFeedback(), url = URL.createObjectURL(new Blob([JSON.stringify(inbox.entries, null, 2)], {type: 'application/json'})), link = el('a');
   link.href = url; link.download = 'review-tool-feedback.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+const elementFeedback = mountElementFeedback({token,
+  view: () => ({tabLabel: document.querySelector('[data-tab].selected')?.firstChild.textContent.trim() ?? tab, tab, scope: reviewScope, comparison, mode: $('#mode').value, activeFile: state?.files.find(file => file.id === active)?.path ?? null,
+    filters: {search: $('#search').value, showHidden: $('#show-hidden').checked, onlyUnviewed: $('#only-unviewed').checked}, contentScrollTop: Math.round($('#content').scrollTop), viewport: {width: innerWidth, height: innerHeight}}),
+  save: async feedback => {await api('feedback', feedback); await loadFeedback();}});
+$('#feedback-comment').onclick = () => {$('#feedback-dialog').close(); elementFeedback.start();};
 function flash(node) {node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');}
 async function loadDefinitions() {
   definitionNames = new Map(Object.entries((await api('definitions')).languages).map(([language, names]) => [language, new Set(names)]));

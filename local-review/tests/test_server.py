@@ -430,6 +430,21 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Invalid feedback file'):
             second.save_feedback('Invalid context', '../../outside')
 
+    def test_tool_feedback_keeps_page_context_and_lists_the_latest(self):
+        context = {'tab': 'Changes', 'dialog': None, 'componentPath': ['Header', 'Button "Refresh"'], 'selector': 'header > button#refresh'}
+        self.review.save_feedback('Older note')
+        entry = self.review.save_feedback('Refresh is too far away', context=context)['entries'][0]
+        self.assertEqual(entry['context'], context)
+        self.assertEqual(entry['release'], m.RELEASE)
+        report = m.feedback_report(entry)
+        self.assertIn('Where: Changes › Header › Button "Refresh"', report)
+        self.assertIn('"selector": "header > button#refresh"', report)
+        self.assertNotIn('Where:', m.feedback_report(self.review.feedback()['entries'][1]))
+        self.review.save_feedback('Non-ASCII page text fits', context={'html': '語' * 5000})
+        for bad in ('text', ['list'], {'html': 'x' * m.FEEDBACK_CONTEXT_LIMIT}, {'componentPath': 1}, {'componentPath': [1]}, {'tab': 3}, {'dialog': []}):
+            with self.assertRaisesRegex(ValueError, 'Invalid feedback context'):
+                self.review.save_feedback('Bad context', context=bad)
+
     def test_tool_feedback_accepts_stale_optional_file_context(self):
         file_id = self.review.files[0]['id']
         self.git('checkout', '--', 'Interactor.swift')

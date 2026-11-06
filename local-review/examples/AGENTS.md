@@ -133,3 +133,11 @@ URL fragment.
 The title and description describe the final implementation across all
 interactions, because they become the merged commit. Update them when the scope
 changes, and leave out internal history and abandoned approaches.
+
+## Review tool feedback
+
+The person leaves notes about the review tool itself from its comment mode.
+When asked to analyse them, run `review --feedback <N>` for the latest N open
+notes. Each one carries the tab, component path, selector, text, file and view
+it was written on. Group them by component, find the code from the selector,
+and mark what you ship with `review --implement-feedback <id>`.

@@ -184,6 +184,16 @@ Each of these cost real debugging time.
 - **A run outlives the server that started it.** A build runs in its own process
   group, so a restarted server can't learn its exit status. The page reports
   it as ended with an unknown result instead of guessing.
+- **A modal dialog makes the rest of the page inert.** Comment mode has to work
+  over open dialogs, so its composer is a modal dialog itself and its outline a
+  manual popover with no pointer events: both sit in the top layer, and a
+  plain overlay would sit underneath. It blocks page events at `window` in the
+  capture phase, without stopping that target's other listeners, so review
+  time still counts the input.
+- **The page holds the API token.** Its own links carry it in the fragment, so
+  any markup or text copied into feedback can too. The saved context is
+  scrubbed as a whole, not field by field. The CSP also rejects `data:` images,
+  so the cursor is a served file.
 - **The browser can't tell a script-driven scroll from a real one.**
   Programmatic scrolling and zero-distance pointer events don't count as input.
 
