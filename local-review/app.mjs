@@ -416,13 +416,15 @@ async function renderFile(file, main, current) {
     main.append(grid);
     const snapshot = await imageData(file);
     if (!current()) return;
-    [snapshot.old, snapshot.new, snapshot.diff].forEach((item, index) => {
+    const items = [snapshot.old, snapshot.new, snapshot.diff];
+    // One factor for all panes, limited by the largest image, so identical pixels draw the same size on both sides.
+    const factor = Math.min(...items.filter(item => item && !item.error).map(item => Math.min(state.settings.imageScale / 100 / (window.devicePixelRatio || 1), (panels[0].stage.clientWidth - 16) / item.width, window.innerHeight * 0.65 / item.height)));
+    items.forEach((item, index) => {
       const {stage, info} = panels[index]; stage.replaceChildren();
       if (!item || item.error) {stage.textContent = item?.error || (index === 0 ? 'Added image' : index === 1 ? 'Deleted image' : 'No comparison'); return;}
       const node = index === 2 ? item.canvas.cloneNode() : item.image;
       if (index === 2) node.getContext('2d').drawImage(item.canvas, 0, 0); else {node.alt = `${index === 0 ? 'Old' : 'New'} snapshot of ${file.path}`;}
-      const width = Math.min(item.width / (window.devicePixelRatio || 1) * state.settings.imageScale / 100, stage.clientWidth - 16, window.innerHeight * 0.65 * item.width / item.height);
-      node.style.width = `${width}px`;
+      node.style.width = `${item.width * factor}px`;
       node.onclick = () => {const dialog = el('dialog'); const copy = el('canvas'); copy.width = item.width; copy.height = item.height; copy.getContext('2d').drawImage(index === 2 ? item.canvas : item.image, 0, 0); copy.style.cssText = 'max-width:100%;height:auto'; dialog.style.width = '95vw'; dialog.append(button('Close', () => dialog.close()), copy); document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal();};
       stage.append(node); info.textContent = `${item.width} × ${item.height}` + (index === 2 ? ` · ${snapshot.changed.toLocaleString()} changed pixels (${(100 * snapshot.changed / (item.width * item.height)).toFixed(2)}%)` : '');
     });
