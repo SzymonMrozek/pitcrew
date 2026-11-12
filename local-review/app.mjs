@@ -117,8 +117,11 @@ function updateChrome() {
   $('#rank').title = state.jevAvailable ? 'Evaluate uncached changes with Jev' : 'Set JEV_API_KEY in the review server environment to evaluate with Jev';
   const requested = state.mergeRequest && ['pending', 'working'].includes(state.mergeRequest.status);
   $('#approve').textContent = requested ? 'Merge requested' : 'Approve & merge';
-  $('#approve').disabled = requested || !state.canMerge || Boolean(state.handoff?.blocker) || state.job.status === 'running' || state.job.status === 'merged';
-  $('#approve').title = state.handoff?.blocker || 'Send the full branch approval to the conversation that wrote this change';
+  $('#approve').disabled = Boolean(state.mergeBlocker);
+  $('#approve').title = state.mergeBlocker || 'Send the full branch approval to the conversation that wrote this change';
+  // Disabled buttons get no pointer events, so their title never shows; the reason stays visible beside the button.
+  $('#approve-blocker').hidden = !state.mergeBlocker;
+  $('#approve-blocker').textContent = $('#approve-blocker').title = state.mergeBlocker || '';
   renderMergeRequest();
   renderHandoff();
   run(updateMergeProgress);

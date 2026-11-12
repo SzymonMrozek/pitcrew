@@ -122,6 +122,19 @@ header {
   color:var(--muted);
   padding-right:7px
 }
+#approve-blocker {
+  flex:0 1 240px;
+  min-width:160px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.35;
+  text-align:right;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+  overflow:hidden
+}
+#approve-blocker[hidden] {display:none}
 .toolbar {
   min-height:53px;
   display:flex;

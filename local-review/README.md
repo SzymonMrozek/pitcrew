@@ -352,6 +352,12 @@ anything. You can add optional **Additional merge instructions** in the confirma
 dialog. They are saved with the approval and sent to the agent on delivery and
 retries, separately from the commit title and description.
 
+When the button is disabled, the reason sits beside it: the agent is mid-request
+or still handling the previous review, a merge is already requested, running or
+done, the worktree is gone, there is nothing to merge, or a submodule has
+uncommitted changes. The server decides this in one place and returns it as
+`mergeBlocker`.
+
 The delivery process waits for its turn in the [queue](#merge-queue), reserves
 it through cleanup, then queues the request into the original Codex chat or
 resumes the original Claude conversation. Follow the progress and reply there.

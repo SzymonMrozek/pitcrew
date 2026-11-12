@@ -275,7 +275,7 @@ class ReviewTests(unittest.TestCase):
         self.git('-C', str(dependency), 'commit', '-am', 'feat(test): second release')
         second = self.git('-C', str(dependency), 'rev-parse', 'HEAD')
         self.review.refresh()
-        self.assertTrue(self.review.state()['canMerge'])
+        self.assertIsNone(self.review.state()['mergeBlocker'])
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         live = next(file for file in self.review.files if file['path'] == 'Tools/Dependency')
         captured = self.review.capture(before=request['snapshotBase'], after=request['snapshotCommit'])
@@ -286,7 +286,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', request['snapshotRef'] + ':Tools/Dependency'), second)
         self.write('Tools/Dependency/version.txt', 'uncommitted\n')
         self.review.refresh()
-        self.assertFalse(self.review.state()['canMerge'])
+        self.assertEqual(self.review.state()['mergeBlocker'], 'A merge is already requested.')
         with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
             self.review.request_merge(self.review.approval_revision(), '', '')
         with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
@@ -687,7 +687,7 @@ class ReviewTests(unittest.TestCase):
         restarted = serve()
         state = request(restarted, other.session_id)
         self.assertEqual(state['branch'], 'other-feature')
-        self.assertFalse(state['canMerge'])
+        self.assertEqual(state['mergeBlocker'], 'Only the live worktree can be merged. It is gone or on another branch.')
         self.assertEqual({f['path'] for f in state['files']}, {'Interactor.swift', 'Own.swift'})
         state = request(restarted, other.session_id + '&iteration=thread')
         self.assertEqual([f['path'] for f in state['files']], ['Own.swift'])
@@ -2170,6 +2170,44 @@ if '--output-last-message' in sys.argv:
         with self.assertRaisesRegex(ValueError, 'No originating agent conversation'):
             self.send_review()
 
+    def test_merge_blocker_names_every_reason_approve_is_unavailable(self):
+        blocker = lambda: self.review.state()['mergeBlocker']
+        self.assertIsNone(blocker())
+        self.review.begin_iteration('turn-1', 'Change the value')
+        self.assertEqual(blocker(), 'The agent is still working on its current request. Approve after it finishes its turn.')
+        with self.assertRaisesRegex(ValueError, 'Approve after it finishes its turn'):
+            self.review.request_merge(self.review.approval_revision(), '', '')
+        self.review.finish_iteration('turn-1', 'Changed', 'feat(test): change value', 'Change the value.')
+        self.assertIsNone(blocker())
+        self.comment('Rename value.')
+        handoff = self.send_review()
+        self.assertEqual(blocker(), 'The agent is still handling the previous review.')
+        m.write_json(Path(handoff['path']), {**handoff, 'status': 'delivered'})
+        self.assertIsNone(blocker())
+        m.write_json(self.review.store / f'{self.review.session_id}-merge-request.json', {'id': 'a' * 24, 'status': 'pending'})
+        self.assertEqual(blocker(), 'A merge is already requested.')
+        (self.review.store / f'{self.review.session_id}-merge-request.json').unlink()
+        for status, reason in (('running', 'A merge is running.'), ('merged', 'Already merged into main.')):
+            self.review.job = {'status': status, 'log': ''}
+            self.assertEqual(blocker(), reason)
+        self.review.job = {'status': 'idle', 'log': ''}
+        self.review.session['agent'] = None
+        self.review.session['threadId'] = None
+        self.review.save_session('agent', 'threadId')
+        self.assertRegex(blocker(), '^No originating agent conversation detected')
+        self.review.record_agent()
+        self.assertIsNone(blocker())
+        self.git('checkout', '--detach')
+        self.review.refresh()
+        self.assertEqual(blocker(), 'No branch is checked out.')
+        self.git('checkout', 'main')
+        self.review.refresh()
+        self.assertEqual(blocker(), 'The checked-out branch is the merge target, main.')
+        self.git('checkout', 'feature')
+        self.git('checkout', '--', 'Interactor.swift')
+        self.review.refresh()
+        self.assertEqual(blocker(), 'No changes against main to merge.')
+
     def test_review_delivery_queues_into_codex_and_resumes_claude(self):
         self.comment('Rename value.')
         handoff = self.send_review()
@@ -2348,7 +2386,7 @@ if '--output-last-message' in sys.argv:
         other = m.Review(self.root, 'main', auto_rank=False)
         other.session_id = 'different-session'
         self.assertEqual(other.state(merge_id=request['id'])['mergeRequest']['status'], 'merged')
-        self.assertFalse(other.state(merge_id=request['id'])['canMerge'])
+        self.assertIn('queued merge request', other.state(merge_id=request['id'])['mergeBlocker'])
         self.assertEqual(other.merge_progress(request['id'])['workerThreadId'], worker_id)
         for invalid in ('../../private', '0' * 24):
             with self.assertRaises(ValueError):
@@ -2749,7 +2787,7 @@ if '--output-last-message' in sys.argv:
                 file.write_text('let model = 2\n')
                 self.review.refresh()
                 self.assertTrue(next(f for f in self.review.files if f['path'] == 'proto')['submoduleDirty'])
-                self.assertFalse(self.review.state()['canMerge'])
+                self.assertEqual(self.review.state()['mergeBlocker'], 'Commit the uncommitted changes inside proto, then refresh.')
                 with patch.object(self.review, 'snapshot') as snapshot:
                     with self.assertRaisesRegex(ValueError, 'uncommitted submodule'):
                         self.review.request_merge(self.review.approval_revision(), '', '')
@@ -2948,7 +2986,7 @@ if '--output-last-message' in sys.argv:
             self.assertIn('text/plain', response.headers['Content-Type'])
             self.assertIn(b'<script>literal log</script>', response.read())
         with request('/api/state?merge=' + approval['id']) as response:
-            self.assertFalse(json.load(response)['canMerge'])
+            self.assertIn('queued merge request', json.load(response)['mergeBlocker'])
         with request('/api/refresh?merge=' + approval['id'], {}) as response:
             self.assertEqual(json.load(response)['mergeRequest']['id'], approval['id'])
         with self.assertRaises(urllib.error.HTTPError) as error:
