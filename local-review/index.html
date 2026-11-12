@@ -28,7 +28,8 @@
 <button id="dev-menu" disabled>Trigger Dev Menu</button>
 <button id="run" hidden>Run…</button>
 <button id="send-review" title="Send your new comments to the agent conversation that wrote this change">Send to agent</button>
-<button id="approve" class="primary">Approve & merge</button>
+<span id="approve-blocker" role="status" hidden></span>
+<button id="approve" class="primary" aria-describedby="approve-blocker">Approve & merge</button>
 </div>
 </header>
 <div class="iteration-bar">

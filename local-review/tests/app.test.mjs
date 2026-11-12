@@ -307,6 +307,25 @@ test('send to agent reflects blockers, unsent comments and the last delivery', (
   assert.deepEqual([send.hidden, send.disabled], [true, true], 'Saved merge views cannot send');
 });
 
+test('approve & merge shows the server reason beside the button whenever it is disabled', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const requested = state.mergeRequest');
+  const chrome = source.slice(start, source.indexOf('  renderMergeRequest();', start));
+  const nodes = {'#approve': {}, '#approve-blocker': {}};
+  const context = vm.createContext({$: selector => nodes[selector], state: {mergeRequest: null, mergeBlocker: null}});
+  const render = () => vm.runInContext(`{${chrome}}`, context);
+  render();
+  assert.deepEqual([nodes['#approve'].disabled, nodes['#approve-blocker'].hidden, nodes['#approve-blocker'].textContent], [false, true, '']);
+  assert.match(nodes['#approve'].title, /Send the full branch approval/);
+  context.state.mergeBlocker = 'The agent is still working on its current request. Approve after it finishes its turn.';
+  render();
+  assert.deepEqual([nodes['#approve'].disabled, nodes['#approve-blocker'].hidden], [true, false]);
+  for (const node of [nodes['#approve-blocker'].textContent, nodes['#approve-blocker'].title, nodes['#approve'].title]) assert.equal(node, context.state.mergeBlocker);
+  context.state = {mergeRequest: {status: 'pending'}, mergeBlocker: 'A merge is already requested.'};
+  render();
+  assert.deepEqual([nodes['#approve'].textContent, nodes['#approve'].disabled, nodes['#approve-blocker'].textContent], ['Merge requested', true, 'A merge is already requested.']);
+});
+
 test('filtered files explain matching defaults and custom exclusions', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
   const filter = source.slice(source.indexOf('function filterReason('), source.indexOf('function viewed('));

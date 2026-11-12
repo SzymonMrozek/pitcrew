@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.15.1'
+RELEASE = '0.15.2'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -1231,8 +1231,7 @@ class Review:
                     'simulator': self.simulator() if live else None,
                     'demos': self.demo_state(iteration),
                     'run': self.run_state(live),
-                    'canMerge': live and not merge_id and bool(self.files) and bool(self.branch) and self.branch != self.target
-                                and not any(file['submoduleDirty'] for file in self.files)}
+                    'mergeBlocker': self.merge_blocker(merge_id)}
 
     def feedback(self):
         directory = self.store / 'feedback'
@@ -2492,7 +2491,7 @@ class Review:
         agent = self.origin_agent()
         if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
             raise ValueError(f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.')
-        if blocker := self.handoff_blocker():
+        if blocker := self.handoff_blocker(merging=True):
             raise ValueError(blocker)
         if previous:
             write_json(self.store / 'queue-history' / (previous['id'] + '.json'), previous)
@@ -2595,15 +2594,38 @@ class Review:
                 self.save_session('comments')
         return handoff
 
-    def handoff_blocker(self):
-        """Why the reviewer cannot send review comments to the agent right now, if anything stops it."""
+    def merge_blocker(self, merge_id=None):
+        """Why Approve & merge is unavailable right now, if anything stops it. The page shows it next to the button."""
+        if merge_id:
+            return 'This page shows a queued merge request. Approve from its live review.'
+        if self.job['status'] == 'merged':
+            return f'Already merged into {self.target}.'
+        if self.job['status'] == 'running':
+            return 'A merge is running.'
+        request = self.merge_request()
+        if request and request['status'] in ('pending', 'working'):
+            return 'A merge is already requested.'
+        if not self.worktree_available():
+            return 'Only the live worktree can be merged. It is gone or on another branch.'
+        if not self.branch:
+            return 'No branch is checked out.'
+        if self.branch == self.target:
+            return f'The checked-out branch is the merge target, {self.target}.'
+        if not self.files:
+            return f'No changes against {self.target} to merge.'
+        if dirty := next((file['path'] for file in self.files if file['submoduleDirty']), None):
+            return f'Commit the uncommitted changes inside {dirty}, then refresh.'
+        return self.handoff_blocker(merging=True)
+
+    def handoff_blocker(self, merging=False):
+        """Why the reviewer cannot send review comments, or approve the merge when merging, to the agent right now, if anything stops it."""
         if not self.worktree_available():
             return 'Only the live worktree review can be sent to its agent.'
         agent = self.origin_agent()
         if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
             return f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.'
         if read_json(self.store / f'{self.session_id}.json', self.session).get('pendingIteration'):
-            return 'The agent is still working on its current request. Send the review after it finishes its turn.'
+            return f"The agent is still working on its current request. {'Approve' if merging else 'Send the review'} after it finishes its turn."
         request = self.merge_request()
         if request and request['status'] in ('pending', 'working'):
             return 'A merge is requested; the merge agent receives every comment.'
