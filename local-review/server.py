@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.15.3'
+RELEASE = '0.15.4'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
