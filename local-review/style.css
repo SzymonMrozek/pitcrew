@@ -71,8 +71,8 @@ a {
   color:var(--accent)
 }
 header {
-  height:74px;
-  padding:0 25px;
+  min-height:74px;
+  padding:8px 25px;
   display:flex;
   align-items:center;
   gap:30px;
@@ -650,7 +650,6 @@ header {
 }
 header {
   padding:10px 14px;
-  height:auto;
   flex-wrap:wrap
 }
 .header-actions {
