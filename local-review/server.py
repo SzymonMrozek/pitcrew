@@ -32,7 +32,7 @@ import socketserver
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.15.2'
+RELEASE = '0.15.3'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -1212,6 +1212,7 @@ class Review:
             live = self.worktree_available()
             clean = not self.git('status', '--porcelain', '--untracked-files=all').strip() if live else True
             agent = self.origin_agent()
+            merge_blocker = self.merge_blocker(merge_id)
             return {'repo': str(self.repo), 'branch': self.branch, 'target': self.target, 'head': self.head,
                     'base': base, 'revision': revision, 'scope': scope, 'files': [{k: v for k, v in f.items() if k not in ('patch', 'rows')} for f in files],
                     'reviewTime': self.review_time(),
@@ -1231,7 +1232,9 @@ class Review:
                     'simulator': self.simulator() if live else None,
                     'demos': self.demo_state(iteration),
                     'run': self.run_state(live),
-                    'mergeBlocker': self.merge_blocker(merge_id)}
+                    'mergeBlocker': merge_blocker,
+                    # Pages loaded before the server upgraded still read canMerge.
+                    'canMerge': merge_blocker is None}
 
     def feedback(self):
         directory = self.store / 'feedback'
