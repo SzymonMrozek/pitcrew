@@ -2173,8 +2173,10 @@ if '--output-last-message' in sys.argv:
     def test_merge_blocker_names_every_reason_approve_is_unavailable(self):
         blocker = lambda: self.review.state()['mergeBlocker']
         self.assertIsNone(blocker())
+        self.assertTrue(self.review.state()['canMerge'], 'Pages loaded before an upgrade still read canMerge')
         self.review.begin_iteration('turn-1', 'Change the value')
         self.assertEqual(blocker(), 'The agent is still working on its current request. Approve after it finishes its turn.')
+        self.assertFalse(self.review.state()['canMerge'])
         with self.assertRaisesRegex(ValueError, 'Approve after it finishes its turn'):
             self.review.request_merge(self.review.approval_revision(), '', '')
         self.review.finish_iteration('turn-1', 'Changed', 'feat(test): change value', 'Change the value.')
