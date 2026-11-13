@@ -1,6 +1,6 @@
 # repository-lint
 
-A macOS Swift package for 25 SwiftSyntax checks, a changed-line Git runner,
+A macOS Swift package for 26 SwiftSyntax checks, a changed-line Git runner,
 standard SwiftLint integration, and a nested-call formatter. It parses each
 file once, scans up to four files concurrently, sorts diagnostics, and records
 SQLite timings. It is independent of the app's Swift package graph.
@@ -61,11 +61,14 @@ Three optional fields fit the rules to other repositories:
   project doesn't share. Unknown IDs fail the command.
 - `fontFactories` lists static `Font` members that are design-system fonts, so
   `.font(.brandUI(.body))` passes `design_system_typography`.
+- `allowedCommentPrefixes` lists comment prefixes `no_comments` accepts, such as
+  a tracked `shortcut:` marker. Like a `lint:` exception, such a note may wrap
+  onto the comment lines directly below it.
 [examples/lint-swift-diff.sh](examples/lint-swift-diff.sh) and
 [examples/mise.toml](examples/mise.toml) show consumer integration.
 
 ```bash
-# Stable IDs and exact diagnostic lines for 382 examples across 25 rules:
+# Stable IDs and exact diagnostic lines for 408 examples across 26 rules:
 ./repository-lint/run.sh --self-test
 # Build production first; tests run the CLI in temporary consumer Git repos:
 REPOSITORY_LINT_BINARY="$(git rev-parse --path-format=absolute --git-common-dir)/repository-lint/build/release/repository-lint" \
@@ -81,6 +84,16 @@ indentation, and cover diff filtering, untracked and deleted files, filenames
 with spaces, JSON output, configurable naming, formatter exclusions, raw strings,
 nested comments, modifier exemptions, and closure boundaries. Launcher tests
 check cache reuse/invalidation and failed-build recovery without compiling Swift.
+
+The `no_comments` rule rejects comments, so names and types carry intent. It
+accepts a file header of plain comments followed by a blank line, tool
+directives (`swiftlint:`, `swiftformat:`, `sourcery:`, `swift-tools-version:`),
+`lint:` exceptions and `Spyable cannot`/`Stubable cannot` notes. Keep a constraint the code cannot
+express with `// lint:allow-comment: reason`; the reason may wrap onto the
+comment lines directly below. In a diff run only comments on changed lines
+fail, so untouched comments next to changed code don't. Sources under
+`Generated/` and files whose header has a plain comment starting with
+`Generated using`, `DO NOT EDIT` or `@generated` are exempt.
 
 The `no_current_locale` rule rejects direct system locale reads and typed shorthand
 locale defaults. Resolve `CurrentLocaleProvider` through dependency injection;

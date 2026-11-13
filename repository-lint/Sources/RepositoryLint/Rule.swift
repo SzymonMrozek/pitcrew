@@ -8,6 +8,7 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
     case designSystemTypography = "design_system_typography"
     case interactorCoordinatorOwnership = "interactor_coordinator_ownership"
     case manualTestDouble = "manual_test_double"
+    case noComments = "no_comments"
     case noCoordinatorInViewModel = "no_coordinator_in_view_model"
     case noDirectInjected = "no_direct_injected"
     case noDirectInjectedImport = "no_direct_injected_import"
@@ -49,6 +50,9 @@ public enum Rule: String, CaseIterable, Codable, Sendable {
             "Keep the coordinator as a strong, nonoptional let property in an interactor."
         case .manualTestDouble:
             "Use Spyable/Stubable, or explain the unsupported case immediately above the double."
+        case .noComments:
+            "Express intent through names and types instead of comments; keep a constraint the code cannot "
+                + "express with lint:allow-comment: reason."
         case .noCoordinatorInViewModel:
             "Route navigation through the interactor; do not store a coordinator in a view model."
         case .noDirectInjected:
