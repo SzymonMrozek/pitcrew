@@ -45,7 +45,21 @@ import Testing
     let example = #"Image(systemName: "xmark")"#
     /* outer /* Image(systemName: "xmark") */ comment */
     """##
-    #expect(inspect(path: "Example.swift", source: source).findings.isEmpty)
+    #expect(inspect(path: "Example.swift", source: source).findings.allSatisfy { $0.rule == .noComments })
+}
+
+@Test func configuredCommentPrefixesAcceptTheirWrappedNotes() {
+    let source = """
+    // shortcut: the endpoint is unavailable,
+    // so the flow dismisses after confirmation.
+    load()
+    // Loads again.
+    reload()
+    """
+    var configuration = LintConfiguration()
+    #expect(inspect(path: "Example.swift", source: source).findings.map(\.line) == [1, 4])
+    configuration.allowedCommentPrefixes = ["shortcut:"]
+    #expect(inspect(path: "Example.swift", source: source, configuration: configuration).findings.map(\.line) == [4])
 }
 
 @Test func declarationLabelsAndDefaultsPreserveLegacyChecks() {

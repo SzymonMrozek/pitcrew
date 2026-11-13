@@ -56,6 +56,8 @@ final class Inspector: SyntaxVisitor {
     let needsReferences: Bool
     let customColorEnabled: Bool
     let hasForEach: Bool
+    var checksComments: Bool
+    var trailingNoteOpen = false
     let testStem: String?
     var findings: [Finding] = []
     var breaks: [Int] = []
@@ -92,6 +94,7 @@ final class Inspector: SyntaxVisitor {
             && !path.hasPrefix("Modules/Utilities/PercentageFormatting/")
         needsReferences = source.contains("@Dependency") || source.contains("@Bindable")
         hasForEach = source.contains("ForEach")
+        checksComments = !path.contains("Generated/")
         let stem = URL(fileURLWithPath: path).lastPathComponent.replacingOccurrences(of: ".tests.swift", with: "")
         testStem = path
             .hasSuffix(".tests.swift") && (stem.hasSuffix("Interactor") || stem.hasSuffix("ViewModel")) ? stem : nil
@@ -159,6 +162,11 @@ final class Inspector: SyntaxVisitor {
             findings.removeAll { $0.rule == rule && !$0.affected.isDisjoint(with: finding.affected) }
         }
         findings.append(finding)
+    }
+
+    override func visit(_ token: TokenSyntax) -> SyntaxVisitorContinueKind {
+        checkComments(token)
+        return .visitChildren
     }
 
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {

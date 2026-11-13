@@ -3909,6 +3909,315 @@
     "affected": []
   },
   {
+    "rule": "no_comments",
+    "name": "file header",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "//\n//  ExampleView.swift\n//  Example\n//\n\nimport SwiftUI\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "exception with reason",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-comment: UIKit resigns a disabled field.\nfield.isEnabled = true\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "wrapped exception reason",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-comment: UIKit resigns a disabled field while focus holds it,\n// so the field stays enabled.\nfield.isEnabled = true\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "swiftlint directive",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// swiftlint:disable:next force_cast\nlet view = cell as! View\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "trailing rule exemption",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "@MainActor // lint:allow-main-actor: presents UI.\nfinal class Presenter {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "test double note",
+    "path": "Modules/Scenes/Example/Implementation/Sources/Loader.tests.swift",
+    "source": "/// Spyable cannot generate generic protocols.\nfinal class LoaderSpy {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "generated source",
+    "path": "Modules/Models/Proto/Sources/Generated/Message.swift",
+    "source": "/// Generated documentation.\nstruct Message {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "comment markers in strings",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let url = \"https://example.com\" + \"/* x */\"\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "swift tools version",
+    "path": "Package.swift",
+    "source": "// swift-tools-version: 6.0\nimport PackageDescription\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "generator header",
+    "path": "Modules/Scenes/Example/Implementation/Sources/L10n.swift",
+    "source": "// swiftlint:disable all\n// Generated using SwiftGen\n\nimport Foundation\n\n// MARK: - Strings\nenum L10n {}\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "wrapped trailing exception",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let count = 0 // lint:allow-comment: the API counts from zero,\n// so the first page is empty.\nload()\n",
+    "lines": [],
+    "affected": []
+  },
+  {
+    "rule": "no_comments",
+    "name": "line comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// Loads the rows.\nload()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "trailing comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let count = 0 // starts empty\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "doc comment lines",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/// Shows the title.\n/// Wraps long titles.\nstruct TitleView {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "block comment",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/* disabled\nload()\n*/\nrun()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "exception without reason",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// lint:allow-comment:\nload()\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "prose after a tool directive",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// swiftlint:disable:next force_cast\n// The cast cannot fail.\nlet view = cell as! View\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "doc comment on the first declaration",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/// The entry point.\nstruct ExampleApp {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "comment after the header",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "//\n//  ExampleView.swift\n//\n\n// Keeps the order.\nimport SwiftUI\n",
+    "lines": [
+      5
+    ],
+    "affected": [
+      [
+        5
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "separate comment groups",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "func load() {\n    // First step.\n    prepare()\n\n    // Second step.\n    fetch()\n}\n",
+    "lines": [
+      2,
+      5
+    ],
+    "affected": [
+      [
+        2
+      ],
+      [
+        5
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "documentation before a blank line",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/// The entry point.\n\nstruct ExampleApp {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "block documentation before a blank line",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/** The entry point. */\n\nstruct ExampleApp {}\n",
+    "lines": [
+      1
+    ],
+    "affected": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "generator marker in a string",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let warning = \"DO NOT EDIT\"\n// Explains the warning.\nshow(warning)\n",
+    "lines": [
+      2
+    ],
+    "affected": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "prose after a trailing exception's code",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "let count = 0 // lint:allow-comment: the API counts from zero.\nload()\n// Loads again.\nreload()\n",
+    "lines": [
+      3
+    ],
+    "affected": [
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "documentation mentioning generated code",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "/// Consumes @generated protobuf models.\nstruct Reader {}\n// Reads rows.\nlet rows = 0\n",
+    "lines": [
+      1,
+      3
+    ],
+    "affected": [
+      [
+        1
+      ],
+      [
+        3
+      ]
+    ]
+  },
+  {
+    "rule": "no_comments",
+    "name": "header mentioning generated code",
+    "path": "Modules/Scenes/Example/Implementation/Sources/ExampleView.swift",
+    "source": "// Reads models that are DO NOT EDIT outputs.\n\nimport Foundation\n// Reads rows.\nlet rows = 0\n",
+    "lines": [
+      4
+    ],
+    "affected": [
+      [
+        4
+      ]
+    ]
+  },
+  {
     "rule": "unscoped_observation_tracking",
     "name": "weak self does not cancel service registrations",
     "path": "Modules/Scenes/Example/Implementation/Sources/ExampleInteractor.swift",
