@@ -11,12 +11,14 @@ import shutil
 import secrets
 import shlex
 import socket
+import ssl
 import struct
 import time
 import threading
 import unittest
 import urllib.request
 import urllib.error
+from contextlib import redirect_stderr
 from unittest.mock import Mock, patch
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -2748,7 +2750,7 @@ if '--output-last-message' in sys.argv:
         os.environ['JEV_API_KEY'] = 'test-key'
         self.review.files[0]['patch'] = ('+change business logic\n' * 1500)
         requests = []
-        def answer(request, timeout):
+        def answer(request, timeout, context):
             requests.append(json.loads(request.data))
             return io.BytesIO(json.dumps({'answers': {name: {'noul': .7} for name in ('business', 'performance', 'ui')}}).encode())
         with patch.object(m.urllib.request, 'urlopen', side_effect=answer):
@@ -2760,14 +2762,80 @@ if '--output-last-message' in sys.argv:
 
     def test_jev_failure_and_sensitive_patch_keep_explicit_fallback(self):
         os.environ['JEV_API_KEY'] = 'test-key'
-        with patch.object(m.urllib.request, 'urlopen', side_effect=OSError('offline')):
+        with patch.object(m.urllib.request, 'urlopen', side_effect=OSError('offline')), redirect_stderr(io.StringIO()):
             self.review.rank()
         self.assertEqual(self.review.files[0]['scorer'], 'Fallback')
-        self.assertEqual(self.review.ranking['fallbacks'], 1)
+        self.assertEqual((self.review.ranking['fallbacks'], self.review.ranking['reasons']), (1, {'connection failed': 1}))
         self.review.files[0]['patch'] = '+let password = "private"'
-        with patch.object(m.urllib.request, 'urlopen') as request:
+        with patch.object(m.urllib.request, 'urlopen') as request, redirect_stderr(io.StringIO()):
             self.review.rank()
         request.assert_not_called()
+        self.assertEqual(self.review.ranking['reasons'], {'sensitive diff kept local': 1})
+
+    def test_jev_fallback_records_why_without_the_key_or_diff(self):
+        os.environ['JEV_API_KEY'] = 'secret-test-key'
+        self.review.files[0]['patch'] = '+let marker = "diff-contents-marker"\n'
+        untrusted = ssl.SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed')
+        untrusted.verify_message = 'unable to get local issuer certificate'
+        cases = [
+            (urllib.error.URLError(untrusted), 'TLS certificate not trusted'),
+            (urllib.error.URLError(ssl.SSLError(1, 'handshake failure')), 'TLS error'),
+            (urllib.error.HTTPError('https://api.typesafe.ai/v1/systemone', 429, 'Too Many Requests', {}, None), 'HTTP 429'),
+            (TimeoutError('The read operation timed out'), 'timeout'),
+            (urllib.error.URLError(TimeoutError('timed out')), 'timeout'),
+            (urllib.error.URLError(socket.gaierror(8, 'nodename nor servname provided')), 'connection failed'),
+            (io.BytesIO(b'<html>not json</html>'), 'invalid answer'),
+            (io.BytesIO(json.dumps({'answers': {'business': {'noul': 2}}}).encode()), 'invalid answer'),
+        ]
+        for outcome, reason in cases:
+            with self.subTest(reason=reason):
+                stub = {'side_effect': outcome} if isinstance(outcome, BaseException) else {'return_value': outcome}
+                log = io.StringIO()
+                with patch.object(m.urllib.request, 'urlopen', **stub) as request, redirect_stderr(log):
+                    self.review.rank()
+                self.assertIsInstance(request.call_args.kwargs['context'], ssl.SSLContext)
+                self.assertEqual(self.review.ranking, {'status': 'done', 'fallbacks': 1, 'reasons': {reason: 1}})
+                self.assertEqual(self.review.files[0]['scorer'], 'Fallback')
+                self.assertIn(reason, log.getvalue())
+                rendered = json.dumps(self.review.state()['ranking']) + log.getvalue()
+                self.assertNotIn('secret-test-key', rendered)
+                self.assertNotIn('diff-contents-marker', rendered)
+
+    def test_jev_setup_failure_finishes_ranking_with_a_reason(self):
+        os.environ['JEV_API_KEY'] = 'test-key'
+        log = io.StringIO()
+        with patch.object(m, 'tls_context', side_effect=ssl.SSLError(1, 'bad bundle')), patch.object(m.urllib.request, 'urlopen') as request, redirect_stderr(log):
+            self.review.rank()
+        request.assert_not_called()
+        self.assertEqual(self.review.ranking, {'status': 'done', 'fallbacks': 1, 'reasons': {'ranking failed': 1}})
+        self.assertIn('Jev ranking failed: SSLError', log.getvalue())
+
+    def test_jev_fallback_reasons_count_each_kind_most_frequent_first(self):
+        os.environ['JEV_API_KEY'] = 'test-key'
+        template = self.review.files[0]
+        self.review.files = [{**template, 'path': f'Sources/File{index}.swift', 'fingerprint': str(index)} for index in range(3)]
+        self.review.files.append({**template, 'path': 'Sources/Secrets.swift', 'fingerprint': 'secrets', 'patch': '+let apiKey = ""'})
+        with patch.object(m.urllib.request, 'urlopen', side_effect=urllib.error.HTTPError('u', 503, 'Unavailable', {}, None)), redirect_stderr(io.StringIO()):
+            self.review.rank()
+        self.assertEqual(self.review.ranking['fallbacks'], 4)
+        self.assertEqual(list(self.review.ranking['reasons'].items()), [('HTTP 503', 3), ('sensitive diff kept local', 1)])
+
+    def test_jev_trusts_the_system_bundle_when_python_has_no_certificates(self):
+        bundle = next((path for path in m.SYSTEM_CA_FILES if os.path.isfile(path)), None)
+        if not bundle:
+            self.skipTest('No system CA bundle on this machine')
+        missing, empty, malformed = self.root / 'missing-ca', self.root / 'empty-ca', self.root / 'malformed-ca.pem'
+        empty.mkdir()
+        malformed.write_text('not a certificate\n')
+        for directory in (missing, empty):
+            with self.subTest(directory=directory.name), patch.dict(os.environ, {'SSL_CERT_FILE': str(missing) + '.pem', 'SSL_CERT_DIR': str(directory)}):
+                self.assertEqual(ssl.create_default_context().get_ca_certs(), [])
+                self.assertEqual(m.tls_context(()).get_ca_certs(), [])
+                self.assertGreater(len(m.tls_context().get_ca_certs()), 10)
+                self.assertGreater(len(m.tls_context((str(missing) + '.pem', str(malformed), bundle)).get_ca_certs()), 10)
+        with patch.object(m.ssl, 'create_default_context', return_value=Mock(get_ca_certs=Mock(return_value=[{'subject': ()}]))) as default:
+            m.tls_context()
+        default.return_value.load_verify_locations.assert_not_called()
 
     def test_dirty_submodule_cannot_be_approved_as_a_commit_pointer(self):
         sub = self.root / '.git' / 'submodule-fixture'

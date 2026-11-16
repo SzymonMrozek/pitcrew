@@ -642,3 +642,15 @@ test('pending diff jumps scroll and flash the matching row on either side', () =
     assert.equal(selector, `.diff-row[data-${side}="40"]`); assert.equal(scrolled, true); assert.equal(flashed, row); assert.equal(context.pendingLine, null);
   }
 });
+
+test('the ranking label says why files kept fallback scores', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const context = {};
+  vm.runInNewContext(source.slice(source.indexOf('function rankingLabel('), source.indexOf('function updateChrome(')) + 'this.rankingLabel = rankingLabel;', context);
+  const files = [{scorer: 'Jev'}, {scorer: 'Fallback'}, {scorer: 'Fallback'}, {scorer: 'Fallback'}];
+  assert.equal(context.rankingLabel(files, {status: 'running', fallbacks: 0, reasons: {}}), 'Jev evaluating · 1/4');
+  assert.equal(context.rankingLabel(files, {status: 'done', fallbacks: 0, reasons: {}}), 'Jev · 1/4 scored');
+  assert.equal(context.rankingLabel(files, {status: 'done', fallbacks: 3, reasons: {'TLS certificate not trusted': 3}}), 'Jev · 1/4 scored · 3 fallback: TLS certificate not trusted');
+  assert.equal(context.rankingLabel(files, {status: 'done', fallbacks: 3, reasons: {'HTTP 503': 2, 'sensitive diff kept local': 1}}), 'Jev · 1/4 scored · 3 fallback: 2 HTTP 503, 1 sensitive diff kept local');
+  assert.equal(context.rankingLabel(files, {status: 'done', fallbacks: 3}), 'Jev · 1/4 scored · 3 fallback');
+});

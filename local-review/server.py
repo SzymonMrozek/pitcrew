@@ -29,10 +29,11 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socketserver
+import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.15.4'
+RELEASE = '0.16.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -722,6 +723,38 @@ def priority(path, config=CONFIG):
     return None
 
 
+SYSTEM_CA_FILES = ('/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt')
+
+
+def tls_context(system_ca_files=SYSTEM_CA_FILES):
+    context = ssl.create_default_context()
+    if context.get_ca_certs():
+        return context
+    # Python.org builds ship without CA certificates until "Install Certificates" runs; add the system bundle.
+    for path in system_ca_files:
+        try:
+            context.load_verify_locations(cafile=path)
+            break
+        except (OSError, ssl.SSLError):
+            continue
+    return context
+
+
+def fallback_reason(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return f'HTTP {error.code}'
+    cause = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(cause, ssl.SSLCertVerificationError):
+        return 'TLS certificate not trusted'
+    if isinstance(cause, ssl.SSLError):
+        return 'TLS error'
+    if isinstance(cause, TimeoutError):
+        return 'timeout'
+    if isinstance(error, (ValueError, KeyError, TypeError)):
+        return 'invalid answer'
+    return 'connection failed'
+
+
 def fallback_score(path, config=CONFIG):
     kind = category(path, config)
     if kind in ('localization', 'generated', 'test', 'manifest'):
@@ -922,7 +955,7 @@ class Review:
         self.job = {'status': 'idle', 'log': ''}
         # The serving process's token; demo URLs are signed with it. None outside a server.
         self.media_secret = None
-        self.ranking = {'status': 'idle', 'fallbacks': 0}
+        self.ranking = {'status': 'idle', 'fallbacks': 0, 'reasons': {}}
         self.rank_again = False
         self.definitions = {}
         self.module_graphs = {}
@@ -2239,29 +2272,31 @@ class Review:
         if self.ranking['status'] == 'running':
             self.rank_again = True
             return
-        self.ranking = {'status': 'running', 'fallbacks': 0}
+        self.ranking = {'status': 'running', 'fallbacks': 0, 'reasons': {}}
         threading.Thread(target=self.rank, daemon=True).start()
 
     def rank(self):
         key = os.environ.get('JEV_API_KEY')
         if not key:
             raise ValueError('JEV_API_KEY is missing from the review server environment.')
+        context = None
+        details = {}
         def evaluate(file):
             with self.lock:
                 cache_key = self.score_key(file)
                 if cache_key in self.cache:
-                    return 0
+                    return None
                 rubric = self.settings['rubric']
             if file['kind'] == 'generated':
-                return 0  # Regenerated output keeps its fallback score; the source schema carries the change.
+                return None  # Regenerated output keeps its fallback score; the source schema carries the change.
             if re.search(r"\b(password|secret|credential|api[_-]?key|dsn)\b", file['patch'], re.I):
-                return 1
+                return 'sensitive diff kept local'
             if file['limited']:
-                return 1  # Never silently judge a truncated patch.
+                return 'diff too large'  # Never silently judge a truncated patch.
             chunks, chunk = [], ''
             for line in file['patch'].splitlines(keepends=True):
                 if len(line.encode()) > 18000:
-                    return 1
+                    return 'diff too large'
                 if len((chunk + line).encode()) > 18000:
                     chunks.append(chunk)
                     chunk = ''
@@ -2280,13 +2315,15 @@ class Review:
                 request = urllib.request.Request('https://api.typesafe.ai/v1/systemone',
                            data=json.dumps(payload).encode(), headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'})
                 try:
-                    with urllib.request.urlopen(request, timeout=15) as response:
+                    with urllib.request.urlopen(request, timeout=15, context=context) as response:
                         result = json.load(response)
                     part_values = {name: result['answers'][name]['noul'] for name in questions}
                     if any(type(v) not in (float, int) or not math.isfinite(v) or not 0 <= v <= 1 for v in part_values.values()):
                         raise ValueError('Invalid score')
-                except (OSError, ValueError, KeyError, TypeError):
-                    return 1
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    reason = fallback_reason(error)
+                    details.setdefault(reason, f'{type(error).__name__}: {error}'[:300])
+                    return reason
                 values = {name: max(values[name], v) for name, v in part_values.items()}
             with self.lock:
                 with (self.store / 'scores.lock').open('a') as lock:
@@ -2294,19 +2331,27 @@ class Review:
                     self.cache = {**read_json(self.store / 'scores.json', {}), cache_key: {'score': round(max(values.values()) * 100), 'signals': {name: round(v * 100) for name, v in values.items()}}}
                     write_json(self.store / 'scores.json', self.cache)
                 self.apply_scores()
-            return 0
+            return None
         try:
+            context = tls_context()
             with ThreadPoolExecutor(max_workers=3) as pool:
                 candidates = list({self.score_key(f): f for f in [*self.files, *(f for view in list(self.historical.values()) for f in view[3])]}.values())
-                failures = sum(pool.map(evaluate, candidates))
+                counts = {}
+                for reason in pool.map(evaluate, candidates):
+                    if reason:
+                        counts[reason] = counts.get(reason, 0) + 1
+            reasons = dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+            for reason, count in reasons.items():
+                print(f'Jev kept fallback scores for {count} of {len(candidates)} files: {reason}' + (f' ({details[reason]})' if reason in details else ''), file=sys.stderr, flush=True)
             with self.lock:
-                self.ranking = {'status': 'done', 'fallbacks': failures}
+                self.ranking = {'status': 'done', 'fallbacks': sum(reasons.values()), 'reasons': reasons}
                 if self.rank_again:
                     self.rank_again = False
                     self.start_ranking()
-        except Exception:
+        except Exception as error:
+            print(f'Jev ranking failed: {type(error).__name__}: {error}'[:400], file=sys.stderr, flush=True)
             with self.lock:
-                self.ranking = {'status': 'done', 'fallbacks': len(self.files)}
+                self.ranking = {'status': 'done', 'fallbacks': len(self.files), 'reasons': {'ranking failed': len(self.files)}}
 
     def start_merge(self, revision, title, description):
         with self.lock:
