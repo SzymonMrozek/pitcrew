@@ -255,7 +255,8 @@ When files keep fallback scores, the toolbar says why next to the count, for
 example `Jev · 0/34 scored · 34 fallback: TLS certificate not trusted`, and
 the server log adds the error. Reasons are a TLS failure, an HTTP status, a
 timeout, a failed connection, an invalid answer, or a diff kept local. The
-server trusts the system CA bundle when its Python ships without one.
+server trusts the system CA bundle alongside its Python's own, so the Python
+that launched it doesn't matter.
 
 **Priority paths** never score below 95, whatever the evaluator says. Use them
 for code that defines contracts, such as module interfaces. Ecto migrations

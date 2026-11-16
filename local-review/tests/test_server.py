@@ -2810,6 +2810,26 @@ if '--output-last-message' in sys.argv:
         self.assertEqual(self.review.ranking, {'status': 'done', 'fallbacks': 1, 'reasons': {'ranking failed': 1}})
         self.assertIn('Jev ranking failed: SSLError', log.getvalue())
 
+    def test_jev_log_never_carries_the_key_from_an_error_message(self):
+        os.environ['JEV_API_KEY'] = 'secret-test-key\n'
+        log = io.StringIO()
+        seen = []
+        def leak(request, timeout, context):
+            seen.append(request.get_header('Authorization'))
+            raise ValueError(f"Invalid header value b'{request.get_header('Authorization')}'")
+        with patch.object(m.urllib.request, 'urlopen', side_effect=leak), redirect_stderr(log):
+            self.review.rank()
+        self.assertEqual(seen, ['Bearer secret-test-key'])
+        self.assertEqual(self.review.ranking['reasons'], {'invalid answer': 1})
+        with patch.object(m.urllib.request, 'urlopen', side_effect=urllib.error.URLError('rejected secret-test-key')), redirect_stderr(log):
+            self.review.rank()
+        with patch.object(m, 'tls_context', side_effect=RuntimeError('secret-test-key')), redirect_stderr(log):
+            self.review.rank()
+        self.assertIn('ValueError at line', log.getvalue())
+        self.assertIn('rejected <JEV_API_KEY>', log.getvalue())
+        self.assertIn('Jev ranking failed: RuntimeError at line', log.getvalue())
+        self.assertNotIn('secret-test-key', log.getvalue())
+
     def test_jev_fallback_reasons_count_each_kind_most_frequent_first(self):
         os.environ['JEV_API_KEY'] = 'test-key'
         template = self.review.files[0]
@@ -2833,9 +2853,12 @@ if '--output-last-message' in sys.argv:
                 self.assertEqual(m.tls_context(()).get_ca_certs(), [])
                 self.assertGreater(len(m.tls_context().get_ca_certs()), 10)
                 self.assertGreater(len(m.tls_context((str(missing) + '.pem', str(malformed), bundle)).get_ca_certs()), 10)
-        with patch.object(m.ssl, 'create_default_context', return_value=Mock(get_ca_certs=Mock(return_value=[{'subject': ()}]))) as default:
-            m.tls_context()
-        default.return_value.load_verify_locations.assert_not_called()
+        first_root = Path(bundle).read_text().split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----\n'
+        private = self.root / 'private-ca.pem'
+        private.write_text(first_root[first_root.index('-----BEGIN CERTIFICATE-----'):])
+        with patch.dict(os.environ, {'SSL_CERT_FILE': str(private), 'SSL_CERT_DIR': str(missing)}):
+            self.assertEqual(len(ssl.create_default_context().get_ca_certs()), 1)
+            self.assertGreater(len(m.tls_context().get_ca_certs()), 10)
 
     def test_dirty_submodule_cannot_be_approved_as_a_commit_pointer(self):
         sub = self.root / '.git' / 'submodule-fixture'
