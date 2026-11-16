@@ -42,6 +42,14 @@ public enum Rasterizer {
                 TextEngine.draw(spec, in: rect, context: context)
             case .symbol(let spec, let rect):
                 Symbols.draw(spec, in: rect, context: context)
+            case .image(let box, let rect):
+                // The context's y axis points down; images draw y-up.
+                context.saveGState()
+                context.translateBy(x: rect.minX, y: rect.maxY)
+                context.scaleBy(x: 1, y: -1)
+                context.interpolationQuality = .high
+                context.draw(box.image, in: CGRect(origin: .zero, size: rect.size))
+                context.restoreGState()
             case .group(let clip, let radius, let opacity, let children):
                 context.saveGState()
                 if let clip {

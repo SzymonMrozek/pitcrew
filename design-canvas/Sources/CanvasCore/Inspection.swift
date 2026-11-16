@@ -67,7 +67,7 @@ extension Prop {
     /// The token kind this property takes, or nil when it takes no tokens.
     public var tokenKind: TokenKind? {
         switch self {
-        case .foreground, .background, .fill, .border, .shadowColor: .color
+        case .foreground, .background, .fill, .border, .shadowColor, .color, .backgroundColor, .borderColor: .color
         case .spacing, .padding, .paddingHorizontal, .paddingVertical, .width, .height, .maxWidth, .maxHeight,
             .cornerRadius, .borderWidth, .shadowRadius, .shadowY, .opacity: .number
         case .font: .textStyle
@@ -77,11 +77,12 @@ extension Prop {
 
     public var group: PropGroup {
         switch self {
-        case .text, .title, .symbol, .isOn, .style, .component: .content
+        case .text, .title, .symbol, .isOn, .style, .component, .tag, .htmlID, .classes, .role, .ariaLabel: .content
         case .spacing, .alignment, .padding, .paddingHorizontal, .paddingVertical, .width, .height, .maxWidth,
-            .maxHeight, .frameAlignment, .cornerRadius, .borderWidth, .shadowRadius, .shadowY, .opacity: .layout
-        case .font, .weight, .multilineTextAlignment: .typography
-        case .foreground, .background, .fill, .border, .shadowColor: .color
+            .maxHeight, .frameAlignment, .cornerRadius, .borderWidth, .shadowRadius, .shadowY, .opacity,
+            .display, .flexDirection, .gap, .cssPadding, .borderRadius, .backdropFilter: .layout
+        case .font, .weight, .multilineTextAlignment, .fontSize, .fontWeight, .fontFamily, .lineHeight: .typography
+        case .foreground, .background, .fill, .border, .shadowColor, .color, .backgroundColor, .borderColor: .color
         default: .other
         }
     }
@@ -90,6 +91,14 @@ extension Prop {
 extension Node.Kind {
     /// Properties the renderer reads for this kind, in inspector order.
     public var props: [Prop] {
+        if self == .element {
+            // Read-only, as the page computes them.
+            return [
+                .tag, .htmlID, .classes, .role, .ariaLabel, .text, .display, .flexDirection, .gap, .cssPadding,
+                .borderRadius, .borderWidth, .opacity, .backdropFilter, .fontFamily, .fontSize, .fontWeight, .lineHeight,
+                .color, .backgroundColor, .borderColor,
+            ]
+        }
         let content: [Prop] = switch self {
         case .text: [.text, .multilineTextAlignment]
         case .image: [.symbol]

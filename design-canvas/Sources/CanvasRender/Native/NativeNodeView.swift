@@ -28,7 +28,7 @@ struct NativeNodeView: View {
     @ViewBuilder
     private var content: some View {
         switch node.kind {
-        case .page, .component, .instance:
+        case .page, .component, .instance, .element:
             EmptyView()
         case .screen:
             VStack(spacing: 0) { children }

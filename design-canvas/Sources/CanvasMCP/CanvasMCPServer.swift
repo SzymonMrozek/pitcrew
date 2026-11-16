@@ -21,11 +21,29 @@ public protocol CanvasHost: AnyObject {
     /// Page position of a canvas item's top-left corner.
     func canvasOrigin(item: String) -> CGPoint?
     var comments: CommentStore { get set }
+    /// A web screen's page as captured in one appearance (`light` or `dark`): its visible
+    /// DOM and `:root` custom properties. Nil while it loads or when it failed.
+    func webSnapshot(screen: NodeID, appearance: String) -> WebSnapshot?
+    /// A web screen's capture state: `loaded`, `loading`, or why it failed.
+    func webStatus(screen: NodeID) -> String?
+    /// Loads a web screen's page again in both appearances and returns once captured.
+    func reloadWebScreen(_ screen: NodeID) async throws
 }
 
 extension CanvasHost {
     public func measuredRows(item: String) -> [String: CGRect] { [:] }
     public func nativeSnapshotPNG(item: String) -> Data? { nil }
+    public func webSnapshot(screen: NodeID, appearance: String) -> WebSnapshot? { nil }
+    public func webStatus(screen: NodeID) -> String? { nil }
+    public func reloadWebScreen(_ screen: NodeID) async throws {
+        throw CanvasHostError.webUnavailable
+    }
+}
+
+public enum CanvasHostError: Error, CustomStringConvertible {
+    case webUnavailable
+
+    public var description: String { "This host doesn't render web screens" }
 }
 
 /// MCP over JSON-RPC: `initialize`, `ping`, `tools/list` and `tools/call`.
@@ -80,6 +98,30 @@ public final class CanvasMCPServer {
         return handle(message)?.serialized()
     }
 
+    /// Like `handle(_:)`, for tools that wait for the editor: `reload_web_screen`
+    /// returns once the page is captured again. The transport uses this one.
+    public func respond(to message: JSON) async -> JSON? {
+        guard message["method"]?.string == "tools/call", let id = message["id"],
+            message["params"]?["name"]?.string == "reload_web_screen"
+        else { return handle(message) }
+        let arguments = message["params"]?["arguments"] ?? [:]
+        guard let host else { return success(id: id, toolError("The editor is not running")) }
+        do {
+            return success(id: id, text(try await reloadWebScreen(host, arguments)))
+        } catch let error as ToolError {
+            return success(id: id, toolError(error.message))
+        } catch {
+            return success(id: id, toolError(String(describing: error)))
+        }
+    }
+
+    public func respond(to data: Data) async -> Data? {
+        guard let message = try? JSONDecoder().decode(JSON.self, from: data) else {
+            return failure(id: .null, code: -32700, "Parse error").serialized()
+        }
+        return await respond(to: message)?.serialized()
+    }
+
     // MARK: - Tools
 
     private struct ToolError: Error {
@@ -102,6 +144,9 @@ public final class CanvasMCPServer {
             case "list_comments": return text(listComments(host, arguments))
             case "add_comment": return text(try addComment(host, arguments))
             case "resolve_comment": return text(try resolveComment(host, arguments))
+            case "import_web_tokens": return text(try importWebTokens(host, arguments))
+            case "reload_web_screen":
+                throw ToolError("reload_web_screen waits for the page; call it through respond(to:)")
             default: return toolError("Unknown tool \(name)")
             }
         } catch let error as ToolError {
@@ -118,11 +163,21 @@ public final class CanvasMCPServer {
         let item: String
     }
 
-    private func roots(_ document: CanvasDocument) -> [Root] {
-        document.canvasItems.compactMap { node in
+    /// Every screen and component with its tree. A web screen's tree is its page's DOM in
+    /// `appearance`, captured by the editor; until then, the bare screen.
+    private func roots(_ host: any CanvasHost, appearance: String? = nil) -> [Root] {
+        let document = host.document
+        return document.canvasItems.compactMap { node in
             switch node.kind {
             case .screen:
-                return (try? document.resolve(node.id)).map { Root(node: node, tree: $0, item: "\(node.id)#light") }
+                guard var tree = try? document.resolve(node.id) else { return nil }
+                if node.isWebScreen {
+                    let mode = appearance ?? "light"
+                    if let snapshot = host.webSnapshot(screen: node.id, appearance: mode) {
+                        tree = snapshot.tree(screen: tree, tokens: document.tokens, mode: mode)
+                    }
+                }
+                return Root(node: node, tree: tree, item: "\(node.id)#light")
             case .component:
                 guard let root = document.children(of: node.id).first, let tree = try? document.resolve(root.id)
                 else { return nil }
@@ -134,8 +189,8 @@ public final class CanvasMCPServer {
     }
 
     /// The resolved node, its ancestors (outermost first) and the root it belongs to.
-    private func find(_ id: String, in document: CanvasDocument) throws -> (ResolvedNode, [ResolvedNode], Root) {
-        for root in roots(document) {
+    private func find(_ id: String, in host: any CanvasHost, appearance: String? = nil) throws -> (ResolvedNode, [ResolvedNode], Root) {
+        for root in roots(host, appearance: appearance) {
             if let path = root.tree.path(to: id) {
                 return (path.last!, Array(path.dropLast()), root)
             }
@@ -149,7 +204,7 @@ public final class CanvasMCPServer {
     }
 
     private func listItems(_ host: any CanvasHost) -> JSON {
-        .array(roots(host.document).map { root in
+        .array(roots(host).map { root in
             var entry: [String: JSON] = [
                 "id": .string(root.node.id.rawValue),
                 "kind": .string(root.node.kind.rawValue),
@@ -157,6 +212,18 @@ public final class CanvasMCPServer {
                 "root": .string(root.tree.id),
             ]
             if let device = root.node[.device]?.string { entry["device"] = .string(device) }
+            if root.node.kind == .screen { entry["platform"] = .string(root.node.platform.rawValue) }
+            if let viewport = host.document.viewport(of: root.node) {
+                entry["device"] = .string(viewport.name)
+                entry["viewport"] = ["width": .number(viewport.width), "height": .number(viewport.height)]
+                entry["url"] = .string(root.node[.url]?.string ?? "")
+                if let light = root.node[.lightURL]?.string { entry["light_url"] = .string(light) }
+                entry["status"] = .string(host.webStatus(screen: root.node.id) ?? "not rendered")
+                if let snapshot = host.webSnapshot(screen: root.node.id, appearance: "light") {
+                    entry["title"] = .string(snapshot.title)
+                    entry["elements"] = .number(Double(snapshot.elementCount))
+                }
+            }
             if let page = host.document.page(of: root.node.id), let name = host.document[page]?[.name]?.string {
                 entry["page"] = .string(name)
             }
@@ -167,9 +234,9 @@ public final class CanvasMCPServer {
     private func tree(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
         guard let id = arguments["node_id"]?.string else { throw ToolError("node_id is required") }
         let document = host.document
-        let roots = roots(document)
+        let roots = roots(host, appearance: arguments["appearance"]?.string)
         let (node, _, root) = try roots.first { $0.node.id.rawValue == id }
-            .map { ($0.tree, [], $0) } ?? find(id, in: document)
+            .map { ($0.tree, [], $0) } ?? find(id, in: host, appearance: arguments["appearance"]?.string)
         let frames = host.measuredFrames(item: item(root, appearance: arguments["appearance"]?.string))
         return Self.treeJSON(node, frames: frames, depth: arguments["depth"]?.int)
     }
@@ -177,7 +244,7 @@ public final class CanvasMCPServer {
     private func inspect(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
         guard let id = arguments["node_id"]?.string else { throw ToolError("node_id is required") }
         let document = host.document
-        let (node, ancestors, root) = try find(id, in: document)
+        let (node, ancestors, root) = try find(id, in: host, appearance: arguments["appearance"]?.string)
         let measured = item(root, appearance: arguments["appearance"]?.string)
         let frames = host.measuredFrames(item: measured)
         guard case .object(var result) = Self.treeJSON(node, frames: frames, depth: 0) else { return [:] }
@@ -193,6 +260,8 @@ public final class CanvasMCPServer {
         // Literal values where the design system has tokens of that kind: candidates to bind.
         let unbound = node.props.keys.sorted().filter { prop in
             guard let kind = prop.tokenKind, !document.tokens.ids(of: kind).isEmpty else { return false }
+            // A page's lengths are whatever its CSS computes; only its colors map to tokens.
+            if node.isElement, kind != .color { return false }
             if case .token? = node[prop] { return false }
             // `infinity` is a frame limit, not a number a token could stand for.
             return node[prop] != .string("infinity")
@@ -225,7 +294,15 @@ public final class CanvasMCPServer {
             }
             result["spacing"] = .object(entry)
         }
-        if let instance = node.instance, instance != node.source {
+        if node.isElement || node.isWebScreen {
+            let url = root.node[.url]?.string ?? ""
+            result["editing"] = .string(
+                node.isElement
+                    ? "A DOM element of the live page \(url), read-only. Change the page's code, then reload_web_screen. "
+                        + "Colors equal to a token's value show as that token; literal colors are listed in unbound."
+                    : "A web screen. set_property changes its name, url, lightUrl, device (a web viewport), x and y."
+            )
+        } else if let instance = node.instance, instance != node.source {
             result["editing"] = .string(
                 "Inside instance \(instance) of a component. set_property writes an override on that instance; "
                     + "edit \(node.source) directly to change every instance."
@@ -274,7 +351,7 @@ public final class CanvasMCPServer {
     private func screenshot(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
         guard let id = arguments["screen_id"]?.string else { throw ToolError("screen_id is required") }
         let appearance = arguments["appearance"]?.string ?? "light"
-        guard let root = roots(host.document).first(where: { $0.node.id.rawValue == id }) else {
+        guard let root = roots(host, appearance: appearance).first(where: { $0.node.id.rawValue == id }) else {
             throw ToolError("No screen or component \(id). Use list_items.")
         }
         let item = item(root, appearance: appearance)
@@ -283,9 +360,11 @@ public final class CanvasMCPServer {
         switch arguments["renderer"]?.string ?? "canvas" {
         case "canvas":
             png = host.snapshotPNG(item: item)
-            caption = "\(item), drawn by the canvas engine, at 3 pixels per point"
+            caption = root.node.isWebScreen
+                ? "\(item), \((appearance == "light" ? root.node[.lightURL]?.string : nil) ?? root.node[.url]?.string ?? ""), rendered by WebKit at 2 pixels per CSS pixel"
+                : "\(item), drawn by the canvas engine, at 3 pixels per point"
         case "native":
-            guard root.node.kind == .screen else { throw ToolError("Only screens render natively") }
+            guard root.node.kind == .screen, !root.node.isWebScreen else { throw ToolError("Only iOS screens render natively") }
             guard let native = host.nativeSnapshotPNG(item: item) else {
                 throw ToolError("No SwiftUI render of \(item) for the current document yet. Open Preview in the editor, which runs it on the iOS Simulator, then retry.")
             }
@@ -294,7 +373,12 @@ public final class CanvasMCPServer {
         case let other:
             throw ToolError("Unknown renderer \(other). Use canvas or native.")
         }
-        guard let png else { throw ToolError("\(item) is not rendered right now") }
+        guard let png else {
+            if root.node.isWebScreen {
+                throw ToolError("\(item) is \(host.webStatus(screen: root.node.id) ?? "not rendered"). Retry, or reload_web_screen.")
+            }
+            throw ToolError("\(item) is not rendered right now")
+        }
         return [
             "content": [
                 ["type": "image", "data": .string(png.base64EncodedString()), "mimeType": "image/png"],
@@ -307,7 +391,10 @@ public final class CanvasMCPServer {
         guard let id = arguments["node_id"]?.string, let prop = arguments["prop"]?.string else {
             throw ToolError("node_id and prop are required")
         }
-        let (node, _, _) = try find(id, in: host.document)
+        let (node, _, _) = try find(id, in: host, appearance: arguments["appearance"]?.string)
+        if node.isElement {
+            throw ToolError("\(id) is a DOM element of a live page, which is read-only here. Change the page's code, then reload_web_screen.")
+        }
         let value = try Self.value(arguments["value"] ?? .null)
         let edit: Edit = if let instance = node.instance, instance != node.source {
             .override(instance, target: node.source, Prop(rawValue: prop), value)
@@ -357,9 +444,9 @@ public final class CanvasMCPServer {
             ]
             if let anchor = thread.anchor.node {
                 var pinned: [String: JSON] = ["node_id": .string(anchor.node), "item": .string(anchor.item)]
-                if let (node, _, _) = try? find(anchor.node, in: host.document) {
+                if let (node, _, _) = try? find(anchor.node, in: host, appearance: anchor.item.hasSuffix("#dark") ? "dark" : nil) {
                     pinned["kind"] = .string(node.kind.rawValue)
-                    for prop in [Prop.text, .title, .symbol] { if let value = node[prop] { pinned[prop.rawValue] = Self.json(value) } }
+                    for prop in [Prop.text, .title, .symbol, .tag, .classes] { if let value = node[prop] { pinned[prop.rawValue] = Self.json(value) } }
                 } else {
                     pinned["missing"] = "The node no longer exists; the pin shows at its last position."
                 }
@@ -379,7 +466,7 @@ public final class CanvasMCPServer {
         }
         let anchor: CommentAnchor
         if let id = arguments["node_id"]?.string {
-            let (node, _, root) = try find(id, in: host.document)
+            let (node, _, root) = try find(id, in: host, appearance: arguments["appearance"]?.string)
             let item = item(root, appearance: arguments["appearance"]?.string)
             // Pin at the node's top-right corner, like a designer would.
             let frame = host.measuredFrames(item: item)[node.id] ?? .zero
@@ -407,6 +494,48 @@ public final class CanvasMCPServer {
         return ["thread_id": .string(threadID), "resolved": .bool(resolved)]
     }
 
+    // MARK: - Web screens
+
+    private func webScreen(_ host: any CanvasHost, _ arguments: JSON) throws -> Node {
+        guard let id = arguments["screen_id"]?.string else { throw ToolError("screen_id is required") }
+        guard let node = host.document[NodeID(id)], node.isWebScreen else {
+            throw ToolError("No web screen \(id). list_items shows each screen's platform.")
+        }
+        return node
+    }
+
+    private func reloadWebScreen(_ host: any CanvasHost, _ arguments: JSON) async throws -> JSON {
+        let node = try webScreen(host, arguments)
+        try await host.reloadWebScreen(node.id)
+        var result: [String: JSON] = [
+            "screen_id": .string(node.id.rawValue), "status": .string(host.webStatus(screen: node.id) ?? "not rendered"),
+        ]
+        if let snapshot = host.webSnapshot(screen: node.id, appearance: "light") {
+            result["title"] = .string(snapshot.title)
+            result["elements"] = .number(Double(snapshot.elementCount))
+        }
+        return .object(result)
+    }
+
+    private func importWebTokens(_ host: any CanvasHost, _ arguments: JSON) throws -> JSON {
+        let node = try webScreen(host, arguments)
+        guard let dark = host.webSnapshot(screen: node.id, appearance: "dark"),
+            let light = host.webSnapshot(screen: node.id, appearance: "light")
+        else {
+            throw ToolError("\(node.id) isn't captured in both appearances yet (\(host.webStatus(screen: node.id) ?? "not rendered")). Retry shortly, or reload_web_screen.")
+        }
+        let prefix = arguments["prefix"]?.string ?? "web"
+        let result = WebTokens.importEdit(dark: dark.variables, light: light.variables, into: host.document.tokens, prefix: prefix)
+        guard case .batch(let edits) = result.edit else { return [:] }
+        if !edits.isEmpty { try host.apply(result.edit) }
+        return [
+            "imported": .array(result.imported.map { .string($0.rawValue) }),
+            "changed": .number(Double(edits.count)),
+            "skipped": .array(result.skipped.map(JSON.string)),
+            "undo": edits.isEmpty ? "Nothing changed" : "One undo step in the editor",
+        ]
+    }
+
     // MARK: - Mapping
 
     static func edit(from request: JSON, in document: CanvasDocument) throws -> Edit {
@@ -417,8 +546,9 @@ public final class CanvasMCPServer {
         switch request["op"]?.string {
         case "insert":
             let kindName = try required("kind")
-            guard let kind = Node.Kind(rawValue: kindName) else {
-                throw ToolError("Unknown kind \(kindName). Kinds: \(Node.Kind.allCases.map(\.rawValue).joined(separator: ", "))")
+            guard let kind = Node.Kind(rawValue: kindName), kind != .element else {
+                let kinds = Node.Kind.allCases.filter { $0 != .element }.map(\.rawValue).joined(separator: ", ")
+                throw ToolError("Unknown kind \(kindName). Kinds: \(kinds). A web screen is a screen with platform web and a url.")
             }
             let parent = NodeID(try required("parent"))
             guard document[parent] != nil else { throw ToolError("No parent \(parent)") }

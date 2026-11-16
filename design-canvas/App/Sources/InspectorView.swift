@@ -1,4 +1,5 @@
 import CanvasCore
+import CanvasEngine
 import CanvasRender
 import SwiftUI
 
@@ -60,11 +61,19 @@ private struct NodeInspector: View {
 
     var body: some View {
         header
-        if let component = store.component(of: context) {
-            ComponentSection(component: component, store: store)
-        }
-        ForEach([PropGroup.content, .layout, .typography, .color], id: \.self) { group in
-            PropSection(group: group, context: context, store: store)
+        if node.isWebScreen, let screen = store.document[node.source] {
+            WebScreenSection(screen: screen, store: store)
+        } else if node.isElement {
+            ForEach([PropGroup.content, .layout, .typography, .color], id: \.self) { group in
+                ElementSection(group: group, node: node, store: store)
+            }
+        } else {
+            if let component = store.component(of: context) {
+                ComponentSection(component: component, store: store)
+            }
+            ForEach([PropGroup.content, .layout, .typography, .color], id: \.self) { group in
+                PropSection(group: group, context: context, store: store)
+            }
         }
         MeasuredSection(context: context, store: store)
     }
@@ -72,7 +81,7 @@ private struct NodeInspector: View {
     private var header: some View {
         Section {
             HStack(spacing: 10) {
-                Image(systemName: store.component(of: context)?.isRoot == true ? "diamond" : node.kind.symbol)
+                Image(systemName: store.component(of: context)?.isRoot == true ? "diamond" : node.symbol)
                     .font(.title3)
                     .foregroundStyle(store.component(of: context) == nil ? Color.secondary : Color.purple)
                     .frame(width: 28)
@@ -104,12 +113,110 @@ private struct NodeInspector: View {
     }
 
     private var subtitle: String {
+        if node.isElement { return "\(node.kindTitle) · DOM element · read-only" }
+        if node.isWebScreen { return "Web screen · \(DeviceSpec.of(node).name)" }
         let kind = node.kind.title
         if let component = store.component(of: context) {
             if component.isRoot { return component.instance == nil ? "Main component" : "\(kind) · instance" }
             return "\(kind) in ◇ \(component.name)"
         }
         return node.kind.isSystemControl ? "\(kind) · system control" : kind
+    }
+}
+
+/// A web screen's own props: what it loads and at which size. Its DOM comes from the page.
+private struct WebScreenSection: View {
+    let screen: Node
+    let store: EditorStore
+
+    var body: some View {
+        Section {
+            LabeledContent("name") {
+                TextDraftField(value: screen[.name]?.string ?? "") { store.perform(.set(screen.id, .name, .string($0)), coalescing: "\(screen.id)/name") }
+            }
+            LabeledContent("url") {
+                TextDraftField(value: screen[.url]?.string ?? "") { store.perform(.set(screen.id, .url, .string($0)), coalescing: "\(screen.id)/url") }
+            }
+            LabeledContent("lightUrl") {
+                TextDraftField(value: screen[.lightURL]?.string ?? "") {
+                    store.perform(.set(screen.id, .lightURL, $0.isEmpty ? nil : .string($0)), coalescing: "\(screen.id)/lightUrl")
+                }
+            }
+            LabeledContent("device") {
+                Picker("device", selection: Binding(
+                    get: { WebViewport.named(screen[.device]?.string).name },
+                    set: { store.perform(.set(screen.id, .device, .string($0))) }
+                )) {
+                    ForEach(WebViewport.all, id: \.name) { Text("\($0.name) · \(Int($0.width))×\(Int($0.height))").tag($0.name) }
+                }
+                .labelsHidden()
+            }
+            LabeledContent("x") {
+                NumberField(value: screen[.x]?.number ?? 0) { store.perform(.set(screen.id, .x, .number($0)), coalescing: "\(screen.id)/x") }
+            }
+            LabeledContent("y") {
+                NumberField(value: screen[.y]?.number ?? 0) { store.perform(.set(screen.id, .y, .number($0)), coalescing: "\(screen.id)/y") }
+            }
+            LabeledContent("Status", value: store.webStatus(of: screen.id) ?? "")
+                .font(.caption)
+        } header: {
+            Text("Web page")
+        } footer: {
+            Text("The page renders with WebKit, dark as it loads and light with data-theme=\"light\" (or lightUrl). Its DOM is read-only; change the page's code, then reload.")
+        }
+        Section {
+            Button("Reload page", systemImage: "arrow.clockwise") { store.reloadWeb(screen.id) }
+            Button("Import tokens from CSS", systemImage: "swatchpalette") { store.importWebTokens(from: screen.id) }
+                .help("Writes the page's :root custom properties as web. tokens, light and dark, as one undo step")
+        }
+    }
+}
+
+/// A DOM element's attributes and computed styles, read-only. Colors equal to a token's
+/// value show as the token; other colors are marked as literals.
+private struct ElementSection: View {
+    let group: PropGroup
+    let node: ResolvedNode
+    let store: EditorStore
+
+    private var props: [Prop] { node.kind.props.filter { $0.group == group && node[$0] != nil } }
+
+    var body: some View {
+        if !props.isEmpty {
+            Section(group.title) {
+                ForEach(props, id: \.self) { prop in
+                    LabeledContent(prop.label) { value(prop) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func value(_ prop: Prop) -> some View {
+        let tokens = store.document.tokens
+        switch node[prop] {
+        case .token(let id):
+            TokenChip(id: id, tokens: tokens)
+        case .color(let rgba):
+            HStack(spacing: 6) {
+                Swatch(light: rgba.hex, dark: rgba.hex)
+                Text(rgba.hex).font(.caption.monospaced()).foregroundStyle(.secondary)
+                if !tokens.ids(of: .color).isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help("No token has this color. Import the page's tokens, or use a token in its CSS.")
+                }
+            }
+        case let other?:
+            Text(other.plain)
+                .font(prop == .text ? .callout : .caption.monospaced())
+                .multilineTextAlignment(.trailing)
+                .lineLimit(prop == .text ? 4 : 2)
+                .textSelection(.enabled)
+        case nil:
+            EmptyView()
+        }
     }
 }
 
@@ -706,6 +813,7 @@ extension Node.Kind {
         case .rectangle: "rectangle"
         case .button: "button.horizontal"
         case .toggle: "switch.2"
+        case .element: "chevron.left.forwardslash.chevron.right"
         }
     }
 
@@ -717,7 +825,40 @@ extension Node.Kind {
 }
 
 extension ResolvedNode {
+    /// How a node's kind reads: a DOM element by its tag, `<h2>`.
+    var kindTitle: String {
+        isElement ? "<\(self[.tag]?.string ?? "element")>" : kind.title
+    }
+
+    /// The layer icon: a web screen as a window, a DOM element by what its tag is.
+    var symbol: String {
+        if isWebScreen { return "macwindow" }
+        guard isElement else { return kind.symbol }
+        switch self[.tag]?.string ?? "" {
+        case "button": return "button.horizontal"
+        case "a": return "link"
+        case "img", "picture", "video": return "photo"
+        case "svg": return "scribble.variable"
+        case "canvas": return "paintbrush.pointed"
+        case "input", "textarea", "select": return "character.cursor.ibeam"
+        case "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "label", "strong", "em", "b", "i", "small": return "textformat"
+        case "ul", "ol", "li", "dl": return "list.bullet"
+        case "nav", "header", "footer", "main", "section", "aside", "article": return "rectangle.split.3x1"
+        case "body": return "macwindow"
+        default: return "square.dashed"
+        }
+    }
+
     var displayName: String {
+        if isElement {
+            let tag = self[.tag]?.string ?? "element"
+            let id = self[.htmlID]?.string.map { "#\($0)" }
+            let classes = self[.classes]?.string?.split(separator: " ").first.map { ".\($0)" }
+            let name = tag + (id ?? classes ?? "")
+            if let text = self[.text]?.string, !text.isEmpty { return "\(name) “\(text.prefix(24))”" }
+            if let label = self[.ariaLabel]?.string, !label.isEmpty { return "\(name) · \(label.prefix(24))" }
+            return name
+        }
         if let title = self[.title]?.string, !title.isEmpty { return title }
         if kind == .text, let text = self[.text]?.string, !text.isEmpty { return "“\(text.prefix(24))”" }
         if kind == .image, let symbol = self[.symbol]?.string { return symbol }

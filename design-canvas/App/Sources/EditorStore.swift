@@ -164,6 +164,19 @@ final class EditorStore {
     /// A page rect the canvas should bring into view, consumed by the view.
     var focusTarget: CGRect?
 
+    /// Web screens' captured pages, by page, viewport and appearance. Like layout, they
+    /// are computed from the document and never stored.
+    private(set) var webCaptures: [WebKey: WebCapture] = [:]
+    /// Why a page failed to render, until it renders.
+    private(set) var webErrors: [WebKey: String] = [:]
+    private(set) var webLoading: Set<WebKey> = []
+    /// Bumped by every finished capture of a key, so its tiles redraw.
+    @ObservationIgnored private var webGenerations: [WebKey: Int] = [:]
+    @ObservationIgnored private var webWaiters: [WebKey: [CheckedContinuation<Void, Never>]] = [:]
+    @ObservationIgnored private let webRenderer = WebScreenRenderer()
+    /// Off in the preview device, which shows SwiftUI screens only.
+    @ObservationIgnored private var rendersWeb = false
+
     /// Each item laid out by the engine, kept while its content key is unchanged.
     private var layoutCache: [String: (key: Int, layout: LayoutResult)] = [:]
     @ObservationIgnored private var mcp: (server: CanvasMCPServer, transport: HTTPTransport)?
@@ -256,6 +269,7 @@ final class EditorStore {
         if screenHeight == .content { allItems = makingRoomForTallScreens(allItems) }
         keepPageInDocument()
         showItems()
+        syncWebScreens()
     }
 
     /// Undo or a reload can remove the page on the canvas, which would show nothing.
@@ -271,7 +285,7 @@ final class EditorStore {
         var growth: [CanvasPage: [(bottom: CGFloat, extra: CGFloat)]] = [:]
         for item in items {
             guard case .screen(let screen, _) = item.content, let layout = layout(of: item.id) else { continue }
-            let device = DeviceSpec.named(screen[.device]?.string)
+            let device = DeviceSpec.of(screen)
             let extra = layout.size.height - device.size.height
             if extra > 0 { growth[item.page, default: []].append((item.origin.y + device.size.height, extra)) }
         }
@@ -342,6 +356,8 @@ final class EditorStore {
 
     private func makeLayout(_ item: CanvasItem) -> LayoutResult {
         switch item.content {
+        case .screen(let screen, let scheme) where screen.isWebScreen:
+            webLayout(screen, dark: scheme == .dark)
         case .screen(let screen, let scheme):
             LayoutEngine(tokens: document.tokens, appearance: scheme == .dark ? .dark : .light)
                 .screen(screen, device: DeviceSpec.named(screen[.device]?.string), fitsContent: screenHeight == .content)
@@ -367,10 +383,10 @@ final class EditorStore {
                 switch node.kind {
                 case .screen:
                     guard let screen = try? document.resolve(node.id) else { return [] }
-                    let darkOrigin = CGPoint(x: origin.x + 470, y: origin.y)
+                    let darkOrigin = CGPoint(x: origin.x + document.darkCopyOffset(of: node), y: origin.y)
                     return [
-                        CanvasItem(id: "\(node.id)#light", origin: origin, content: .screen(screen, .light), page: .document(page.id)),
-                        CanvasItem(id: "\(node.id)#dark", origin: darkOrigin, content: .screen(screen, .dark), page: .document(page.id)),
+                        CanvasItem(id: "\(node.id)#light", origin: origin, content: .screen(webTree(screen, node: node, dark: false), .light), page: .document(page.id)),
+                        CanvasItem(id: "\(node.id)#dark", origin: darkOrigin, content: .screen(webTree(screen, node: node, dark: true), .dark), page: .document(page.id)),
                     ]
                 case .component:
                     guard let root = document.children(of: node.id).first,
@@ -446,6 +462,116 @@ final class EditorStore {
 
     func canvasOrigin(item: String) -> CGPoint? {
         items.first { $0.id == item }?.origin
+    }
+
+    // MARK: - Web screens
+
+    /// A web screen with its page's DOM under it, once captured; until then, the bare screen.
+    private func webTree(_ screen: ResolvedNode, node: Node, dark: Bool) -> ResolvedNode {
+        guard node.isWebScreen, let key = WebKey(screen: node, dark: dark), let capture = webCaptures[key] else { return screen }
+        return capture.snapshot.tree(screen: screen, tokens: document.tokens, mode: dark ? "dark" : "light")
+    }
+
+    private func webLayout(_ screen: ResolvedNode, dark: Bool) -> LayoutResult {
+        let engine = LayoutEngine(tokens: document.tokens, appearance: dark ? .dark : .light)
+        guard let node = document[screen.source], let key = WebKey(screen: node, dark: dark) else {
+            return engine.webScreen(screen, picture: nil, message: "Set the screen's url to show a page.")
+        }
+        guard let capture = webCaptures[key] else {
+            let message = webErrors[key] ?? (rendersWeb ? "Loading…" : "Rendered by WebKit in the editor.")
+            return engine.webScreen(screen, picture: nil, message: message)
+        }
+        return engine.webScreen(
+            screen, picture: capture.picture, frames: capture.snapshot.frames(screen: screen.source),
+            background: capture.snapshot.background.flatMap(RGBA.init(css:))
+        )
+    }
+
+    /// `loaded`, `loading`, or why the page didn't render, for both appearances.
+    func webStatus(of screen: NodeID) -> String? {
+        guard let node = document[screen], node.isWebScreen else { return nil }
+        let keys = [false, true].compactMap { WebKey(screen: node, dark: $0) }
+        guard !keys.isEmpty else { return "no url" }
+        if let error = keys.compactMap({ webErrors[$0] }).first { return "failed: \(error)" }
+        if keys.contains(where: webLoading.contains) { return "loading" }
+        return keys.allSatisfy { webCaptures[$0] != nil } ? "loaded" : "not rendered"
+    }
+
+    /// Captures pages that web screens show and nothing has captured yet, and forgets
+    /// captures no screen shows any more.
+    private func syncWebScreens() {
+        guard rendersWeb else { return }
+        let keys = Set(document.canvasItems.filter(\.isWebScreen).flatMap { node in
+            [false, true].compactMap { WebKey(screen: node, dark: $0) }
+        })
+        for key in webCaptures.keys where !keys.contains(key) { webCaptures[key] = nil }
+        for key in keys where webCaptures[key] == nil && webErrors[key] == nil && !webLoading.contains(key) {
+            Task { await load(key) }
+        }
+    }
+
+    /// Loads a page; a key already loading waits for that load instead.
+    private func load(_ key: WebKey) async {
+        if webLoading.contains(key) {
+            await withCheckedContinuation { webWaiters[key, default: []].append($0) }
+            return
+        }
+        webLoading.insert(key)
+        do {
+            webCaptures[key] = try await webRenderer.capture(key)
+            webErrors[key] = nil
+        } catch {
+            webErrors[key] = error.localizedDescription
+        }
+        webLoading.remove(key)
+        webGenerations[key, default: 0] += 1
+        for waiter in webWaiters.removeValue(forKey: key) ?? [] { waiter.resume() }
+        rebuildItems()
+    }
+
+    /// Loads a web screen's page again in both appearances, keeping the old picture on
+    /// the canvas until the new one is ready.
+    func reloadWeb(_ screen: Node) async {
+        let keys = [false, true].compactMap { WebKey(screen: screen, dark: $0) }
+        await withTaskGroup(of: Void.self) { group in
+            for key in keys { group.addTask { await self.load(key) } }
+        }
+    }
+
+    func reloadWeb(_ id: NodeID) {
+        guard let node = document[id] else { return }
+        Task { await reloadWeb(node) }
+    }
+
+    /// Writes the page's `:root` custom properties as `web.` tokens, light and dark, as
+    /// one undo step.
+    func importWebTokens(from id: NodeID) {
+        guard let dark = webSnapshot(screen: id, appearance: "dark"), let light = webSnapshot(screen: id, appearance: "light") else {
+            lastError = "The page isn't rendered in both appearances yet."
+            return
+        }
+        let result = WebTokens.importEdit(dark: dark.variables, light: light.variables, into: document.tokens)
+        guard case .batch(let edits) = result.edit, !edits.isEmpty else {
+            lastError = result.imported.isEmpty ? "The page's :root has no color or length custom properties." : nil
+            return
+        }
+        perform(result.edit)
+    }
+
+    /// Adds a web screen right of the page's items.
+    func addWebScreen(url: String, viewport: WebViewport = WebViewport.all[0]) {
+        let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty, case .document(let page) = page else { return }
+        let bounds = document.items(onPage: page).reduce(CGRect.null) { rect, node in
+            guard let item = allItems.first(where: { $0.id == "\(node.id)#dark" || $0.id == node.id.rawValue }) else { return rect }
+            return rect.union(pageRect(of: item))
+        }
+        let origin = bounds.isNull ? .zero : CGPoint(x: bounds.maxX + 120, y: bounds.minY)
+        let name = URL(string: url).map { $0.deletingPathExtension().lastPathComponent }.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 } ?? "Web page"
+        let node = Node.webScreen(parent: page, order: document.appendOrder(in: page), name: name, url: url, viewport: viewport, at: origin)
+        perform(.insert(node))
+        select(Selection(item: "\(node.id)#light", node: node.id.rawValue))
+        focusTarget = CGRect(origin: origin, size: viewport.size).insetBy(dx: -80, dy: -80)
     }
 
     // MARK: - Design system
@@ -666,6 +792,10 @@ final class EditorStore {
     /// override on that instance, like editing an instance layer in Figma.
     /// `live` edits, such as typing, share one undo step while they target the same prop.
     func set(_ prop: Prop, to value: Value?, on node: ResolvedNode, live: Bool = false) {
+        guard !node.isElement else {
+            lastError = "The page's DOM is read-only here. Change its code, then reload the screen."
+            return
+        }
         let key = live ? "\(node.instance?.rawValue ?? "")/\(node.source)/\(prop)" : nil
         if let instance = node.instance, instance != node.source {
             perform(.override(instance, target: node.source, prop, value), coalescing: key)
@@ -744,9 +874,17 @@ final class EditorStore {
     /// System containers that a click passes through: their rows are what people pick.
     private static let passThrough: Set<Node.Kind> = [.screen, .navigationStack, .list, .section, .scroll]
 
+    /// Page-sized elements (`body`, an app's root) are passed through like system containers.
+    private func passesThrough(_ node: ResolvedNode, in item: CanvasItem) -> Bool {
+        if Self.passThrough.contains(node.kind) { return true }
+        guard node.isElement, let frame = frames(of: item.id)[node.id] else { return false }
+        let size = size(of: item)
+        return frame.width * frame.height >= 0.9 * size.width * size.height
+    }
+
     private func selectionTarget(in item: CanvasItem, innermost: String, drill: Bool) -> String {
         guard let path = item.tree.path(to: innermost) else { return innermost }
-        let candidates = path.enumerated().filter { !Self.passThrough.contains($0.element.kind) }
+        let candidates = path.enumerated().filter { !passesThrough($0.element, in: item) }
         guard let outermost = candidates.first else { return innermost }
         guard let current = selection, current.item == item.id, let currentPath = item.tree.path(to: current.node) else {
             return outermost.element.id
@@ -792,6 +930,10 @@ final class EditorStore {
             hasher.combine(screen)
             hasher.combine(scheme == .dark)
             hasher.combine(screenHeight)
+            if screen.isWebScreen, let node = document[screen.source], let key = WebKey(screen: node, dark: scheme == .dark) {
+                hasher.combine(webGenerations[key] ?? 0)
+                hasher.combine(webErrors[key])
+            }
         case .component(_, let root, let scheme), .tokens(_, let root, let scheme):
             hasher.combine(root)
             hasher.combine(scheme == .dark)
@@ -804,6 +946,8 @@ final class EditorStore {
     var port: UInt16 { ProcessInfo.processInfo.environment["CANVAS_MCP_PORT"].flatMap(UInt16.init) ?? 7341 }
 
     func startMCP() {
+        rendersWeb = true
+        syncWebScreens()
         guard mcp == nil else { return }
         let port = port
         let server = CanvasMCPServer(host: self)
@@ -812,7 +956,7 @@ final class EditorStore {
                 await MainActor.run { self?.previewRoute(method, path, body) }
             }
             let transport = try HTTPTransport(port: port, route: route) { [weak server] body in
-                await MainActor.run { server?.handle(data: body) }
+                await server?.respond(to: body)
             }
             transport.start { [weak self] state in
                 let status: String = switch state {
@@ -846,8 +990,28 @@ extension EditorStore: CanvasHost {
         layout(of: item)?.rows ?? [:]
     }
 
+    /// A web screen's PNG is WebKit's picture as captured; everything else is drawn at 3x.
     func snapshotPNG(item: String) -> Data? {
-        layout(of: item).flatMap { Rasterizer.png($0, scale: 3) }
+        let parts = item.split(separator: "#").map(String.init)
+        if let id = parts.first, let node = document[NodeID(id)], node.isWebScreen {
+            return WebKey(screen: node, dark: parts.last == "dark").flatMap { webCaptures[$0]?.png }
+        }
+        return layout(of: item).flatMap { Rasterizer.png($0, scale: 3) }
+    }
+
+    func webSnapshot(screen: NodeID, appearance: String) -> WebSnapshot? {
+        guard let node = document[screen], let key = WebKey(screen: node, dark: appearance == "dark") else { return nil }
+        return webCaptures[key]?.snapshot
+    }
+
+    func webStatus(screen: NodeID) -> String? { webStatus(of: screen) }
+
+    func reloadWebScreen(_ screen: NodeID) async throws {
+        guard let node = document[screen], node.isWebScreen else { throw WebRenderError.badURL(screen.rawValue) }
+        await reloadWeb(node)
+        if let error = [false, true].compactMap({ WebKey(screen: node, dark: $0) }).compactMap({ webErrors[$0] }).first {
+            throw WebRenderError.script(error)
+        }
     }
 
     /// On the Mac, SwiftUI draws macOS's controls and type, so native renders come from the

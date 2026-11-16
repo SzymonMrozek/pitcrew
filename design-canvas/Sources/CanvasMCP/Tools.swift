@@ -1,36 +1,48 @@
 extension CanvasMCPServer {
     static let instructions = """
-        design-canvas holds iOS screens as SwiftUI view trees. Node kinds are SwiftUI views \
-        (navigationStack, list, section, vstack, hstack, text, image, toggle...) and props are \
-        modifiers applied in a fixed order: font, foreground, padding, width/height, background, \
-        cornerRadius, opacity. Screens and components sit on one page; list_items shows them.
+        design-canvas holds an app's screens on pages: iOS screens as SwiftUI view trees, and \
+        web screens as live pages. list_items shows every screen and component with its \
+        platform.
+
+        iOS screens: node kinds are SwiftUI views (navigationStack, list, section, vstack, \
+        hstack, text, image, toggle...) and props are modifiers applied in a fixed order: font, \
+        foreground, padding, width/height, background, cornerRadius, opacity. Frames come from \
+        the canvas's layout engine, which follows SwiftUI's layout rules and iOS 26's system \
+        metrics, in points from the device's top-left corner. When implementing a screen in \
+        code, map kinds and props one-to-one and use the token names.
+
+        Web screens: a screen with platform "web", a url and a device naming a viewport \
+        (Desktop 1440, Laptop 1280, Tablet 768, Mobile 390). The editor loads the page in \
+        WebKit, light and dark, and get_tree returns its visible DOM as `element` nodes: tag, \
+        htmlId, classes, role, ariaLabel, text and computed styles (color, backgroundColor, \
+        fontSize, borderRadius, cssPadding, gap, display...), with frames in CSS pixels from \
+        the viewport's top-left corner. Element IDs are "<screen>:<element path>", like \
+        "pricing:body>main>#cv". The DOM is read-only: edit the page's code, then \
+        reload_web_screen. screenshot returns WebKit's render. import_web_tokens turns the \
+        page's :root custom properties into tokens (--ink becomes web.ink), light and dark.
 
         IDs: get_tree returns resolved IDs. Nodes inside a component instance use \
         "instance/node" paths and carry `source` (the component node) and `instance`. \
         Values are plain JSON, {"token": "color.accent"} for a design token, or \
         {"color": "#RRGGBB"}. Tokens are the design system: always use one when it fits, and \
-        check `unbound` in inspect_node for literals that should be tokens. Reuse components \
-        (insert an instance) instead of rebuilding their views.
+        check `unbound` in inspect_node for literals that should be tokens; on web elements, \
+        a color equal to a token's value shows as that token. Reuse components (insert an \
+        instance) instead of rebuilding their views. The designer can undo every edit you make.
 
-        Frames come from the canvas's layout engine, which follows SwiftUI's layout rules \
-        and iOS 26's system metrics, in screen points from the device's \
-        top-left corner. The designer can undo every edit you make. When implementing a \
-        screen in code, map kinds and props one-to-one and use the token names.
-
-        Comments are the designer's requests. list_comments shows open threads with the \
-        node each is pinned to; after acting on one, resolve_comment with a short reply \
-        saying what changed.
+        Comments are the designer's requests, pinned to iOS nodes or DOM elements. \
+        list_comments shows open threads with the node each is pinned to; after acting on \
+        one, resolve_comment with a short reply saying what changed.
         """
 
     static let tools: [JSON] = [
         tool(
             "list_items",
-            "List the screens and components on the canvas, page by page, with their root node IDs.",
+            "List the screens and components on the canvas, page by page, with their root node IDs. Web screens also show their url, viewport, render status and page title.",
             properties: [:]
         ),
         tool(
             "get_tree",
-            "Get the resolved view tree of a screen, a component or any node: kinds, props, token references and measured frames.",
+            "Get the resolved view tree of a screen, a component or any node: kinds, props, token references and measured frames. For a web screen, the page's visible DOM with computed styles and frames.",
             properties: [
                 "node_id": ["type": "string", "description": "A screen or component ID from list_items, or a resolved node ID."],
                 "depth": ["type": "integer", "description": "Levels of children to include. Omit for the whole subtree."],
@@ -61,7 +73,7 @@ extension CanvasMCPServer {
         ),
         tool(
             "screenshot",
-            "Render a screen or component as a PNG, exactly as it appears on the canvas: iOS 26's look drawn with SF Pro and SF Symbols. With renderer native, a screen is rendered by real SwiftUI instead, to compare with the canvas.",
+            "Render a screen or component as a PNG, exactly as it appears on the canvas: iOS 26's look drawn with SF Pro and SF Symbols, or a web screen's page as WebKit renders it. With renderer native, an iOS screen is rendered by real SwiftUI instead, to compare with the canvas.",
             properties: [
                 "screen_id": ["type": "string", "description": "A screen or component ID from list_items."],
                 "appearance": appearanceSchema,
@@ -71,7 +83,7 @@ extension CanvasMCPServer {
         ),
         tool(
             "set_property",
-            "Set or clear one property of a node. On a node inside an instance this writes an override on that instance.",
+            "Set or clear one property of a node. On a node inside an instance this writes an override on that instance. DOM elements of web screens are read-only; a web screen's own name, url, lightUrl, device, x and y are editable.",
             properties: [
                 "node_id": ["type": "string", "description": "A resolved node ID."],
                 "prop": ["type": "string", "description": "Property name, for example text, foreground, padding, spacing."],
@@ -108,7 +120,7 @@ extension CanvasMCPServer {
         ),
         tool(
             "add_comment",
-            "Start a comment thread pinned to a node or a page point, or reply to a thread.",
+            "Start a comment thread pinned to a node (an iOS node or a web screen's DOM element) or a page point, or reply to a thread.",
             properties: [
                 "body": ["type": "string"],
                 "thread_id": ["type": "string", "description": "Reply to this thread instead of starting one."],
@@ -118,6 +130,23 @@ extension CanvasMCPServer {
                 "y": ["type": "number", "description": "Page y for a thread not pinned to a node."],
             ],
             required: ["body"]
+        ),
+        tool(
+            "reload_web_screen",
+            "Load a web screen's page again, light and dark, after its code changed. Returns once both are captured.",
+            properties: [
+                "screen_id": ["type": "string", "description": "A web screen ID from list_items."],
+            ],
+            required: ["screen_id"]
+        ),
+        tool(
+            "import_web_tokens",
+            "Write a web screen's CSS custom properties from :root as design tokens, with light and dark values: colors as color tokens, lengths as numbers; fonts, easings and shadows are skipped. --ink becomes web.ink. One undo step.",
+            properties: [
+                "screen_id": ["type": "string", "description": "A web screen ID from list_items."],
+                "prefix": ["type": "string", "description": "Token ID prefix. Defaults to web."],
+            ],
+            required: ["screen_id"]
         ),
         tool(
             "resolve_comment",

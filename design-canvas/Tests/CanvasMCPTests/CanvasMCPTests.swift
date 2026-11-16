@@ -73,7 +73,7 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         let host = FakeHost()
         let server = CanvasMCPServer(host: host)
         let tools = try #require(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"])?["result"]?["tools"]?.array)
-        #expect(tools.count == 11)
+        #expect(tools.count == 13)
         for tool in tools { #expect(tool["inputSchema"]?["type"] == "object") }
     }
 }
@@ -258,7 +258,7 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
 
     @Test func servesJSONRPCOverLoopback() async throws {
         let transport = try HTTPTransport(port: 0) { body in
-            await MainActor.run { CanvasMCPServer(host: FakeHostBox.shared).handle(data: body) }
+            await CanvasMCPServer(host: FakeHostBox.shared).respond(to: body)
         }
         let ready = AsyncStream<Void> { continuation in
             transport.start { state in if case .ready = state { continuation.yield() } }
@@ -275,7 +275,7 @@ private func call(_ server: CanvasMCPServer, _ tool: String, _ arguments: JSON =
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
         let json = try JSONDecoder().decode(JSON.self, from: data)
         #expect(json["id"] == 7)
-        #expect(json["result"]?["tools"]?.array?.count == 11)
+        #expect(json["result"]?["tools"]?.array?.count == 13)
 
         request.httpBody = Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)
         let (_, accepted) = try await URLSession.shared.data(for: request)

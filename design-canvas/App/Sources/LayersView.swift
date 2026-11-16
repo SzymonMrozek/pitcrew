@@ -27,6 +27,7 @@ struct LayersView: View {
         let item: String
         let title: String
         let isComponent: Bool
+        let isWeb: Bool
         let tree: ResolvedNode
         var id: String { item }
     }
@@ -54,7 +55,7 @@ struct LayersView: View {
                     }
                     ForEach(roots) { root in
                         HStack(spacing: 6) {
-                            Image(systemName: root.isComponent ? "diamond" : "iphone")
+                            Image(systemName: root.isComponent ? "diamond" : root.isWeb ? "macwindow" : "iphone")
                                 .foregroundStyle(root.isComponent ? Color.purple : Color.secondary)
                             Text(root.title).font(.subheadline.weight(.semibold))
                         }
@@ -166,9 +167,9 @@ struct LayersView: View {
             guard let item = shown.first(where: { $0.id == store.selection?.item }) ?? shown.first else { return nil }
             switch node.kind {
             case .screen:
-                return Root(item: item.id, title: node[.name]?.string ?? node.id.rawValue, isComponent: false, tree: item.tree)
+                return Root(item: item.id, title: node[.name]?.string ?? node.id.rawValue, isComponent: false, isWeb: node.isWebScreen, tree: item.tree)
             case .component:
-                return Root(item: item.id, title: store.name(ofComponent: node.id), isComponent: true, tree: item.tree)
+                return Root(item: item.id, title: store.name(ofComponent: node.id), isComponent: true, isWeb: false, tree: item.tree)
             default:
                 return nil
             }
@@ -195,6 +196,8 @@ struct LayersView: View {
     private func isOpen(_ row: Row) -> Bool {
         if opened.contains(row.id) { return true }
         if closed.contains(row.id) { return false }
+        // A page's DOM opens two levels deep, under body.
+        if row.node.isElement { return row.depth <= 2 }
         return row.depth == 0 || Self.openByDefault.contains(row.node.kind)
     }
 
@@ -241,7 +244,7 @@ struct LayersView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             }
-            Image(systemName: isInstance ? "diamond" : row.node.kind.symbol)
+            Image(systemName: isInstance ? "diamond" : row.node.symbol)
                 .font(.caption)
                 .foregroundStyle(isInstance || row.insideInstance ? Color.purple : Color.secondary)
                 .frame(width: 18)

@@ -40,6 +40,19 @@ public indirect enum DrawOp: Sendable {
     case group(clip: CGRect?, radius: CGFloat, opacity: CGFloat, ops: [DrawOp])
     /// Children drawn as one layer that casts a shadow, like SwiftUI's `shadow`.
     case shadow(radius: CGFloat, y: CGFloat, color: RGBA, ops: [DrawOp])
+    /// A bitmap scaled into `rect`, such as a web page rendered by WebKit.
+    case image(ImageBox, rect: CGRect)
+}
+
+/// A `CGImage` for display lists. Images are immutable and Core Graphics draws them
+/// from any thread, but `CGImage` isn't `Sendable`.
+public final class ImageBox: @unchecked Sendable, Hashable {
+    public let image: CGImage
+
+    public init(_ image: CGImage) { self.image = image }
+
+    public static func == (lhs: ImageBox, rhs: ImageBox) -> Bool { lhs === rhs }
+    public func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
 }
 
 /// A laid-out screen or component: its size, background, what to draw and every

@@ -145,7 +145,7 @@ private struct CanvasOverlay: View {
         if !isMeasuring, let rect = viewRect(of: selection), let context = store.context(of: selection) {
             let component = store.component(of: context)
             let name = component.map { $0.isRoot ? "◇ \($0.name)" : "\(context.node.kind.title) · ◇ \($0.name)" }
-                ?? context.node.kind.title
+                ?? context.node.kindTitle
             placed(at: CGPoint(x: rect.minX, y: rect.minY - 3), .bottomLeading) {
                 CanvasBadge(text: name, color: component == nil ? .accentColor : .purple)
             }
@@ -189,6 +189,9 @@ private struct CanvasOverlay: View {
 
     private func title(of item: CanvasItem) -> String {
         switch item.content {
+        case .screen(let screen, let scheme) where screen.isWebScreen:
+            "\(screen[.name]?.string ?? "Web page") · \(DeviceSpec.of(screen).name) · \(scheme == .dark ? "Dark" : "Light")"
+                + (store.webStatus(of: screen.source).map { $0 == "loaded" ? "" : " · \($0)" } ?? "")
         case .screen(let screen, let scheme):
             "\(screen[.name]?.string ?? "Screen") · \(scheme == .dark ? "Dark" : "Light")"
         case .component(let name, _, let scheme):

@@ -133,9 +133,18 @@ public struct DeviceSpec: Sendable {
         DeviceSpec(name: "iPhone SE", size: CGSize(width: 375, height: 667), safeTop: 20, safeBottom: 0, cornerRadius: 0, island: nil),
     ]
 
+    /// An iPhone, or a web viewport: no status bar, no safe areas, square corners.
     public static func named(_ name: String?) -> DeviceSpec {
-        all.first { $0.name == name } ?? all[0]
+        if let viewport = WebViewport.preset(name) { return DeviceSpec(viewport) }
+        return all.first { $0.name == name } ?? all[0]
     }
+
+    /// The device a screen draws in: a web screen's viewport, Desktop 1440 by default.
+    public static func of(_ screen: ResolvedNode) -> DeviceSpec {
+        screen.isWebScreen ? DeviceSpec(WebViewport.named(screen[.device]?.string)) : named(screen[.device]?.string)
+    }
+
+    public var isWeb: Bool { WebViewport.preset(name) != nil }
 
     /// The same device with a taller or shorter screen, for screens drawn at their content's height.
     func withHeight(_ height: CGFloat) -> DeviceSpec {
@@ -143,6 +152,13 @@ public struct DeviceSpec: Sendable {
             name: name, size: CGSize(width: size.width, height: height), safeTop: safeTop, safeBottom: safeBottom,
             cornerRadius: cornerRadius, island: island
         )
+    }
+}
+
+extension DeviceSpec {
+    /// A web viewport as a device: no status bar, no safe areas, square corners.
+    public init(_ viewport: WebViewport) {
+        self.init(name: viewport.name, size: viewport.size, safeTop: 0, safeBottom: 0, cornerRadius: 0, island: nil)
     }
 }
 

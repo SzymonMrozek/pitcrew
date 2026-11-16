@@ -181,3 +181,48 @@ import Testing
         #expect(full.size.height == 874)
     }
 }
+
+@Suite struct WebScreenLayoutTests {
+    private func webScreen(_ device: String) throws -> ResolvedNode {
+        var document = CanvasDocument()
+        var node = Node.webScreen(id: "web", parent: CanvasDocument.rootID, order: "a", name: "Web", url: "http://localhost:8000/a.html")
+        node[.device] = .string(device)
+        try document.apply(.insert(node))
+        return try document.resolve("web")
+    }
+
+    @Test func webViewportsHaveNoStatusBarSafeAreasOrCorners() throws {
+        let device = DeviceSpec.named("Mobile 390")
+        #expect(device.size == CGSize(width: 390, height: 844))
+        #expect(device.safeTop == 0 && device.safeBottom == 0 && device.cornerRadius == 0 && device.island == nil)
+        #expect(device.isWeb)
+        #expect(!DeviceSpec.named("iPhone 17 Pro").isWeb)
+
+        // Outside the editor a web screen draws a placeholder: no status bar, square, viewport-sized.
+        let screen = try webScreen("Tablet 768")
+        let layout = LayoutEngine(tokens: TokenSet(), appearance: .light).screen(screen, device: DeviceSpec.of(screen))
+        #expect(layout.size == CGSize(width: 768, height: 1024))
+        #expect(layout.cornerRadius == 0)
+        #expect(layout.frames["web"] == CGRect(x: 0, y: 0, width: 768, height: 1024))
+        let texts = layout.ops.compactMap { op -> String? in if case .text(let spec, _) = op { spec.string } else { nil } }
+        #expect(texts.first == "http://localhost:8000/a.html")
+        #expect(!texts.contains { $0.contains(":") && $0.count <= 5 })  // no status bar clock
+    }
+
+    @Test func aPictureFillsTheViewportAndRasterizes() throws {
+        let screen = try webScreen("Mobile 390")
+        let context = try #require(Rasterizer.makeContext(width: 4, height: 4, scale: 1))
+        context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        let picture = ImageBox(try #require(context.makeImage()))
+        let layout = LayoutEngine(tokens: TokenSet(), appearance: .dark)
+            .webScreen(screen, picture: picture, frames: ["web:body": CGRect(x: 0, y: 0, width: 390, height: 844)])
+        guard case .image(let box, let rect)? = layout.ops.first else { Issue.record("no image op"); return }
+        #expect(box === picture)
+        #expect(rect == CGRect(x: 0, y: 0, width: 390, height: 844))
+        #expect(layout.hitTest(CGPoint(x: 10, y: 10)) != nil)
+        let image = try #require(Rasterizer.image(layout, scale: 1))
+        let pixel = try #require(image.dataProvider?.data as Data?)
+        #expect(pixel[0] > 200 && pixel[1] < 30)  // red, from the picture
+    }
+}

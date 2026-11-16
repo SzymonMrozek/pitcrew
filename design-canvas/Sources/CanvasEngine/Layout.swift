@@ -21,6 +21,8 @@ public struct LayoutEngine: Sendable {
     /// as tall as its content instead, so lists and scroll views show every row, like a
     /// full-page capture.
     public func screen(_ root: ResolvedNode, device: DeviceSpec, fitsContent: Bool = false) -> LayoutResult {
+        // A web screen is a live page the editor renders with WebKit; without it, a placeholder.
+        if root.isWebScreen { return webScreen(root, picture: nil) }
         guard fitsContent else { return screen(root, device: device, pass: Pass(engine: self, device: device)) }
         // Growing the screen gives the extra height to flexible views, which lists and
         // scroll views are, so a few passes settle even when spacers share it.
@@ -288,7 +290,7 @@ final class Pass {
 
     private func contentSize(_ node: ResolvedNode, _ proposal: Proposal, env: Environment) -> CGSize {
         switch node.kind {
-        case .page, .component, .instance, .section:
+        case .page, .component, .instance, .section, .element:
             return .zero
         case .screen, .navigationStack:
             return CGSize(width: proposal.width ?? device?.size.width ?? 0, height: proposal.height ?? device?.size.height ?? 0)
@@ -333,7 +335,7 @@ final class Pass {
 
     private func placeContent(_ node: ResolvedNode, in rect: CGRect, env: Environment, ops: inout [DrawOp]) {
         switch node.kind {
-        case .page, .component, .instance, .section, .spacer:
+        case .page, .component, .instance, .section, .spacer, .element:
             return
         case .screen:
             // Content sits in the safe area; a navigation stack handles the safe area itself.

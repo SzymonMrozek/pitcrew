@@ -12,6 +12,8 @@ public indirect enum Edit: Hashable, Codable, Sendable {
     case move(NodeID, parent: NodeID, order: String)
     /// Sets or clears one override on an instance.
     case override(NodeID, target: NodeID, Prop, Value?)
+    /// Sets or removes (`nil`) one design token, every mode at once.
+    case token(TokenID, Token?)
     case batch([Edit])
 }
 
@@ -21,6 +23,7 @@ public enum DocumentError: Error, Equatable {
     case moveIntoDescendant(NodeID)
     case rootIsPermanent
     case notAnInstance(NodeID)
+    case tokenMismatch(TokenID)
 }
 
 public struct CanvasDocument: Hashable, Codable, Sendable {
@@ -79,7 +82,8 @@ public struct CanvasDocument: Hashable, Codable, Sendable {
     /// The screen a preview of a page opens: the selected one, else the page's first.
     /// A selection on another page doesn't count.
     public func previewScreen(onPage page: NodeID, selected: NodeID?) -> NodeID? {
-        let screens = items(onPage: page).filter { $0.kind == .screen }.map(\.id)
+        // Web screens are live pages; SwiftUI can't preview them.
+        let screens = items(onPage: page).filter { $0.kind == .screen && !$0.isWebScreen }.map(\.id)
         return screens.first { $0 == selected } ?? screens.first
     }
 
@@ -176,6 +180,12 @@ public struct CanvasDocument: Hashable, Codable, Sendable {
             if node.overrides[target]?.isEmpty == true { node.overrides[target] = nil }
             nodes[id] = node
             return .override(id, target: target, prop, previous)
+
+        case .token(let id, let token):
+            if let token, token.id != id { throw DocumentError.tokenMismatch(id) }
+            let previous = tokens.tokens[id]
+            tokens.tokens[id] = token
+            return .token(id, previous)
 
         case .batch(let edits):
             var inverses: [Edit] = []

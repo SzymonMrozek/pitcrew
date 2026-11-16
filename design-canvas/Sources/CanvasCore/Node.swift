@@ -15,6 +15,10 @@ public struct Node: Hashable, Codable, Sendable, Identifiable {
         case navigationStack, list, section, scroll
         case vstack, hstack, zstack, spacer
         case text, image, label, rectangle, button, toggle
+
+        /// A DOM element of a web screen's page. Captured from the live page for
+        /// inspection, never stored in the document: the page's code is its source.
+        case element
     }
 
     public var id: NodeID

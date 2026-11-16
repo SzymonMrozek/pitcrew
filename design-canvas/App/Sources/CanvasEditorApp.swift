@@ -63,6 +63,8 @@ struct EditorView: View {
     @State private var scene = CanvasScene()
     @State private var showsInspector = UIDevice.current.userInterfaceIdiom != .phone
     @State private var showsLayers = UIDevice.current.userInterfaceIdiom != .phone
+    @State private var isAddingWebScreen = false
+    @State private var webURL = "http://localhost:8000/index.html"
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     // No NavigationStack here: SwiftUI would hand its navigation controller to every
@@ -94,6 +96,16 @@ struct EditorView: View {
             guard let rect = store.focusTarget else { return }
             scene.camera.fit(rect)
             store.focusTarget = nil
+        }
+        .alert("Add Web Screen", isPresented: $isAddingWebScreen) {
+            TextField("URL", text: $webURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Add") { store.addWebScreen(url: webURL) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A page served locally, such as http://localhost:8000/index.html. It renders at Desktop 1440; change the viewport in the inspector.")
         }
         .inspector(isPresented: $showsInspector) {
             InspectorView(store: store)
@@ -195,6 +207,9 @@ struct EditorView: View {
             } else {
                 zoomIn
             }
+            Button("Add Web Screen", systemImage: "macwindow.badge.plus") { isAddingWebScreen = true }
+                .disabled(store.isOnTokens)
+                .help("Add a web page as a screen")
             PreviewButton(store: store)
             Button("Inspector", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }

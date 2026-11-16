@@ -4,7 +4,9 @@
 
 - The document is SwiftUI-shaped. Node kinds map one-to-one to SwiftUI views and props
   to modifiers in a fixed order, so an agent or code export maps a design to SwiftUI
-  directly. The canvas doesn't run SwiftUI to draw it.
+  directly. The canvas doesn't run SwiftUI to draw it. Web screens are the exception: the
+  document holds only their address and viewport, and their content is the live page
+  (see Web screens).
 - The engine draws iOS's look itself. `CanvasEngine` lays out a resolved tree with
   SwiftUI's layout rules (stacks offer space to their least flexible child first,
   spacers take the rest, frames center their content) and draws system components
@@ -84,6 +86,60 @@
 - Tokens resolve per mode at layout time. Apple semantic colors resolve from
   `AppleColors`, light and dark.
 
+## Web screens
+
+A web screen shows a live page next to the app's other screens, so a team designing a
+web app as static HTML, CSS and JS can lay its pages out, inspect them, comment on them
+and pull their tokens into the design system.
+
+Data flow:
+
+1. The document stores only the screen: `platform: web`, `url`, optional `lightUrl`, a
+   web viewport as `device` (`WebViewport`: Desktop 1440, Laptop 1280, Tablet 768,
+   Mobile 390), and `x`/`y`.
+2. The editor's `WebScreenRenderer` (App, WebKit) loads each (page, viewport,
+   appearance) in an offscreen `WKWebView` the viewport's size, waits for
+   `document.fonts.ready` and a 1.2 s settle, then runs `WebPageScript.snapshot` and
+   `takeSnapshot`. Dark is the page as it loads; light sets `data-theme="light"` on the
+   root element and the view's `prefers-color-scheme` to light, or loads `lightUrl` for
+   pages that keep their theme in script state.
+3. The result is a `WebSnapshot` (`CanvasCore`): the visible DOM as `WebElement`s with
+   frames and computed styles, and the `:root` custom properties. Invisible elements
+   are left out and wrapper-only ones collapse into their child, so the tree reads
+   like the design.
+4. `WebSnapshot.tree` turns it into `ResolvedNode`s of kind `element` under the screen,
+   with IDs `<screen>:<element path>`; `frames` gives their frames. From there the
+   canvas, hit testing, hover, the layers panel, spacing, comment pins and MCP use the
+   same paths as iOS screens. The engine draws the picture as a `DrawOp.image`
+   (`LayoutEngine.webScreen`), into tiles like everything else.
+5. `WebTokens.importEdit` turns custom properties into `web.` tokens with light and
+   dark values, as one `Edit.batch` of `Edit.token`s.
+
+Invariants:
+
+- The DOM is computed, never stored, like layout. The page's code is its source; the
+  canvas never edits it. Element nodes refuse edits in the inspector and in MCP.
+- An element path is stable across reloads: an `id` when unique in the page, else the
+  parent's path, `>`, tag and first class, and an index among siblings with the same
+  tag and class. Comments pin to it, so a pin survives a reload and falls back to its
+  page point when the element is gone.
+- Colors bind to tokens by value: a computed color equal to a token's value in that
+  appearance shows as the token, preferring `web.` ones; any other color is a literal,
+  flagged like `unbound`. Lengths stay literal, since many tokens share common values.
+- iOS-only behaviour stays on iOS screens: web viewports have no status bar, safe areas
+  or corner radius, aren't grouped-list backgrounds, don't open in the SwiftUI preview,
+  and a web screen's dark copy sits its viewport's width plus 80 points to the right
+  (iOS screens keep the fixed 470).
+- `Edit.token` sets or removes one token in every mode and returns the previous one,
+  so token imports undo exactly; it is the token's unit of conflict, like `set` for a
+  property.
+- WebKit stays out of `CanvasEngine` and `CanvasCore`: they build on macOS, and
+  `canvas-render` draws a web screen as a placeholder with its address.
+
+Not built yet: editing the DOM from the canvas, structured web node kinds (a web
+counterpart of the SwiftUI kinds), code export to HTML and CSS, full-page heights for
+web screens, and a vector picture of the page.
+
 ## Boundaries
 
 `CanvasCore` owns the model, edits, history, token and instance resolution, spacing and
@@ -94,7 +150,8 @@ Core Graphics rasterizer; it runs on macOS too, so `canvas-render` and the tests
 without a simulator. `CanvasMCP` owns JSON-RPC, the tools and a minimal HTTP transport;
 it reaches the editor only through the `CanvasHost` protocol, which is what its tests
 fake. `CanvasRender` owns the camera, the tile cache and the Metal renderer. The app
-owns the canvas, selection, inspector and commands.
+owns the canvas, selection, inspector and commands, and renders web screens with
+WebKit (`WebScreenRenderer`), handing `CanvasMCP` their snapshots through `CanvasHost`.
 
 ## Calibrating
 
@@ -197,6 +254,22 @@ updating `Apple.swift` and the fidelity tests.
 - Showing padding and gaps on all four sides at once buries a small element under
   labels. Each side shows one line: the gap to a neighbour, or the padding when there
   is none, and the name and size badges hide while measuring.
+
+- `WKWebView.createPDF` looked like the way to keep web screens sharp at any zoom, but
+  it leaves `<canvas>` drawings out and draws elements with `backdrop-filter` or
+  transparency layers as black boxes. Web screens are a bitmap at 2x instead, so they
+  soften past 200% zoom.
+- WebKit pauses `requestAnimationFrame` for a page it considers hidden, as one in a
+  view outside any window is, and pages that draw a `<canvas>` from an animation loop
+  then capture blank. The renderer puts its web views in the editor's window, behind
+  the content, with `inactiveSchedulingPolicy = .none`.
+- Setting `data-theme="light"` isn't enough for every page: one that writes its custom
+  properties inline on the root element from script state keeps its dark values, and
+  canvases drawn from that state stay dark. `lightUrl` (often the page's own
+  `#theme=light`) covers those.
+- In mobile content mode, iOS's `WKWebView` lays out a page without a viewport meta
+  tag at 980 px, as a phone does. Viewports from 768 up load in desktop mode, so their
+  layout width is the viewport's; Mobile 390 keeps mobile mode, like a phone.
 
 ## Open questions
 

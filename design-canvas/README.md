@@ -1,7 +1,7 @@
 # design-canvas
 
 A design canvas for Apple platforms where every screen is a structured SwiftUI tree,
-drawn with iOS's own look.
+drawn with iOS's own look. Web apps sit on the same canvas as live pages.
 
 Figma draws pictures of an iOS app and leaves code to guess what they meant. Here the
 document is a tree of SwiftUI views, tokens and components, so an agent reading the file
@@ -56,7 +56,21 @@ Status: early prototype. What works today:
   selection, and every token, grouped by its ID path (`color.text`), with its light and
   dark values and how often it's used.
 
-Not built yet: multiplayer sync and code export. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
+- Web screens: a screen with `platform: web`, a `url` and a viewport (Desktop 1440,
+  Laptop 1280, Tablet 768, Mobile 390) shows a live page, such as a prototype served on
+  `localhost`. The editor renders it with WebKit, dark as the page loads and light with
+  `data-theme="light"` and `prefers-color-scheme: light` (or the screen's `lightUrl`),
+  and captures its visible DOM: tags, classes, text, frames and computed styles. Pages
+  sit side by side with their dark copy a viewport's width away; clicks, hover, the
+  layers panel, spacing and comments work on DOM elements, and the inspector shows an
+  element's colors as tokens when a token has that value. The DOM is read-only (the
+  page's code is its source); a screen's name, url, viewport and position are editable.
+  Add one with the toolbar's window button; *Reload page* and *Import tokens from CSS*
+  are in the inspector. The import writes the page's `:root` custom properties as
+  `web.` tokens, light and dark, as one undo step.
+
+Not built yet: multiplayer sync, code export, and editing or exporting web screens as
+structured nodes. [ARCHITECTURE.md](ARCHITECTURE.md) covers the plan for each.
 
 ## Run it
 
@@ -132,17 +146,19 @@ claude mcp add --transport http design-canvas http://127.0.0.1:7341/mcp
 
 | Tool | What it returns or does |
 | --- | --- |
-| `list_items` | Screens and components on the canvas. |
-| `get_tree` | The resolved view tree: kinds, props, token references, measured frames. |
+| `list_items` | Screens and components on the canvas; web screens with their `url`, `viewport`, render `status`, page `title` and element count. |
+| `get_tree` | The resolved view tree: kinds, props, token references, measured frames. A web screen's is its page's visible DOM. |
 | `inspect_node` | One node with tokens resolved per mode, literals that should be tokens, its component and overrides, measured frame and spacing, ancestors and how edits apply. |
 | `get_selection` | The node the designer selected, inspected. ⇧⌘C copies its ID too. |
 | `get_tokens` | Every token in every mode, with its kind (color, number, text style). |
-| `screenshot` | A PNG of a screen or component as the canvas draws it, light or dark. `renderer: native` returns the screen as SwiftUI renders it on iOS, from the preview. |
+| `screenshot` | A PNG of a screen or component as the canvas draws it, light or dark; a web screen as WebKit rendered it. `renderer: native` returns an iOS screen as SwiftUI renders it on iOS, from the preview. |
 | `set_property` | Sets one prop; inside an instance it writes an override. |
 | `apply_edits` | Inserts, sets, overrides, moves and deletes as one undo step. |
 | `list_comments` | Open threads with the node each is pinned to. |
 | `add_comment` | Starts a thread on a node or page point, or replies. |
 | `resolve_comment` | Resolves or reopens a thread, optionally replying first. |
+| `reload_web_screen` | Loads a web screen's page again, light and dark, and returns once captured. |
+| `import_web_tokens` | Writes a web screen's `:root` custom properties as tokens (`--ink` → `web.ink`), colors and lengths, light and dark, as one undo step. |
 
 Comments work as a task list: a designer pins "make this semibold" on a row, the agent
 reads it with `list_comments`, edits the node and resolves the thread with a reply.
@@ -170,10 +186,30 @@ fractional order key, a property bag and, on instances, overrides:
 }
 ```
 
+A web screen is a `screen` with `platform`, `url`, an optional `lightUrl` and a web
+viewport as its `device`:
+
+```json
+{
+  "id": "pricing",
+  "kind": "screen",
+  "parent": "root",
+  "order": "V",
+  "props": {
+    "name": { "string": "Pricing" },
+    "platform": { "string": "web" },
+    "url": { "string": "http://localhost:8000/pricing.html#static=1" },
+    "device": { "string": "Desktop 1440" },
+    "x": { "number": 0 },
+    "y": { "number": 0 }
+  }
+}
+```
+
 Values are `string`, `number`, `bool`, `color` (`#RRGGBB[AA]`) or `token`. Tokens hold a
 value per mode (`light`, `dark`, ...): a hex color, an Apple semantic color such as
 `label` or `systemBlue`, a number, a Dynamic Type text style, or an alias to another token.
 
-Every change is an `Edit`: `insert`, `delete`, `set`, `move`, `override` or `batch`.
+Every change is an `Edit`: `insert`, `delete`, `set`, `move`, `override`, `token` or `batch`.
 `CanvasDocument.apply` returns the inverse, which is what undo replays and what a sync
 server will order.
