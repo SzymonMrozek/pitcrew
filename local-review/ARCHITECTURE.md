@@ -168,6 +168,14 @@ Each of these cost real debugging time.
   before 0.7.0 restarts it. Unknown settings fail only when the tool reads the
   repository it's checked out in, where they're typos; any other build skips
   them with a warning.
+- **The Python that launched the server decides which CAs it trusts.** A
+  python.org build has no CA bundle until its "Install Certificates" step runs,
+  so every Jev request failed TLS verification and every file silently kept its
+  fallback score. When Python's default context has no certificates, the server
+  loads the system bundle (`/etc/ssl/cert.pem` and the usual Linux paths). Each
+  run's `ranking` state counts fallbacks by reason (TLS, HTTP status, timeout,
+  connection, invalid answer, or a diff kept local), the page shows them beside
+  the fallback count, and the server log names them, never the key or a diff.
 - **Git LFS pointers aren't images.** Compare the LFS objects when they're
   present locally. Report missing ones; never fetch them.
 - **A simulator recording is only a movie once it's interrupted.**

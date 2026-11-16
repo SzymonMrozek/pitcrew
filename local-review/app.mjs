@@ -75,6 +75,15 @@ function codeNode(tokens, text, language) {
   return code;
 }
 function updateReviewTime() {$('#review-time').textContent = 'Active review ' + formatReviewTime(state?.reviewTime?.totalMs || 0);}
+function rankingLabel(files, ranking) {
+  const ranked = files.filter(f => f.scorer === 'Jev').length;
+  if (ranking?.status === 'running') return `Jev evaluating · ${ranked}/${files.length}`;
+  const label = `Jev · ${ranked}/${files.length} scored`;
+  if (ranking?.status !== 'done' || !ranking.fallbacks) return label;
+  const reasons = Object.entries(ranking.reasons || {});
+  const why = reasons.length === 1 ? reasons[0][0] : reasons.map(([reason, count]) => `${count} ${reason}`).join(', ');
+  return `${label} · ${ranking.fallbacks} fallback` + (why ? `: ${why}` : '');
+}
 function updateChrome() {
   updateReviewTime();
   document.title = pageTitle(state);
@@ -111,8 +120,7 @@ function updateChrome() {
   $('#demo-count').textContent = state.demos.items.length;
   $('[data-tab="demos"]').classList.toggle('attention', demoMissing(state.demos));
   $('#comment-count').textContent = state.session.comments.filter(c => !c.resolved).length;
-  const ranked = state.files.filter(f => f.scorer === 'Jev').length;
-  $('#ranking').textContent = state.ranking?.status === 'running' ? `Jev evaluating · ${ranked}/${state.files.length}` : `Jev · ${ranked}/${state.files.length} scored`;
+  $('#ranking').textContent = rankingLabel(state.files, state.ranking);
   $('#rank').disabled = !state.jevAvailable || state.ranking?.status === 'running';
   $('#rank').title = state.jevAvailable ? 'Evaluate uncached changes with Jev' : 'Set JEV_API_KEY in the review server environment to evaluate with Jev';
   const requested = state.mergeRequest && ['pending', 'working'].includes(state.mergeRequest.status);
@@ -134,7 +142,6 @@ function updateChrome() {
   $('#run').textContent = state.run?.last?.status === 'running' ? 'Running…' : 'Run…';
   $('#run').title = state.run?.available ? "Build and launch this worktree's app on a device or simulator" : 'The worktree for this review is gone or belongs to another branch';
   $('#refresh').disabled = state.job.status === 'running' || state.job.status === 'merged';
-  if (state.ranking?.status === 'done' && state.ranking.fallbacks) $('#ranking').textContent += ` · ${state.ranking.fallbacks} fallback`;
   const files = visibleFiles();
   $('#file-count').textContent = `${files.length} shown · ${state.files.filter(hidden).length} filtered`;
   $('#files').replaceChildren(...files.map(file => {
