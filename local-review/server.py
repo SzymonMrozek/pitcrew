@@ -33,7 +33,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.16.0'
+RELEASE = '0.16.1'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -728,9 +728,7 @@ SYSTEM_CA_FILES = ('/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt', '/
 
 def tls_context(system_ca_files=SYSTEM_CA_FILES):
     context = ssl.create_default_context()
-    if context.get_ca_certs():
-        return context
-    # Python.org builds ship without CA certificates until "Install Certificates" runs; add the system bundle.
+    # Python's own store can be empty (python.org builds before "Install Certificates") or stale; the system bundle joins it.
     for path in system_ca_files:
         try:
             context.load_verify_locations(cafile=path)
@@ -738,6 +736,16 @@ def tls_context(system_ca_files=SYSTEM_CA_FILES):
         except (OSError, ssl.SSLError):
             continue
     return context
+
+
+def error_detail(error, secret):
+    if not isinstance(error, OSError):
+        frame = error.__traceback__
+        while frame and frame.tb_next:
+            frame = frame.tb_next
+        return f'{type(error).__name__} at line {frame.tb_lineno if frame else 0}'
+    text = f'{type(error).__name__}: {error}'
+    return (text.replace(secret, '<JEV_API_KEY>') if secret else text)[:300]
 
 
 def fallback_reason(error):
@@ -2267,7 +2275,7 @@ class Review:
             raise ValueError('Importance instructions must be 1–6000 characters')
 
     def start_ranking(self):
-        if not self.auto_rank or not os.environ.get('JEV_API_KEY'):
+        if not self.auto_rank or not os.environ.get('JEV_API_KEY', '').strip():
             return
         if self.ranking['status'] == 'running':
             self.rank_again = True
@@ -2276,7 +2284,7 @@ class Review:
         threading.Thread(target=self.rank, daemon=True).start()
 
     def rank(self):
-        key = os.environ.get('JEV_API_KEY')
+        key = os.environ.get('JEV_API_KEY', '').strip()
         if not key:
             raise ValueError('JEV_API_KEY is missing from the review server environment.')
         context = None
@@ -2322,7 +2330,7 @@ class Review:
                         raise ValueError('Invalid score')
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     reason = fallback_reason(error)
-                    details.setdefault(reason, f'{type(error).__name__}: {error}'[:300])
+                    details.setdefault(reason, error_detail(error, key))
                     return reason
                 values = {name: max(values[name], v) for name, v in part_values.items()}
             with self.lock:
@@ -2349,7 +2357,7 @@ class Review:
                     self.rank_again = False
                     self.start_ranking()
         except Exception as error:
-            print(f'Jev ranking failed: {type(error).__name__}: {error}'[:400], file=sys.stderr, flush=True)
+            print(f'Jev ranking failed: {error_detail(error, key)}', file=sys.stderr, flush=True)
             with self.lock:
                 self.ranking = {'status': 'done', 'fallbacks': len(self.files), 'reasons': {'ranking failed': len(self.files)}}
 

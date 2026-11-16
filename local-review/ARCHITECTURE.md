@@ -171,11 +171,13 @@ Each of these cost real debugging time.
 - **The Python that launched the server decides which CAs it trusts.** A
   python.org build has no CA bundle until its "Install Certificates" step runs,
   so every Jev request failed TLS verification and every file silently kept its
-  fallback score. When Python's default context has no certificates, the server
-  loads the system bundle (`/etc/ssl/cert.pem` and the usual Linux paths). Each
+  fallback score. Jev requests trust the system bundle (`/etc/ssl/cert.pem` or
+  the usual Linux paths) alongside Python's own store, empty or stale. Each
   run's `ranking` state counts fallbacks by reason (TLS, HTTP status, timeout,
   connection, invalid answer, or a diff kept local), the page shows them beside
-  the fallback count, and the server log names them, never the key or a diff.
+  the fallback count, and the server log names them. Log details come only from
+  network errors, with the key redacted; other errors log their type and line,
+  because a malformed key ends up inside `http.client`'s `ValueError` text.
 - **Git LFS pointers aren't images.** Compare the LFS objects when they're
   present locally. Report missing ones; never fetch them.
 - **A simulator recording is only a movie once it's interrupted.**
