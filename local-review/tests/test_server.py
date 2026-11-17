@@ -3236,7 +3236,8 @@ class AgentReviewTests(unittest.TestCase):
             self.write('Interactor.swift', '// Inserted after the snapshot\nlet value = 3\nlet limit = 11\n')
             self.review.refresh()
             return tree
-        with patch.object(self.review, 'snapshot', side_effect=change_after_capture):
+        with (patch.object(self.review, 'snapshot', side_effect=change_after_capture),
+              patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}')):
             record = self.review.start_agent_review()
         self.run_reviewer(record, self.report({'line': 2}))
         comment = self.review.session['comments'][0]
@@ -3259,7 +3260,8 @@ class AgentReviewTests(unittest.TestCase):
         self.git('-C', submodule, 'commit', '-am', 'feat(test): second release')
         reviewed = self.git('-C', submodule, 'rev-parse', 'HEAD')
         self.review.refresh()
-        record = self.review.start_agent_review()
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            record = self.review.start_agent_review()
         self.write(path, '// Live file changed\nlet header = 0\nlet value = 3\n')
         self.run_reviewer(record, self.report({'path': path, 'line': 2}))
         comment = self.review.session['comments'][0]
