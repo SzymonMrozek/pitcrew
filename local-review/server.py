@@ -33,7 +33,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.16.1'
+RELEASE = '0.16.2'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -2006,23 +2006,38 @@ class Review:
         return provider, cli
 
     def start_agent_review(self, scope='iteration'):
-        """Start a read-only reviewer agent on this interaction's changes, or reuse one for identical content."""
+        """Start or retrieve the read-only review for this interaction."""
+        with (self.store / f'{self.session_id}.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            session = read_json(self.store / f'{self.session_id}.json', self.session)
+            return self._start_agent_review(scope, session)
+
+    def _start_agent_review(self, scope, session):
         if not self.worktree_available():
             raise ValueError('Agent review needs the live worktree')
-        # Right after finishing, the interaction under review is the latest one.
-        pending = self.session.get('pendingIteration') or (self.session['iterations'] or [None])[-1]
+        pending = session.get('pendingIteration')
+        interaction = pending or (session['iterations'] or [None])[-1]
+        reviews = self.agent_reviews()
+        if interaction and (pending or scope == 'iteration'):
+            started = interaction.get('startedAt', '')
+            finished = interaction.get('finishedAt')
+            reviews = [r for r in reviews if r['startedAt'] >= started
+                       and (not finished or r['startedAt'] <= finished or r['scope'] == 'iteration')]
+            existing = next((r for r in reversed(reviews) if r['reviewed'] and r['status'] in ('running', 'finished')), None)
+            if existing:
+                return existing
         after = self.snapshot('agent-review')
-        if scope == 'iteration' and pending:
-            before, label = pending['before'], 'the changes made during the current user request'
+        if scope == 'iteration' and interaction:
+            before, label = interaction['before'], 'the changes made during the current user request'
         else:
             before, label, scope = self.base, f'the full branch against its merge base with {self.target}', 'full'
         scoped = self.capture(before, after)[3]
         revision = digest(json.dumps([scope, [(f['path'], f['fingerprint']) for f in scoped]]).encode())
-        latest = (self.agent_reviews() or [None])[-1]
+        latest = reviews[-1] if reviews else None
         if latest and latest['revision'] == revision and latest['status'] in ('running', 'finished'):
             return latest
         reviewed = reviewable(scoped)
-        author = ((pending or {}).get('agent') or self.origin_agent() or {}).get('provider')
+        author = ((interaction or {}).get('agent') or self.origin_agent() or {}).get('provider')
         provider, cli = self.agent_reviewer(author)
         review_id = secrets.token_hex(8)
         path = self.store / 'agent-reviews' / f'{self.session_id}-{review_id}.json'
@@ -2035,7 +2050,7 @@ class Review:
         files = {f['path']: {'id': f['id'], 'fingerprint': f['fingerprint'], 'lines': len(blobs[f['id']]['new'].decode(errors='replace').splitlines())}
                  for f in view if f['path'] in reviewed}
         record = {'id': review_id, 'path': str(path), 'sessionId': self.session_id, 'scope': scope, 'commentScope': comment_scope, 'label': label,
-                  'request': (pending or {}).get('request', ''), 'revision': revision, 'reviewer': provider, 'cli': cli,
+                  'request': (interaction or {}).get('request', ''), 'revision': revision, 'reviewer': provider, 'cli': cli,
                   'author': author, 'reviewed': reviewed, 'diff': str(diff), 'log': str(path.with_suffix('.log')), 'files': files,
                   'status': 'running' if reviewed else 'finished', 'startedAt': datetime.now(timezone.utc).isoformat(),
                   'summary': '' if reviewed else 'No reviewable changes.', 'findings': []}
@@ -2169,15 +2184,12 @@ class Review:
         changed = reviewable(self.capture(pending['before'], after)[3])
         if not changed:
             return  # Generated code and images only; the reviewer is never given those.
-        # The latest review stands for the interaction: a later failure isn't covered by an earlier success. Fixes to files
-        # it reviewed don't need another review, or answering findings would never end; files it never saw do.
-        latest = next((r for r in reversed(reviews) if r['startedAt'] >= pending.get('startedAt', '')), None)
-        unseen = sorted(set(changed) - set(latest.get('reviewed') or [])) if latest and latest['status'] == 'finished' else changed
-        if unseen:
-            raise ValueError(f'This interaction changed {", ".join(unseen[:5])}{" and others" if len(unseen) > 5 else ""} without a finished agent review of '
-                             + ('them' if len(unseen) > 1 else 'it') + '. Run --agent-review and answer its findings'
-                             + (f'; the last review failed: {latest["summary"]}' if latest and latest['status'] == 'failed' else '')
-                             + '. If no reviewer can run, record why with --skip-agent-review "<reason>".')
+        current = [r for r in reviews if r['startedAt'] >= pending.get('startedAt', '') and r['reviewed']]
+        if any(r['status'] == 'finished' for r in current):
+            return
+        failure = f'; the last review failed: {current[-1]["summary"]}' if current and current[-1]['status'] == 'failed' else ''
+        raise ValueError('This interaction has changes without a finished agent review. Run --agent-review and answer its findings'
+                         + failure + '. If no reviewer can run, record why with --skip-agent-review "<reason>".')
 
     def skip_agent_review(self, reason):
         if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000:
@@ -3366,8 +3378,8 @@ def main():
                 print(f'The reviewer is still running. Run {launcher(config)} --base {args.base} --agent-review {record["scope"]} again to keep waiting.', file=sys.stderr)
             elif record['findings']:
                 print(f'Fix each important finding, then answer every finding with {launcher(config)} --base {args.base} '
-                      '--reply-comment <id> --reply "<what changed>" --resolve, or reply without --resolve to explain why not. '
-                      'Run --agent-review again after substantial fixes.', file=sys.stderr)
+                      '--reply-comment <id> --reply "<what changed>" --resolve, or reply without --resolve to explain why not.',
+                      file=sys.stderr)
             return
         if not args.merge_request and not args.execute_merge_request:
             review.record_agent()
