@@ -706,6 +706,7 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
 .comment .sent {color:var(--muted)}
 .comment.agent-finding {border-left:3px solid var(--muted)}
 .comment.agent-finding.important {border-left-color:#e5534b}
+.comment .agent-review-badge {display:inline-block;margin-bottom:5px;padding:2px 6px;border:1px solid #545789;border-radius:4px;background:#2d3053;color:#cdd1ff;font-size:11px;font-weight:650}
 .comment-reply {margin:8px 0 0 12px;padding-left:10px;border-left:2px solid var(--border)}
 .comment-reply p {margin:2px 0 0}
 #merge-request-status > span {flex:1;white-space:pre-wrap;max-height:120px;overflow:auto}

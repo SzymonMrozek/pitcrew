@@ -55,6 +55,13 @@ function filterReason(file) {
 }
 function hidden(file) {return Boolean(filterReason(file));}
 function viewed(file) {return state.session.viewed[file.id] === file.fingerprint;}
+function visibleComments() {
+  const comments = state.session.comments;
+  return $('#hide-agent-comments').checked ? comments.filter(comment => comment.author?.kind !== 'agent-review') : comments;
+}
+function commentAnchor(comment) {
+  return comment.author?.kind === 'agent-review' ? comment.line : (comment.endLine ?? comment.line);
+}
 function isSnapshot(file) {return file.kind === 'snapshot' && file.image;}
 function filesInTab() {
   if (tab !== 'snapshot') return state.files;
@@ -127,7 +134,7 @@ function updateChrome() {
   $('#snapshot-appearance').hidden = tab !== 'snapshot';
   $('#demo-count').textContent = state.demos.items.length;
   $('[data-tab="demos"]').classList.toggle('attention', demoMissing(state.demos));
-  $('#comment-count').textContent = state.session.comments.filter(c => !c.resolved).length;
+  $('#comment-count').textContent = visibleComments().filter(c => !c.resolved).length;
   $('#ranking').textContent = rankingLabel(state.files, state.ranking);
   $('#rank').disabled = !state.jevAvailable || state.ranking?.status === 'running';
   $('#rank').title = state.jevAvailable ? 'Evaluate uncached changes with Jev' : 'Set JEV_API_KEY in the review server environment to evaluate with Jev';
@@ -433,6 +440,8 @@ async function renderFile(file, main, current) {
   if (!current()) return;
   main.replaceChildren();
   main.append(metadataNode(file));
+  const fileComments = visibleComments().filter(comment => comment.file === id);
+  const inline = fileComments.filter(comment => comment.side !== 'file' && !comment.sourceCommit && comment.fingerprint === file.fingerprint);
   const shown = {old: new Set(), new: new Set()};
   if (file.image) {
     const tools = el('div', 'snapshot-tools');
@@ -489,13 +498,15 @@ async function renderFile(file, main, current) {
           row.append(cell);
         });
         box.append(row);
-        for (const comment of state.session.comments.filter(c => c.file === file.id && c.fingerprint === file.fingerprint && c.side !== 'file' && ((c.side === 'old' && pair.left?.old === (c.endLine ?? c.line)) || (c.side === 'new' && (pair.right || pair.left)?.new === (c.endLine ?? c.line))))) box.append(commentNode(comment));
+        for (const comment of inline) {
+          if (Number(row.dataset[comment.side]) === commentAnchor(comment)) box.append(commentNode(comment));
+        }
       }); main.append(box);
       markNavigationLinks(box);
     }
   }
   // Comments on collapsed context lines stay visible below the diff until their lines are expanded.
-  const comments = state.session.comments.filter(c => c.file === id && (file.image || c.side === 'file' || c.fingerprint !== file.fingerprint || !shown[c.side]?.has(c.endLine ?? c.line)));
+  const comments = fileComments.filter(c => !inline.includes(c) || !shown[c.side]?.has(commentAnchor(c)));
   if (comments.length) {main.append(el('h2', 'comments-title', 'File comments')); comments.forEach(c => main.append(commentNode(c)));}
   main.style.height = ''; main.ready = true;
   if (scrollTarget) {
@@ -580,20 +591,37 @@ function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
   const finding = comment.author?.kind === 'agent-review', speaker = provider => provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Agent';
   const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : '') + (finding ? ` agent-finding ${comment.severity}` : ''));
-  if (finding) node.dataset.content = `agent-review:${comment.id}`;
+  if (finding) {
+    node.dataset.content = `agent-review:${comment.id}`;
+    node.append(el('span', 'agent-review-badge', 'Agent review'));
+  }
   node.append(button(comment.resolved ? 'Reopen' : 'Resolve', async () => {state = await api('resolve', {id: comment.id, resolved: !comment.resolved}); await updateFileComments(comment.file);}));
   const location = button(`${comment.path}${comment.line ? `:${comment.line}${comment.endLine && comment.endLine !== comment.line ? `–${comment.endLine}` : ''}` : ''}`, async () => {
+    if (comment.sourceCommit) {
+      const source = await api('comment-source?id=' + encodeURIComponent(comment.id));
+      await openSource(comment.path, comment.line, true, source);
+      return;
+    }
     await showInDiff(file, stale || comment.side === 'file' ? 0 : comment.line, comment.side);
     if (stale) notice('This comment is outdated; opened the current file. Its original line may have moved.');
   }, 'comment-location');
-  location.disabled = !file;
-  location.title = !file ? 'This file is no longer in the selected review scope' : stale ? 'Open the current file; the comment refers to an outdated revision' : 'Show this comment’s location in the diff';
+  location.disabled = !file && !comment.sourceCommit;
+  location.title = comment.sourceCommit ? 'Open this line at the reviewed submodule commit' : !file ? 'This file is no longer in the selected review scope' : stale ? 'Open the current file; the comment refers to an outdated revision' : 'Show this comment’s location in the diff';
   node.append(location);
-  node.append(el('small', '', `${finding ? `${speaker(comment.author.provider)} review · ${comment.severity} · ${comment.category} · ` : ''}${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${!file ? ' · not in this diff' : stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text));
+  node.append(el('small', '', `${finding ? `${speaker(comment.author.provider)} · ${comment.severity} · ${comment.category} · ` : ''}${comment.side}${comment.line ? ` line${(comment.endLine ?? comment.line) !== comment.line ? 's' : ''} ${comment.line}${(comment.endLine ?? comment.line) !== comment.line ? `–${comment.endLine}` : ''}` : ''}${!file ? ' · not in this diff' : stale ? ' · outdated revision' : ''}${comment.sentAt ? ' · sent to agent' : ''}`), el('p', '', comment.text));
   for (const reply of comment.replies || []) {const answer = el('div', 'comment-reply'); answer.append(el('small', '', `${speaker(reply.provider)} replied`), el('p', '', reply.text)); node.append(answer);}
   return node;
 }
-function renderComments() {feedObserver?.disconnect(); ++renderVersion; const main = $('#content'); main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {const data = await api('export'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);})); if (!state.session.comments.length) main.append(el('div', 'empty', 'Click a line number or drag across line numbers to leave an inline comment.')); state.session.comments.forEach(c => main.append(commentNode(c)));}
+function renderComments() {
+  feedObserver?.disconnect(); ++renderVersion;
+  const main = $('#content'), comments = visibleComments();
+  main.replaceChildren(el('h1', '', 'Review comments'), button('Export comments', async () => {
+    const data = await api('export'), url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'}));
+    const link = el('a'); link.href = url; link.download = 'review-comments.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }));
+  if (!comments.length) main.append(el('div', 'empty', state.session.comments.length ? 'Agent review comments are hidden.' : 'Click a line number or drag across line numbers to leave an inline comment.'));
+  comments.forEach(comment => main.append(commentNode(comment)));
+}
 function statsTable(heading, rows, max) {
   const table = el('table', 'stats-table'), head = el('tr');
   head.append(...[heading, 'Files', 'Added', 'Removed', 'Net', ''].map(text => el('th', '', text)));
@@ -964,7 +992,7 @@ $('#run').onclick = () => {$('#run-dialog').showModal(); renderRun(); run(loadRu
 $('#run-reload').onclick = () => run(loadRunDestinations);
 $('#run-cancel').onclick = () => run(async () => {state = await api('run/cancel', {}); updateChrome(); renderRun();});
 $('#rank').onclick = () => run(async () => {state = await api('rank', {}); updateChrome();});
-for (const id of ['search', 'show-hidden', 'only-unviewed', 'snapshot-appearance']) $('#' + id).addEventListener(id === 'search' ? 'input' : 'change', () => run(() => load()));
+for (const id of ['search', 'show-hidden', 'only-unviewed', 'snapshot-appearance', 'hide-agent-comments']) $('#' + id).addEventListener(id === 'search' ? 'input' : 'change', () => run(() => load()));
 $('#mode').onchange = () => run(async () => {state = await api('settings', {diffMode: $('#mode').value}); await load();});
 document.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => run(async () => {tab = node.dataset.tab; await load();}));
 document.querySelectorAll('[data-close]').forEach(node => node.onclick = () => node.closest('dialog').close());
@@ -1172,11 +1200,11 @@ async function sourceFor(path) {
   if (!sources.has(path)) sources.set(path, api('source?path=' + encodeURIComponent(path)).catch(error => {sources.delete(path); throw error;}));
   return sources.get(path);
 }
-async function openSource(path, line, remember = true) {
-  const source = await sourceFor(path), dialog = $('#source-dialog');
-  if (remember) sourceHistory.push({path, line});
+async function openSource(path, line, remember = true, pinnedSource = null) {
+  const source = pinnedSource || await sourceFor(path), dialog = $('#source-dialog');
+  if (remember) sourceHistory.push({path, line, pinnedSource});
   $('#source-name').textContent = path.split('/').pop();
-  $('#source-path').textContent = `${path}:${line} · current worktree`;
+  $('#source-path').textContent = `${path}${line ? ':' + line : ''} · ${pinnedSource ? 'reviewed commit ' + source.commit.slice(0, 8) : 'current worktree'}`;
   const module = moduleFor(path), moduleSlot = $('#source-module');
   moduleSlot.replaceChildren(); if (module) moduleSlot.append(el('span', `module-tag module-color-${moduleColorMap.get(module.name) ?? 0}`, moduleLabel(module)));
   $('#source-back').disabled = sourceHistory.length < 2;
@@ -1190,11 +1218,11 @@ async function openSource(path, line, remember = true) {
     row.append(el('span', 'source-number', index + 1), codeNode(highlighted[index], text, language));
     return row;
   }));
-  markNavigationLinks(body);
+  if (!pinnedSource) markNavigationLinks(body);
   if (!dialog.open) dialog.showModal();
   body.querySelector('.target-line')?.scrollIntoView({block: 'center'});
 }
-$('#source-back').onclick = () => run(async () => {sourceHistory.pop(); const previous = sourceHistory.at(-1); if (previous) await openSource(previous.path, previous.line, false);});
+$('#source-back').onclick = () => run(async () => {sourceHistory.pop(); const previous = sourceHistory.at(-1); if (previous) await openSource(previous.path, previous.line, false, previous.pinnedSource);});
 $('#source-dialog').addEventListener('close', () => {sourceHistory = []; closeDefinitionMenu();});
 async function showInDiff(file, line, side = 'new') {
   $('#source-dialog').close(); $('#search-dialog').close();

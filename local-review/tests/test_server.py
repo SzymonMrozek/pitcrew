@@ -3171,7 +3171,7 @@ class AgentReviewTests(unittest.TestCase):
     def run_reviewer(self, record, report, provider='claude'):
         calls, real_run = [], subprocess.run
         def reviewer(command, **options):
-            if command[0] == 'git':
+            if Path(command[0]).name == 'git':
                 return real_run(command, **options)
             calls.append((command, options))
             if provider == 'codex':
@@ -3227,6 +3227,47 @@ class AgentReviewTests(unittest.TestCase):
         self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', description)
         with self.assertRaisesRegex(ValueError, 'Unknown comment'):
             self.review.reply_comment('missing', 'Text')
+
+    def test_findings_use_the_frozen_after_tree_even_if_the_live_file_changes(self):
+        old_fingerprint = self.review.files[0]['fingerprint']
+        snapshot = self.review.snapshot
+        def change_after_capture(name):
+            tree = snapshot(name)
+            self.write('Interactor.swift', '// Inserted after the snapshot\nlet value = 3\nlet limit = 11\n')
+            self.review.refresh()
+            return tree
+        with patch.object(self.review, 'snapshot', side_effect=change_after_capture):
+            record = self.review.start_agent_review()
+        self.run_reviewer(record, self.report({'line': 2}))
+        comment = self.review.session['comments'][0]
+        self.assertEqual((comment['line'], comment['fingerprint']), (2, old_fingerprint))
+        self.assertNotEqual(comment['fingerprint'], self.review.files[0]['fingerprint'])
+
+    def test_submodule_findings_open_the_line_from_the_reviewed_commit(self):
+        submodule, path = 'Tools/Dependency', 'Tools/Dependency/Source.swift'
+        self.git('init', '-b', 'main', submodule)
+        self.git('-C', submodule, 'config', 'user.name', 'Test')
+        self.git('-C', submodule, 'config', 'user.email', 'test@example.com')
+        self.write(path, 'let header = 0\nlet value = 1\n')
+        self.git('-C', submodule, 'add', '.')
+        self.git('-C', submodule, 'commit', '-m', 'feat(test): first release')
+        first = self.git('-C', submodule, 'rev-parse', 'HEAD')
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{first},{submodule}')
+        self.git('commit', '-m', 'chore(test): pin first release')
+        self.git('branch', '-f', 'main', 'HEAD')
+        self.write(path, 'let header = 0\nlet value = 2\n')
+        self.git('-C', submodule, 'commit', '-am', 'feat(test): second release')
+        reviewed = self.git('-C', submodule, 'rev-parse', 'HEAD')
+        self.review.refresh()
+        record = self.review.start_agent_review()
+        self.write(path, '// Live file changed\nlet header = 0\nlet value = 3\n')
+        self.run_reviewer(record, self.report({'path': path, 'line': 2}))
+        comment = self.review.session['comments'][0]
+        self.assertEqual((comment['path'], comment['line'], comment['sourceCommit']), (path, 2, reviewed))
+        self.assertEqual(self.review.file(comment['file'])['path'], submodule)
+        self.assertEqual(self.review.comment_source(comment['id'], 'full'), {'lines': ['let header = 0', 'let value = 2'], 'commit': reviewed})
+        with self.assertRaisesRegex(ValueError, 'has no pinned source'):
+            self.review.comment_source(comment['id'], 'turn-1')
 
     def test_identical_content_reuses_the_review_and_codex_reviews_in_a_read_only_sandbox(self):
         self.review.config['agent-review']['reviewer'] = 'codex'

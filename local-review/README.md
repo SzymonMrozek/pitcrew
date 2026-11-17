@@ -302,10 +302,13 @@ review tool. Claude runs in restricted mode with only Read, Glob and Grep, and
 ignores your settings files, so their allow rules can't widen that. Codex runs
 in its read-only sandbox. Both return findings through a JSON schema.
 
-Each finding becomes a comment on the Full review, tagged with the reviewer,
-**important** or **nit**, and its pass. Nits are capped (5 by default). A
-finding about a file outside the diff, such as a caller, is a file comment
-marked **not in this diff**. The command waits up to `--wait` seconds (540 by default) and prints
+Each finding becomes a comment on the Full review with an **Agent review**
+badge, the reviewer, severity, and pass. **Hide agent reviews** hides these
+comments in the feeds and Comments tab. Nits are capped (5 by default).
+Click a finding's location to jump to the reported line. For a finding
+inside a changed submodule, the link opens the exact source at the commit
+the reviewer saw. A finding about a file outside the diff, such as a caller,
+is marked **not in this diff**. The command waits up to `--wait` seconds (540 by default) and prints
 the result as JSON. The reviewer runs detached, so a shell timeout doesn't stop
 it; run the command again to keep waiting. Identical content reuses the
 previous review instead of starting another.

@@ -628,12 +628,28 @@ test('agent review findings show their reviewer, severity and the author replies
   const finding = context.commentNode(comment);
   assert.equal(finding.className, 'comment agent-finding important');
   assert.equal(finding.dataset.content, 'agent-review:finding');
-  assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude review · important · bugs · new line 4');
+  assert.equal(finding.children.find(child => child.className === 'agent-review-badge').textContent, 'Agent review');
+  assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude · important · bugs · new line 4');
   const reply = finding.children.find(child => child.className === 'comment-reply');
   assert.deepEqual(reply.children.map(child => child.textContent), ['Codex replied', 'Read it in the interactor.']);
   const plain = context.commentNode({...comment, author: undefined, replies: undefined});
   assert.equal(plain.className, 'comment');
+  assert.equal(plain.children.some(child => child.className === 'agent-review-badge'), false);
   assert.equal(plain.children.find(child => child.tag === 'small').textContent, 'new line 4');
+});
+
+test('the agent review filter keeps human comments and findings anchor at the start of their range', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function visibleComments('), source.indexOf('function isSnapshot('));
+  const human = {side: 'new', line: 2, endLine: 4}, agent = {...human, author: {kind: 'agent-review'}};
+  const control = {checked: false};
+  const context = vm.createContext({state: {session: {comments: [human, agent]}}, $: () => control});
+  vm.runInContext(fn, context);
+  assert.deepEqual(context.visibleComments(), [human, agent]);
+  control.checked = true;
+  assert.deepEqual(Array.from(context.visibleComments()), [human]);
+  assert.equal(context.commentAnchor(agent), 2);
+  assert.equal(context.commentAnchor(human), 4);
 });
 
 test('diff jumps reveal filtered and viewed files, expand context, and skip text APIs for file comments', async () => {
