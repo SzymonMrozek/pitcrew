@@ -3271,10 +3271,11 @@ class AgentReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'has no pinned source'):
             self.review.comment_source(comment['id'], 'turn-1')
 
-    def test_identical_content_reuses_the_review_and_codex_reviews_in_a_read_only_sandbox(self):
+    def test_an_interaction_reuses_its_review_after_edits_and_codex_runs_read_only(self):
         self.review.config['agent-review']['reviewer'] = 'codex'
         first = self.review.start_agent_review()
-        self.assertEqual(self.review.start_agent_review()['id'], first['id'])
+        self.write('Interactor.swift', 'let value = 3\n')
+        self.assertEqual(self.review.start_agent_review('full')['id'], first['id'])
         self.assertEqual(len(self.launches), 1)
         (command, _), record = self.run_reviewer(first, self.report(), provider='codex')
         self.assertEqual(command[:2], ['/fake/codex', 'exec'])
@@ -3282,11 +3283,7 @@ class AgentReviewTests(unittest.TestCase):
         self.assertIn('--output-schema', command)
         self.assertEqual((record['status'], record['findings']), ('finished', []))
         self.assertEqual(self.review.start_agent_review()['id'], first['id'])
-        self.write('Interactor.swift', 'let value = 3\n')
-        self.review.refresh()
-        # Refreshing reloads the configuration from disk.
-        self.review.config['agent-review']['reviewer'] = 'codex'
-        self.assertNotEqual(self.review.start_agent_review()['id'], first['id'])
+        self.assertEqual(len(self.launches), 1)
 
     def test_a_missing_reviewer_cli_is_an_error_never_a_same_provider_review_and_failures_are_reported(self):
         with patch.object(m.shutil, 'which', return_value=None), self.assertRaisesRegex(ValueError, 'claude CLI is unavailable.*--skip-agent-review'):
@@ -3334,6 +3331,18 @@ class AgentReviewTests(unittest.TestCase):
         _, record = self.run_reviewer(record, self.report({'text': 'First nit'}, {'text': 'Second nit'}, {'severity': 'important', 'text': 'Bug'}))
         self.assertEqual([f['text'] for f in record['findings']], ['Bug', 'First nit'])
 
+    def test_review_started_after_finish_can_be_retrieved_and_full_scope_stays_separate(self):
+        self.review.finish_iteration('turn-1', 'Done', 'feat(test): configure value', 'Configurable value.')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            iteration = self.review.start_agent_review()
+            self.assertEqual(self.review.start_agent_review()['id'], iteration['id'])
+            self.assertEqual(len(self.launches), 1)
+            full = self.review.start_agent_review('full')
+        self.assertEqual(full['scope'], 'full')
+        self.assertNotEqual(full['id'], iteration['id'])
+        self.assertEqual(self.review.start_agent_review()['id'], iteration['id'])
+        self.assertEqual(len(self.launches), 2)
+
     def test_reports_are_parsed_from_either_cli_and_malformed_findings_are_dropped(self):
         report = {'summary': 'Two findings.', 'findings': [{'path': 'A.swift', 'line': 3, 'endLine': None, 'severity': 'important', 'category': 'security', 'text': 'Leak'},
                                                            {'path': 'A.swift', 'line': 'three', 'endLine': None, 'severity': 'nit', 'category': 'bugs', 'text': 'Bad line'}]}
@@ -3361,17 +3370,13 @@ class AgentReviewTests(unittest.TestCase):
         with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
             record = self.review.start_agent_review()
         self.run_reviewer(record, self.report())
-        self.write('Interactor.swift', 'let value = 2\nlet limit = 20\n')
-        self.review.refresh()
-        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
-            replacement = self.review.start_agent_review()
-        with patch.object(m.subprocess, 'run', side_effect=failing):
-            self.review.run_agent_review(replacement['path'])
-        with self.assertRaisesRegex(ValueError, 'last review failed'):
-            finish()
-        self.review.skip_agent_review('Both reviewer CLIs are over quota.')
         finish()
-        self.assertEqual(self.review.session['iterations'][0]['agentReviewSkipped'], 'Both reviewer CLIs are over quota.')
+
+        self.review.begin_iteration('turn-2', 'Revise the value')
+        self.write('Interactor.swift', 'let value = 3\nlet limit = 20\n')
+        self.review.skip_agent_review('Both reviewer CLIs are over quota.')
+        self.review.finish_iteration('turn-2', 'Done', 'feat(test): configure value', 'Configurable value.')
+        self.assertEqual(self.review.session['iterations'][1]['agentReviewSkipped'], 'Both reviewer CLIs are over quota.')
         with self.assertRaisesRegex(ValueError, 'Begin the user interaction'):
             self.review.skip_agent_review('No interaction')
 
@@ -3387,7 +3392,7 @@ class AgentReviewTests(unittest.TestCase):
             empty = self.review.start_agent_review()
         self.assertEqual((empty['status'], empty['reviewed']), ('finished', []))
         self.write('Interactor.swift', 'let value = 2\nlet maximum = 10\n')
-        with self.assertRaisesRegex(ValueError, 'changed Interactor.swift without a finished agent review of it'):
+        with self.assertRaisesRegex(ValueError, 'without a finished agent review'):
             finish('turn-3')
         with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
             record = self.review.start_agent_review()
@@ -3402,13 +3407,9 @@ class AgentReviewTests(unittest.TestCase):
             record = self.review.start_agent_review()
         self.run_reviewer(record, self.report())
         self.write('LimitStore.swift', 'struct LimitStore {}\n')
-        with self.assertRaisesRegex(ValueError, 'changed LimitStore.swift without'):
-            finish('turn-4')
-        self.review.begin_iteration('turn-4', 'Add a limit store')
-        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
-            record = self.review.start_agent_review()
-        self.run_reviewer(record, self.report())
+        self.assertEqual(self.review.start_agent_review()['id'], record['id'])
         finish('turn-4')
+        self.assertEqual(self.review.start_agent_review()['id'], record['id'])
         self.review.begin_iteration('turn-5', 'Regenerate messages')
         self.write('Messages.pb.swift', 'let generated = 2\n')
         finish('turn-5')
