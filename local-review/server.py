@@ -33,7 +33,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.16.1'
+RELEASE = '0.18.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -112,7 +112,9 @@ CONFIG = {
     # How people and agents invoke this CLI; merge agents receive commands built from it.
     'launcher': '',
     'files': {
-        'snapshot': [r'/__snapshots__/', r'\.(png|jpe?g|webp)$'],
+        'snapshot': [r'(^|/)__snapshots__/'],
+        'image': [r'\.(png|jpe?g|webp)$'],
+        'asset-metadata': [r'(^|/)[^/]+\.xcassets/(?:[^./]+/)*(?:[^/]+\.(?:imageset|appiconset)/)?Contents\.json$'],
         'localization': [r'\.lproj/', r'\.(strings|stringsdict|xcstrings)$', r'/generated/strings', r'(^|/)l10n\.swift$'],
         # Protocol Buffers and gRPC output (review the .proto change instead) and the Mix lockfile.
         'generated': [r'\.(pb|grpc)\.swift$', r'\.pb(\.gw)?\.go$', r'_pb2(_grpc)?\.pyi?$', r'\.pb\.(h|cc)$',
@@ -704,7 +706,7 @@ def thread_title(agent):
 
 
 def category(path, config=CONFIG):
-    for kind in ('snapshot', 'localization', 'generated', 'manifest', 'test', 'view'):
+    for kind in ('snapshot', 'image', 'asset-metadata', 'localization', 'generated', 'manifest', 'test', 'view'):
         if any(re.search(pattern, path, re.I) for pattern in config['files'][kind]):
             return kind
     return 'code'
@@ -763,15 +765,15 @@ def fallback_reason(error):
     return 'connection failed'
 
 
-def fallback_score(path, config=CONFIG):
+def fallback_score(path, config=CONFIG, *, comment_only=False):
     kind = category(path, config)
-    if kind in ('localization', 'generated', 'test', 'manifest'):
+    if comment_only or kind in ('localization', 'generated', 'test', 'manifest', 'asset-metadata'):
         return 10
     if floor := priority(path, config):
         return floor[1]
     if kind == 'view':
         return 25
-    if kind == 'snapshot':
+    if kind in ('snapshot', 'image'):
         return 40
     if config['files']['important'] and re.search(config['files']['important'], path, re.I):
         return 85
@@ -795,6 +797,18 @@ def diff_rows(old, new):
     if not rows and old != new:
         rows.append({'type': 'hunk', 'text': 'End-of-file newline or line endings changed', 'old': None, 'new': None})
     return rows
+
+
+def swift_comment_only(path, old, new, rows):
+    if not path.lower().endswith('.swift'):
+        return False
+    changed = [row['text'].strip() for row in rows if row['type'] in ('add', 'delete')]
+    if not any(changed) or not all(not line or line.startswith('//') for line in changed):
+        return False
+    if any(re.match(r'//+\s*(?:[\w-]+:|swift-format-ignore\b)', line) or '/*' in line or '*/' in line for line in changed):
+        return False  # Tool directives can change lint, formatting or generation.
+    # A line starting with // can be literal data inside a multiline string or regex.
+    return not any(marker in old or marker in new for marker in (b'"""', b'#/'))
 
 
 def summary_text(value, field, limit, prose=True):
@@ -834,13 +848,15 @@ def validate_change_summary(data):
             raise ValueError(f'focus must list at most {limits["focus"]} things for the reviewer to check')
         result['focus'] = [summary_text(item, f'focus[{index}]', limits['text']) for index, item in enumerate(focus, 1)]
     if (design := data.get('design')) is not None:
-        summary_fields(design, 'design', ('nodes', 'edges'))
+        summary_fields(design, 'design', ('title', 'nodes', 'edges'))
         nodes, edges = design.get('nodes'), design.get('edges', [])
         if not isinstance(nodes, list) or not 2 <= len(nodes) <= limits['nodes']:
             raise ValueError(f'design.nodes must list 2 to {limits["nodes"]} nodes')
         if not isinstance(edges, list) or len(edges) > limits['edges']:
             raise ValueError(f'design.edges must list at most {limits["edges"]} edges')
         result['design'] = {'nodes': [], 'edges': []}
+        if 'title' in design:
+            result['design']['title'] = summary_text(design['title'], 'design.title', limits['label'])
         for index, node in enumerate(nodes, 1):
             field = f'design.nodes[{index}]'
             summary_fields(node, field, ('id', 'label', 'kind', 'status', 'note', 'file'))
@@ -1061,11 +1077,14 @@ class Review:
             binary = image or b'\0' in old[:8192] + new[:8192]
             limited = not binary and max(len(old), len(new)) > MAX_TEXT
             rows = [] if binary or limited else diff_rows(old.decode(errors='replace'), new.decode(errors='replace'))
+            comment_only = (status == 'M' and old_entries[path][0] == mode and mode in (0o100644, 0o100755)
+                            and swift_comment_only(path, old, new, rows))
             patch = '\n'.join(('+' if row['type'] == 'add' else '-' if row['type'] == 'delete' else ' ') + row['text'] for row in rows)
             files.append({'id': file_id, 'path': path, 'status': status, 'kind': kind, 'image': image,
-                          'binary': binary, 'limited': limited, 'submoduleDirty': submodule_dirty, 'fingerprint': fingerprint, 'patch': patch,
-                          'rows': rows, 'added': sum(row['type'] == 'add' for row in rows),
-                          'deleted': sum(row['type'] == 'delete' for row in rows), 'score': fallback_score(path, self.config), 'scorer': 'Fallback'})
+                          'binary': binary, 'limited': limited, 'submodule': submodule, 'submoduleDirty': submodule_dirty, 'fingerprint': fingerprint, 'patch': patch,
+                          'rows': rows, 'added': sum(row['type'] == 'add' for row in rows), 'commentOnly': comment_only,
+                          'deleted': sum(row['type'] == 'delete' for row in rows),
+                          'score': fallback_score(path, self.config, comment_only=comment_only), 'scorer': 'Fallback'})
             blobs[file_id] = {'old': old, 'new': new}
         revision = digest(json.dumps([head, target_head, [(f['path'], f['fingerprint']) for f in files]]).encode())
         return head, target_head, base, files, blobs, revision
@@ -1161,6 +1180,8 @@ class Review:
     def apply_scores(self, files=None):
         files = self.files if files is None else files
         for file in files:
+            if file.get('commentOnly') or file['kind'] in ('asset-metadata', 'image'):
+                continue
             score = self.cache.get(self.score_key(file))
             if score is not None:
                 file.update(**score, scorer='Jev')
@@ -1779,6 +1800,27 @@ class Review:
             raise ValueError('Source file is too large or binary to preview')
         return {'path': path, 'lines': blob.decode(errors='replace').splitlines()}
 
+    def submodule_lines(self, submodule, commit, path):
+        prefix = submodule + '/'
+        directory = (self.repo / submodule).resolve()
+        if (not path.startswith(prefix) or not directory.is_relative_to(self.repo) or not directory.is_dir()
+                or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', commit)
+                or any(part in ('', '.', '..') for part in path[len(prefix):].split('/'))):
+            raise ValueError('The reviewed submodule source is unavailable')
+        if self.git('-C', str(directory), 'rev-parse', '--show-toplevel', check=False).strip() != str(directory):
+            raise ValueError('The reviewed submodule is no longer checked out')
+        blob = self.git('-C', str(directory), 'cat-file', 'blob', f'{commit}:{path[len(prefix):]}', binary=True)
+        if len(blob) > MAX_TEXT or b'\0' in blob[:8192]:
+            raise ValueError('The reviewed source file is too large or binary to preview')
+        return blob.decode(errors='replace').splitlines()
+
+    def comment_source(self, comment_id, iteration):
+        comment = next((c for c in self.session['comments'] if c['id'] == comment_id and c.get('scope', 'full') == (iteration or 'full')), None)
+        if not comment or not comment.get('sourceCommit'):
+            raise ValueError('This comment has no pinned source')
+        return {'lines': self.submodule_lines(comment['submodule'], comment['sourceCommit'], comment['path']),
+                'commit': comment['sourceCommit']}
+
     def search(self, query, scope='diff', match_case=False, iteration=None):
         if not isinstance(query, str) or not 1 <= len(query) <= 200 or '\0' in query or '\n' in query:
             raise ValueError('Search for 1–200 characters on one line')
@@ -2016,7 +2058,8 @@ class Review:
             before, label = pending['before'], 'the changes made during the current user request'
         else:
             before, label, scope = self.base, f'the full branch against its merge base with {self.target}', 'full'
-        scoped = self.capture(before, after)[3]
+        captured = self.capture(before, after)
+        scoped = captured[3]
         revision = digest(json.dumps([scope, [(f['path'], f['fingerprint']) for f in scoped]]).encode())
         latest = (self.agent_reviews() or [None])[-1]
         if latest and latest['revision'] == revision and latest['status'] in ('running', 'finished'):
@@ -2031,9 +2074,17 @@ class Review:
         diff.write_text(self.git('diff', '--no-ext-diff', '--no-renames', '--submodule=diff', before, after, '--', *reviewed) if reviewed else '')
         # Findings become comments on the Full review the page opens with, so they carry its file IDs and fingerprints.
         comment_scope = 'full'
-        view, blobs = self.view(comment_scope)[:2]
-        files = {f['path']: {'id': f['id'], 'fingerprint': f['fingerprint'], 'lines': len(blobs[f['id']]['new'].decode(errors='replace').splitlines())}
-                 for f in view if f['path'] in reviewed}
+        full = captured if before == self.base else self.capture(self.base, after)
+        files = {}
+        for file in full[3]:
+            if file['path'] not in reviewed:
+                continue
+            blob = full[4][file['id']]['new']
+            location = {'id': file['id'], 'fingerprint': file['fingerprint'],
+                        'lines': 0 if file['submodule'] else len(blob.decode(errors='replace').splitlines())}
+            if file['submodule']:
+                location['commit'] = blob.decode().strip()
+            files[file['path']] = location
         record = {'id': review_id, 'path': str(path), 'sessionId': self.session_id, 'scope': scope, 'commentScope': comment_scope, 'label': label,
                   'request': (pending or {}).get('request', ''), 'revision': revision, 'reviewer': provider, 'cli': cli,
                   'author': author, 'reviewed': reviewed, 'diff': str(diff), 'log': str(path.with_suffix('.log')), 'files': files,
@@ -2062,7 +2113,9 @@ class Review:
             'Read the surrounding code, callers, tests and repository instructions in the worktree whenever you need context.\n\n'
             f'Review instructions ({source}):\n{policy.strip()}\n\n'
             'Answer with JSON matching the schema. For each finding give the repository-relative path of a file in the diff, '
-            'the line on the new side (the current worktree file) it concerns, with endLine for a range, or null for the whole file, '
+            'the exact new-side line number from the supplied diff or source file, with endLine for a range, or null for the whole file. '
+            'For a change inside a submodule, give the full path from the parent repository and take line numbers only from '
+            'the supplied diff of the pinned commits. Use null if that diff does not show the line. '
             'severity important or nit, category bugs, security or compliance, and text saying what is wrong, why it matters and '
             f'how to fix it, in at most 120 words. Report at most {self.config["agent-review"]["nits"]} nits. '
             'Report only problems you can point to in the code, not guesses. An empty findings list is a valid answer. '
@@ -2121,13 +2174,27 @@ class Review:
             path = finding['path'].strip().removeprefix('./')
             if not path or path.startswith('/') or '..' in Path(path).parts:
                 continue
-            file = record['files'].get(path) or {'id': digest(path.encode('utf-8', 'surrogateescape'))[:20], 'fingerprint': '', 'lines': 0}
+            file = record['files'].get(path)
+            source = {}
+            if file is None:
+                for parent in Path(path).parents:
+                    submodule = parent.as_posix()
+                    if (entry := record['files'].get(submodule)) and (commit := entry.get('commit')):
+                        file = entry
+                        try:
+                            lines = self.submodule_lines(submodule, commit, path)
+                        except (OSError, ValueError, subprocess.SubprocessError):
+                            break
+                        file = {**entry, 'lines': len(lines)}
+                        source = {'submodule': submodule, 'sourceCommit': commit}
+                        break
+            file = file or {'id': digest(path.encode('utf-8', 'surrogateescape'))[:20], 'fingerprint': '', 'lines': 0}
             line, end = finding['line'], finding['endLine'] if finding['endLine'] is not None else finding['line']
             ranged = type(line) is int and type(end) is int and 1 <= line <= end <= file['lines']
             comments.append({'id': secrets.token_hex(8), 'file': file['id'], 'path': path, 'side': 'new' if ranged else 'file',
                              'line': line if ranged else 0, 'endLine': end if ranged else 0, 'text': text, 'resolved': False,
                              'fingerprint': file['fingerprint'], 'scope': record['commentScope'], 'severity': finding['severity'], 'category': finding['category'],
-                             'author': {'kind': 'agent-review', 'provider': record['reviewer'], 'review': record['id']}, 'replies': []})
+                             'author': {'kind': 'agent-review', 'provider': record['reviewer'], 'review': record['id']}, 'replies': [], **source})
         return comments
 
     def wait_agent_review(self, record, seconds):
@@ -2256,7 +2323,7 @@ class Review:
             return
         self.historical.clear()
         for file in self.files:
-            file.update(score=fallback_score(file['path'], self.config), scorer='Fallback')
+            file.update(score=fallback_score(file['path'], self.config, comment_only=file.get('commentOnly')), scorer='Fallback')
             file.pop('signals', None)
         self.apply_scores()
         self.start_ranking()
@@ -2295,8 +2362,8 @@ class Review:
                 if cache_key in self.cache:
                     return None
                 rubric = self.settings['rubric']
-            if file['kind'] == 'generated':
-                return None  # Regenerated output keeps its fallback score; the source schema carries the change.
+            if file.get('commentOnly') or file['kind'] in ('generated', 'asset-metadata', 'image'):
+                return None
             if re.search(r"\b(password|secret|credential|api[_-]?key|dsn)\b", file['patch'], re.I):
                 return 'sensitive diff kept local'
             if file['limited']:
@@ -3073,6 +3140,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, review.definition(query.get('name', [''])[0], query.get('language', ['swift'])[0]))
             elif url.path == '/api/source':
                 self.send(200, review.source(parse_qs(url.query).get('path', [''])[0]))
+            elif url.path == '/api/comment-source':
+                self.send(200, review.comment_source(parse_qs(url.query).get('id', [''])[0], iteration))
             elif url.path == '/api/search':
                 query = parse_qs(url.query)
                 self.send(200, review.search(query.get('q', [''])[0], query.get('scope', ['diff'])[0], query.get('case', [''])[0] == '1', iteration))

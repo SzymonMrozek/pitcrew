@@ -14,7 +14,9 @@ launcher = "mise run review --"
 
 # Replaces the default for that kind only. Checked in this order; anything else is code.
 [files]
-snapshot = ['/__snapshots__/', '\.(png|jpe?g|webp)$']
+snapshot = ['(^|/)__snapshots__/']
+image = ['\.(png|jpe?g|webp)$']
+asset-metadata = ['(^|/)[^/]+\.xcassets/(?:[^./]+/)*(?:[^/]+\.(?:imageset|appiconset)/)?Contents\.json$']
 localization = ['\.lproj/', '\.(strings|stringsdict|xcstrings)$']
 # Generated code ranks lowest, is hidden by default and never goes to the evaluator.
 generated = ['\.(pb|grpc)\.swift$', '_pb2\.py$']

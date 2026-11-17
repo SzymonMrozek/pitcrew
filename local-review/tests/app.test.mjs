@@ -337,6 +337,33 @@ test('filtered files explain matching defaults and custom exclusions', () => {
   assert.equal(context.filterReason({kind: 'generated', path: 'Sources/user.pb.swift'}), 'Generated code');
 });
 
+test('snapshot appearance filters the feed and keeps catalog images in Changes', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const filter = source.slice(source.indexOf('function isSnapshot('), source.indexOf('function pageTitle('));
+  const appearance = {value: 'all'};
+  const controls = {'#snapshot-appearance': appearance, '#search': {value: ''}, '#show-hidden': {checked: false}, '#only-unviewed': {checked: false}};
+  const files = [
+    {id: 'light', path: '__Snapshots__/home.light.png', kind: 'snapshot', image: true},
+    {id: 'dark', path: '__Snapshots__/home.DARK.1.png', kind: 'snapshot', image: true},
+    {id: 'untagged', path: '__Snapshots__/suite.dark/home.png', kind: 'snapshot', image: true},
+    {id: 'asset', path: 'Assets.xcassets/hero.dark.png', kind: 'image', image: true},
+    {id: 'text', path: '__Snapshots__/home.dark.txt', kind: 'snapshot', image: false},
+  ];
+  const context = vm.createContext({state: {files}, tab: 'snapshot', $: selector => controls[selector], hidden: () => false, viewed: file => file.id === 'dark'});
+  vm.runInContext(filter, context);
+  const ids = () => Array.from(context.visibleFiles(), file => file.id);
+  assert.deepEqual(ids(), ['light', 'dark', 'untagged']);
+  appearance.value = 'light';
+  assert.deepEqual(ids(), ['light']);
+  appearance.value = 'dark';
+  assert.deepEqual(ids(), ['dark']);
+  controls['#only-unviewed'].checked = true;
+  assert.deepEqual(ids(), []);
+  controls['#only-unviewed'].checked = false;
+  context.tab = 'all';
+  assert.deepEqual(ids(), ['light', 'dark', 'untagged', 'asset', 'text']);
+});
+
 
 test('offscreen comparisons preserve height and invalidate late responses across remounts', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
@@ -601,12 +628,28 @@ test('agent review findings show their reviewer, severity and the author replies
   const finding = context.commentNode(comment);
   assert.equal(finding.className, 'comment agent-finding important');
   assert.equal(finding.dataset.content, 'agent-review:finding');
-  assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude review · important · bugs · new line 4');
+  assert.equal(finding.children.find(child => child.className === 'agent-review-badge').textContent, 'Agent review');
+  assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude · important · bugs · new line 4');
   const reply = finding.children.find(child => child.className === 'comment-reply');
   assert.deepEqual(reply.children.map(child => child.textContent), ['Codex replied', 'Read it in the interactor.']);
   const plain = context.commentNode({...comment, author: undefined, replies: undefined});
   assert.equal(plain.className, 'comment');
+  assert.equal(plain.children.some(child => child.className === 'agent-review-badge'), false);
   assert.equal(plain.children.find(child => child.tag === 'small').textContent, 'new line 4');
+});
+
+test('the agent review filter keeps human comments and findings anchor at the start of their range', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function visibleComments('), source.indexOf('function isSnapshot('));
+  const human = {side: 'new', line: 2, endLine: 4}, agent = {...human, author: {kind: 'agent-review'}};
+  const control = {checked: false};
+  const context = vm.createContext({state: {session: {comments: [human, agent]}}, $: () => control});
+  vm.runInContext(fn, context);
+  assert.deepEqual(context.visibleComments(), [human, agent]);
+  control.checked = true;
+  assert.deepEqual(Array.from(context.visibleComments()), [human]);
+  assert.equal(context.commentAnchor(agent), 2);
+  assert.equal(context.commentAnchor(human), 4);
 });
 
 test('diff jumps reveal filtered and viewed files, expand context, and skip text APIs for file comments', async () => {

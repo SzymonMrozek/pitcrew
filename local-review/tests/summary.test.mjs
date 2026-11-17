@@ -46,6 +46,11 @@ test('module footprint and hotspots rank what to read first', () => {
   const moduleFor = path => path.startsWith('Modules/') ? {name: path.split('/')[1], group: 'Modules'} : null;
   assert.deepEqual(moduleFootprint(files, moduleFor).map(r => [r.name, r.files, r.added, r.deleted]), [['Login', 1, 30, 0], ['Home', 2, 11, 2], ['', 1, 5, 5]]);
   assert.deepEqual(hotspots(files, 2).map(f => f.path), ['Modules/Login/C.swift', 'Modules/Home/B.swift']);
+  const assets = [
+    {path: 'Hero.imageset/Hero.png', kind: 'image', score: 40, added: 0, deleted: 0},
+    {path: 'Hero.imageset/Contents.json', kind: 'asset-metadata', score: 10, added: 5, deleted: 0},
+  ];
+  assert.deepEqual(hotspots([...files, ...assets]).map(f => f.path), ['Modules/Login/C.swift', 'Modules/Home/B.swift', 'Modules/Home/A.swift']);
 });
 
 test('module graph drawings show changed dependencies and give up when too large', () => {
