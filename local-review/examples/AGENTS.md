@@ -63,8 +63,8 @@ reply.
 
 ## Agent review
 
-Before finishing an interaction that changed files, have a fresh reviewer
-agent review it:
+After validating an interaction that changed files, have a fresh reviewer
+agent review it once:
 
 ```bash
 review --agent-review
@@ -81,8 +81,8 @@ review --reply-comment <id> --reply "<what changed>" --resolve
 review --reply-comment <id> --reply "<why it stays as it is>"
 ```
 
-Run `review --agent-review` again after substantial fixes. Mention findings
-you disagreed with in your reply. `--finish-iteration` refuses to finish while
+After fixing and answering the findings, proceed to closing the interaction.
+Mention findings you disagreed with in your reply. `--finish-iteration` refuses to finish while
 a review is running or a finding has no answer, and, when the repository has a
 `REVIEW.md`, when the interaction changed files without a finished review. If
 no reviewer can run, for example both CLIs are over quota, record why with

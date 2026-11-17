@@ -310,8 +310,11 @@ inside a changed submodule, the link opens the exact source at the commit
 the reviewer saw. A finding about a file outside the diff, such as a caller,
 is marked **not in this diff**. The command waits up to `--wait` seconds (540 by default) and prints
 the result as JSON. The reviewer runs detached, so a shell timeout doesn't stop
-it; run the command again to keep waiting. Identical content reuses the
-previous review instead of starting another.
+it; run the command again to keep waiting. Each interaction gets one
+completed review. Calling the command again returns the same review even after
+the author edits the diff. If the reviewer fails to produce a report, the
+command can start a replacement. A standalone full-branch review remains
+available outside an open interaction.
 
 The author then fixes what's needed and answers every finding:
 
@@ -323,10 +326,8 @@ review --reply-comment <id> --reply "Kept: the API requires it."
 Replies appear under each comment on the page. `--finish-iteration` refuses
 to finish while a review is still running or any finding has no reply. When
 the repository has review instructions, it also refuses an interaction that
-changed files unless its latest agent review finished and saw every changed
-file except generated code and images, and says why the last one failed.
-Fixing files the review saw needs no new review, or answering findings would
-never end; a file it never saw does. If
+changed reviewable files unless its agent review finished, and says why the
+last attempt failed. The author applies fixes and closes the interaction. If
 no reviewer can run, `review --skip-agent-review "<reason>"` records why, and
 the interaction keeps the reason. Findings never approve or block a merge, and
 **Send to agent** leaves them out: they're the author's to answer. Your own
