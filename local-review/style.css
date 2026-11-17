@@ -890,6 +890,7 @@ header,.toolbar,.iteration-bar,#notice {flex-shrink:0}
 .summary-legend i.tags {display:none}
 .kind-code {background:#7f8cff} .kind-view {background:#c58af9} .kind-test {background:#57b8c9} .kind-snapshot {background:#e0a458}
 .kind-localization {background:#8e8e99} .kind-manifest {background:#d3c46b} .kind-generated {background:#5c5c66}
+.kind-image {background:#bd9c77} .kind-asset-metadata {background:#9aa7b9}
 .change-grid {display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:10px}
 .change-card {display:flex; flex-direction:column; gap:8px; padding:12px 14px; border:1px solid var(--border); border-left:4px solid var(--change); border-radius:8px; background:#1d1d21}
 .change-card.added {--change:#4f9e6e} .change-card.changed {--change:#c9a227} .change-card.removed {--change:#b5545f} .change-card.fixed {--change:#6c8cff}

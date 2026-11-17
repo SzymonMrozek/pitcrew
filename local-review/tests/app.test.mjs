@@ -337,6 +337,33 @@ test('filtered files explain matching defaults and custom exclusions', () => {
   assert.equal(context.filterReason({kind: 'generated', path: 'Sources/user.pb.swift'}), 'Generated code');
 });
 
+test('snapshot appearance filters the feed and keeps catalog images in Changes', () => {
+  const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
+  const filter = source.slice(source.indexOf('function isSnapshot('), source.indexOf('function pageTitle('));
+  const appearance = {value: 'all'};
+  const controls = {'#snapshot-appearance': appearance, '#search': {value: ''}, '#show-hidden': {checked: false}, '#only-unviewed': {checked: false}};
+  const files = [
+    {id: 'light', path: '__Snapshots__/home.light.png', kind: 'snapshot', image: true},
+    {id: 'dark', path: '__Snapshots__/home.DARK.1.png', kind: 'snapshot', image: true},
+    {id: 'untagged', path: '__Snapshots__/suite.dark/home.png', kind: 'snapshot', image: true},
+    {id: 'asset', path: 'Assets.xcassets/hero.dark.png', kind: 'image', image: true},
+    {id: 'text', path: '__Snapshots__/home.dark.txt', kind: 'snapshot', image: false},
+  ];
+  const context = vm.createContext({state: {files}, tab: 'snapshot', $: selector => controls[selector], hidden: () => false, viewed: file => file.id === 'dark'});
+  vm.runInContext(filter, context);
+  const ids = () => Array.from(context.visibleFiles(), file => file.id);
+  assert.deepEqual(ids(), ['light', 'dark', 'untagged']);
+  appearance.value = 'light';
+  assert.deepEqual(ids(), ['light']);
+  appearance.value = 'dark';
+  assert.deepEqual(ids(), ['dark']);
+  controls['#only-unviewed'].checked = true;
+  assert.deepEqual(ids(), []);
+  controls['#only-unviewed'].checked = false;
+  context.tab = 'all';
+  assert.deepEqual(ids(), ['light', 'dark', 'untagged', 'asset', 'text']);
+});
+
 
 test('offscreen comparisons preserve height and invalidate late responses across remounts', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');

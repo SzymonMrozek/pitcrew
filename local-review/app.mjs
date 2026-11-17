@@ -55,9 +55,16 @@ function filterReason(file) {
 }
 function hidden(file) {return Boolean(filterReason(file));}
 function viewed(file) {return state.session.viewed[file.id] === file.fingerprint;}
+function isSnapshot(file) {return file.kind === 'snapshot' && file.image;}
+function filesInTab() {
+  if (tab !== 'snapshot') return state.files;
+  const appearance = $('#snapshot-appearance').value;
+  return state.files.filter(file => isSnapshot(file) &&
+    (appearance === 'all' || file.path.split('/').at(-1).toLowerCase().split('.').slice(1, -1).includes(appearance)));
+}
 function visibleFiles() {
   const search = $('#search').value.toLowerCase();
-  return state.files.filter(file => (tab !== 'snapshot' || file.image) && ($('#show-hidden').checked || !hidden(file)) && (!$('#only-unviewed').checked || !viewed(file)) && file.path.toLowerCase().includes(search));
+  return filesInTab().filter(file => ($('#show-hidden').checked || !hidden(file)) && (!$('#only-unviewed').checked || !viewed(file)) && file.path.toLowerCase().includes(search));
 }
 function pageTitle(state) {return `${state.threadTitle || state.branch || 'Detached HEAD'} · ${state.tool?.title || 'Local'} review`;}
 function moduleNode(file) {
@@ -116,7 +123,8 @@ function updateChrome() {
   if (iteration === 'branch-start') context.append(el('strong', '', 'Branch start'), el('p', 'muted', `Current contents compared with branch creation commit ${state.base.slice(0, 8)}. This baseline stays fixed after rebases. Approval covers the full branch diff against its merge base.`));
   if (iteration === 'target') context.append(el('strong', '', `Latest local ${state.target}`), el('p', 'muted', `Current contents compared directly with local ${state.target} at ${state.base.slice(0, 8)}. Refresh to pick up local target updates. Approval covers the full branch diff against its merge base.`));
   $('#progress').textContent = `${state.files.filter(viewed).length} / ${state.files.length} reviewed`;
-  $('#snapshot-count').textContent = state.files.filter(f => f.image).length;
+  $('#snapshot-count').textContent = state.files.filter(isSnapshot).length;
+  $('#snapshot-appearance').hidden = tab !== 'snapshot';
   $('#demo-count').textContent = state.demos.items.length;
   $('[data-tab="demos"]').classList.toggle('attention', demoMissing(state.demos));
   $('#comment-count').textContent = state.session.comments.filter(c => !c.resolved).length;
@@ -143,7 +151,8 @@ function updateChrome() {
   $('#run').title = state.run?.available ? "Build and launch this worktree's app on a device or simulator" : 'The worktree for this review is gone or belongs to another branch';
   $('#refresh').disabled = state.job.status === 'running' || state.job.status === 'merged';
   const files = visibleFiles();
-  $('#file-count').textContent = `${files.length} shown · ${state.files.filter(hidden).length} filtered`;
+  const excluded = filesInTab().filter(hidden);
+  $('#file-count').textContent = `${files.length} shown · ${excluded.length} filtered`;
   $('#files').replaceChildren(...files.map(file => {
     const node = button('', () => tab === 'summary' ? openInChanges(file.path) : selectFile(file.id), 'file-button' + (file.id === active ? ' active' : '') + (viewed(file) ? ' reviewed' : ''));
     const name = el('span', 'file-name');
@@ -156,10 +165,9 @@ function updateChrome() {
     return node;
   }));
   reorderFeed(files);
-  const excluded = state.files.filter(hidden);
   $('#filtered-summary').textContent = `Filtered out · ${excluded.length}`;
   $('#filtered-list').replaceChildren(...excluded.map(file => {
-    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (['summary', 'comments', 'stats', 'demos'].includes(tab) || tab === 'snapshot' && !file.image) tab = 'all'; active = file.id; await load();}, 'file-button');
+    const node = button('', async () => {$('#show-hidden').checked = true; $('#search').value = ''; $('#only-unviewed').checked = false; if (['summary', 'comments', 'stats', 'demos'].includes(tab)) tab = 'all'; active = file.id; await load();}, 'file-button');
     const name = el('span', 'file-name'); name.append(el('strong', '', file.path), el('small', '', filterReason(file))); node.append(name); return node;
   }));
   $('#filtered-files').hidden = !excluded.length;
@@ -189,7 +197,15 @@ async function load(refresh = false) {
   if (tab === 'demos') {renderDemos(); return;}
   feedObserver?.disconnect();
   if (!visibleFiles().some(f => f.id === active)) active = visibleFiles()[0]?.id;
-  if (active) {renderFeed(); await selectFile(active);} else $('#content').replaceChildren(el('div', 'empty', state.files.length ? 'No files match these filters. Enable “Show filtered files” to see all changes.' : 'No changes to review.'));
+  if (active) {renderFeed(); await selectFile(active);}
+  else {
+    let message = state.files.length ? 'No files match these filters. Enable “Show filtered files” to see all changes.' : 'No changes to review.';
+    if (tab === 'snapshot') {
+      message = state.files.some(isSnapshot) ? 'No snapshots match these filters.' : 'No snapshots to review.';
+      if (!$('#show-hidden').checked && filesInTab().some(hidden)) message += ' Enable “Show filtered files” to include excluded snapshots.';
+    }
+    $('#content').replaceChildren(el('div', 'empty', message));
+  }
   if (version === loadVersion) prefetchImages();
 }
 function renderMergeRequest() {
@@ -433,7 +449,7 @@ async function renderFile(file, main, current) {
       const {stage, info} = panels[index]; stage.replaceChildren();
       if (!item || item.error) {stage.textContent = item?.error || (index === 0 ? 'Added image' : index === 1 ? 'Deleted image' : 'No comparison'); return;}
       const node = index === 2 ? item.canvas.cloneNode() : item.image;
-      if (index === 2) node.getContext('2d').drawImage(item.canvas, 0, 0); else {node.alt = `${index === 0 ? 'Old' : 'New'} snapshot of ${file.path}`;}
+      if (index === 2) node.getContext('2d').drawImage(item.canvas, 0, 0); else {node.alt = `${index === 0 ? 'Old' : 'New'} image of ${file.path}`;}
       node.style.width = `${item.width * factor}px`;
       node.onclick = () => {const dialog = el('dialog'); const copy = el('canvas'); copy.width = item.width; copy.height = item.height; copy.getContext('2d').drawImage(index === 2 ? item.canvas : item.image, 0, 0); copy.style.cssText = 'max-width:100%;height:auto'; dialog.style.width = '95vw'; dialog.append(button('Close', () => dialog.close()), copy); document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal();};
       stage.append(node); info.textContent = `${item.width} × ${item.height}` + (index === 2 ? ` · ${snapshot.changed.toLocaleString()} changed pixels (${(100 * snapshot.changed / (item.width * item.height)).toFixed(2)}%)` : '');
@@ -523,8 +539,8 @@ function imageData(file, scope = iteration) {
   return images.get(key);
 }
 async function prefetchImages() {
-  const snapshots = state.files.filter(f => f.image), position = Math.max(0, snapshots.findIndex(f => f.id === active));
-  const files = snapshots.slice(position, position + 3), scope = iteration; let next = 0;
+  const imagesInView = visibleFiles().filter(f => f.image), position = Math.max(0, imagesInView.findIndex(f => f.id === active));
+  const files = imagesInView.slice(position, position + 3), scope = iteration; let next = 0;
   await Promise.all(Array.from({length: 3}, async () => {while (next < files.length) {const file = files[next++]; try {await imageData(file, scope);} catch {images.delete((scope || 'full') + ':' + file.id + file.fingerprint);}}}));
 }
 function highlightCommentRange() {
@@ -787,7 +803,8 @@ async function renderSummary(version) {
       const nodes = summary.design.nodes.map(node => ({...node, tag: KIND_TAGS[node.kind]}));
       // Context nodes and files outside this scope open in the source viewer instead of the diff.
       const openNode = node => state.files.some(f => f.path === node.file) ? openInChanges(node.file) : openSource(node.file, 1);
-      const design = summarySection('Design', graphSvg(nodes, summary.design.edges, {label: 'Program design', onNode: node => run(() => openNode(node))}),
+      const title = summary.design.title || 'Design';
+      const design = summarySection(title, graphSvg(nodes, summary.design.edges, {label: summary.design.title || 'Program design', onNode: node => run(() => openNode(node))}),
         graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context'], ['tags', 'M module · T type · P protocol · V view · S service · D data · E external']]));
       design.dataset.content = 'agent-summary:design'; page.append(design);
     }
@@ -947,7 +964,7 @@ $('#run').onclick = () => {$('#run-dialog').showModal(); renderRun(); run(loadRu
 $('#run-reload').onclick = () => run(loadRunDestinations);
 $('#run-cancel').onclick = () => run(async () => {state = await api('run/cancel', {}); updateChrome(); renderRun();});
 $('#rank').onclick = () => run(async () => {state = await api('rank', {}); updateChrome();});
-for (const id of ['search', 'show-hidden', 'only-unviewed']) $('#' + id).addEventListener(id === 'search' ? 'input' : 'change', () => run(() => load()));
+for (const id of ['search', 'show-hidden', 'only-unviewed', 'snapshot-appearance']) $('#' + id).addEventListener(id === 'search' ? 'input' : 'change', () => run(() => load()));
 $('#mode').onchange = () => run(async () => {state = await api('settings', {diffMode: $('#mode').value}); await load();});
 document.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => run(async () => {tab = node.dataset.tab; await load();}));
 document.querySelectorAll('[data-close]').forEach(node => node.onclick = () => node.closest('dialog').close());
@@ -1011,7 +1028,7 @@ $('#feedback-export').onclick = () => run(async () => {
 });
 const elementFeedback = mountElementFeedback({token,
   view: () => ({agent: state?.agent ? agentName(state.agent) : null, tabLabel: document.querySelector('[data-tab].selected')?.firstChild.textContent.trim() ?? tab, tab, scope: reviewScope, comparison, mode: $('#mode').value, activeFile: state?.files.find(file => file.id === active)?.path ?? null,
-    filters: {search: $('#search').value, showHidden: $('#show-hidden').checked, onlyUnviewed: $('#only-unviewed').checked}, contentScrollTop: Math.round($('#content').scrollTop), viewport: {width: innerWidth, height: innerHeight}}),
+    filters: {search: $('#search').value, showHidden: $('#show-hidden').checked, onlyUnviewed: $('#only-unviewed').checked, snapshotAppearance: $('#snapshot-appearance').value}, contentScrollTop: Math.round($('#content').scrollTop), viewport: {width: innerWidth, height: innerHeight}}),
   save: async feedback => {await api('feedback', feedback); await loadFeedback();}});
 $('#feedback-comment').onclick = () => {$('#feedback-dialog').close(); elementFeedback.start();};
 function flash(node) {node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');}

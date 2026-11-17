@@ -33,7 +33,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.16.1'
+RELEASE = '0.17.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -112,7 +112,9 @@ CONFIG = {
     # How people and agents invoke this CLI; merge agents receive commands built from it.
     'launcher': '',
     'files': {
-        'snapshot': [r'/__snapshots__/', r'\.(png|jpe?g|webp)$'],
+        'snapshot': [r'(^|/)__snapshots__/'],
+        'image': [r'\.(png|jpe?g|webp)$'],
+        'asset-metadata': [r'(^|/)[^/]+\.xcassets/(?:[^./]+/)*(?:[^/]+\.(?:imageset|appiconset)/)?Contents\.json$'],
         'localization': [r'\.lproj/', r'\.(strings|stringsdict|xcstrings)$', r'/generated/strings', r'(^|/)l10n\.swift$'],
         # Protocol Buffers and gRPC output (review the .proto change instead) and the Mix lockfile.
         'generated': [r'\.(pb|grpc)\.swift$', r'\.pb(\.gw)?\.go$', r'_pb2(_grpc)?\.pyi?$', r'\.pb\.(h|cc)$',
@@ -704,7 +706,7 @@ def thread_title(agent):
 
 
 def category(path, config=CONFIG):
-    for kind in ('snapshot', 'localization', 'generated', 'manifest', 'test', 'view'):
+    for kind in ('snapshot', 'image', 'asset-metadata', 'localization', 'generated', 'manifest', 'test', 'view'):
         if any(re.search(pattern, path, re.I) for pattern in config['files'][kind]):
             return kind
     return 'code'
@@ -763,15 +765,15 @@ def fallback_reason(error):
     return 'connection failed'
 
 
-def fallback_score(path, config=CONFIG):
+def fallback_score(path, config=CONFIG, *, comment_only=False):
     kind = category(path, config)
-    if kind in ('localization', 'generated', 'test', 'manifest'):
+    if comment_only or kind in ('localization', 'generated', 'test', 'manifest', 'asset-metadata'):
         return 10
     if floor := priority(path, config):
         return floor[1]
     if kind == 'view':
         return 25
-    if kind == 'snapshot':
+    if kind in ('snapshot', 'image'):
         return 40
     if config['files']['important'] and re.search(config['files']['important'], path, re.I):
         return 85
@@ -795,6 +797,18 @@ def diff_rows(old, new):
     if not rows and old != new:
         rows.append({'type': 'hunk', 'text': 'End-of-file newline or line endings changed', 'old': None, 'new': None})
     return rows
+
+
+def swift_comment_only(path, old, new, rows):
+    if not path.lower().endswith('.swift'):
+        return False
+    changed = [row['text'].strip() for row in rows if row['type'] in ('add', 'delete')]
+    if not any(changed) or not all(not line or line.startswith('//') for line in changed):
+        return False
+    if any(re.match(r'//+\s*(?:[\w-]+:|swift-format-ignore\b)', line) or '/*' in line or '*/' in line for line in changed):
+        return False  # Tool directives can change lint, formatting or generation.
+    # A line starting with // can be literal data inside a multiline string or regex.
+    return not any(marker in old or marker in new for marker in (b'"""', b'#/'))
 
 
 def summary_text(value, field, limit, prose=True):
@@ -834,13 +848,15 @@ def validate_change_summary(data):
             raise ValueError(f'focus must list at most {limits["focus"]} things for the reviewer to check')
         result['focus'] = [summary_text(item, f'focus[{index}]', limits['text']) for index, item in enumerate(focus, 1)]
     if (design := data.get('design')) is not None:
-        summary_fields(design, 'design', ('nodes', 'edges'))
+        summary_fields(design, 'design', ('title', 'nodes', 'edges'))
         nodes, edges = design.get('nodes'), design.get('edges', [])
         if not isinstance(nodes, list) or not 2 <= len(nodes) <= limits['nodes']:
             raise ValueError(f'design.nodes must list 2 to {limits["nodes"]} nodes')
         if not isinstance(edges, list) or len(edges) > limits['edges']:
             raise ValueError(f'design.edges must list at most {limits["edges"]} edges')
         result['design'] = {'nodes': [], 'edges': []}
+        if 'title' in design:
+            result['design']['title'] = summary_text(design['title'], 'design.title', limits['label'])
         for index, node in enumerate(nodes, 1):
             field = f'design.nodes[{index}]'
             summary_fields(node, field, ('id', 'label', 'kind', 'status', 'note', 'file'))
@@ -1061,11 +1077,14 @@ class Review:
             binary = image or b'\0' in old[:8192] + new[:8192]
             limited = not binary and max(len(old), len(new)) > MAX_TEXT
             rows = [] if binary or limited else diff_rows(old.decode(errors='replace'), new.decode(errors='replace'))
+            comment_only = (status == 'M' and old_entries[path][0] == mode and mode in (0o100644, 0o100755)
+                            and swift_comment_only(path, old, new, rows))
             patch = '\n'.join(('+' if row['type'] == 'add' else '-' if row['type'] == 'delete' else ' ') + row['text'] for row in rows)
             files.append({'id': file_id, 'path': path, 'status': status, 'kind': kind, 'image': image,
                           'binary': binary, 'limited': limited, 'submoduleDirty': submodule_dirty, 'fingerprint': fingerprint, 'patch': patch,
-                          'rows': rows, 'added': sum(row['type'] == 'add' for row in rows),
-                          'deleted': sum(row['type'] == 'delete' for row in rows), 'score': fallback_score(path, self.config), 'scorer': 'Fallback'})
+                          'rows': rows, 'added': sum(row['type'] == 'add' for row in rows), 'commentOnly': comment_only,
+                          'deleted': sum(row['type'] == 'delete' for row in rows),
+                          'score': fallback_score(path, self.config, comment_only=comment_only), 'scorer': 'Fallback'})
             blobs[file_id] = {'old': old, 'new': new}
         revision = digest(json.dumps([head, target_head, [(f['path'], f['fingerprint']) for f in files]]).encode())
         return head, target_head, base, files, blobs, revision
@@ -1161,6 +1180,8 @@ class Review:
     def apply_scores(self, files=None):
         files = self.files if files is None else files
         for file in files:
+            if file.get('commentOnly') or file['kind'] in ('asset-metadata', 'image'):
+                continue
             score = self.cache.get(self.score_key(file))
             if score is not None:
                 file.update(**score, scorer='Jev')
@@ -2256,7 +2277,7 @@ class Review:
             return
         self.historical.clear()
         for file in self.files:
-            file.update(score=fallback_score(file['path'], self.config), scorer='Fallback')
+            file.update(score=fallback_score(file['path'], self.config, comment_only=file.get('commentOnly')), scorer='Fallback')
             file.pop('signals', None)
         self.apply_scores()
         self.start_ranking()
@@ -2295,8 +2316,8 @@ class Review:
                 if cache_key in self.cache:
                     return None
                 rubric = self.settings['rubric']
-            if file['kind'] == 'generated':
-                return None  # Regenerated output keeps its fallback score; the source schema carries the change.
+            if file.get('commentOnly') or file['kind'] in ('generated', 'asset-metadata', 'image'):
+                return None
             if re.search(r"\b(password|secret|credential|api[_-]?key|dsn)\b", file['patch'], re.I):
                 return 'sensitive diff kept local'
             if file['limited']:

@@ -230,6 +230,16 @@ class ReviewTests(unittest.TestCase):
 
     def test_filters_keep_snapshots_visible_under_tests(self):
         self.assertEqual(m.category('Modules/Tests/__Snapshots__/a.tests/image.png'), 'snapshot')
+        self.assertEqual(m.category('__Snapshots__/root.dark.PNG'), 'snapshot')
+        asset = 'Services/Auth/Assets.xcassets/Hero.imageset/hero.dark.png'
+        self.assertEqual(m.category(asset), 'image')
+        self.assertEqual(m.fallback_score(asset), 40)
+        text_snapshot = 'Auth/AuthTests/__Snapshots__/example.txt'
+        self.assertEqual(m.category(text_snapshot), 'snapshot')
+        self.assertEqual(m.fallback_score(text_snapshot), 40)
+        self.assertEqual(m.category('Assets.xcassets/Group/Contents.json'), 'asset-metadata')
+        self.assertEqual(m.category('Assets.xcassets/Group/Brand.colorset/Contents.json'), 'code')
+        self.assertEqual(m.category('Assets.xcassets/Data.dataset/Contents.json'), 'code')
         self.assertEqual(m.category('Modules/Sources/X.tests.swift'), 'test')
         self.assertEqual(m.category('Resources/en.lproj/Localizable.strings'), 'localization')
         self.assertEqual(m.category('Sources/Generated/Strings.swift'), 'localization')
@@ -240,6 +250,47 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(m.category('Project.swift'), 'manifest')
         self.assertEqual(m.category('Sources/ProjectSettings.swift'), 'code')
         self.assertTrue(m.DEFAULTS['hideManifests'])
+
+    def test_comments_and_asset_metadata_keep_low_scores_even_with_priority_and_jev_cache(self):
+        self.git('restore', 'Interactor.swift')
+        self.write('.config/local-review.toml', "[[priority]]\npattern = '/Interface/'\n")
+        interface = 'Scenes/Interface/Accounts.swift'
+        metadata = 'Models/Assets.xcassets/Avatar.imageset/Contents.json'
+        old = '/// Coordinates account actions.\nprotocol Accounts {}\n'
+        self.write(interface, old)
+        self.git('add', interface, '.config/local-review.toml')
+        self.git('commit', '-m', 'Add interface')
+        self.git('branch', '-f', 'main', 'HEAD')
+        self.write(interface, 'protocol Accounts {}\n')
+        self.write(metadata, '{"images": []}\n')
+        self.review.refresh()
+        files = {f['path']: f for f in self.review.files}
+        for path in (interface, metadata):
+            self.review.cache[self.review.score_key(files[path])] = {'score': 95}
+        self.review.apply_scores()
+        self.assertEqual([(f['score'], f['scorer']) for f in files.values()], [(10, 'Fallback'), (10, 'Fallback')])
+        self.review.update_settings({'rubric': 'Prioritize user-visible behavior'})
+        self.assertEqual([(f['score'], f['scorer']) for f in self.review.files], [(10, 'Fallback'), (10, 'Fallback')])
+        self.review.cache.clear()
+        with patch.dict(os.environ, {'JEV_API_KEY': 'test'}), patch.object(m.urllib.request, 'urlopen') as urlopen:
+            self.review.rank()
+        urlopen.assert_not_called()
+        self.write(interface, 'protocol Accounts { func refresh() }\n')
+        self.review.refresh()
+        file = next(f for f in self.review.files if f['path'] == interface)
+        self.assertEqual((file['score'], file['priority']), (m.PRIORITY_SCORE, 'Prioritized path'))
+
+    def test_swift_literals_and_directives_are_not_plain_comments(self):
+        examples = [
+            ('let example = """\n// before\n"""\n', 'let example = """\n// after\n"""\n'),
+            ('let example = #/\n// before\n/#\n', 'let example = #/\n// after\n/#\n'),
+            ('// swiftlint:disable all\nlet count = 1\n', 'let count = 1\n'),
+            ('// swift-format-ignore-file\nlet count = 1\n', 'let count = 1\n'),
+            ('/*\n// end */\nlet count = 1\n', '/*\n// still open\nlet count = 1\n'),
+        ]
+        for old, new in examples:
+            with self.subTest(old=old):
+                self.assertFalse(m.swift_comment_only('Example.swift', old.encode(), new.encode(), m.diff_rows(old, new)))
 
     def test_generated_protobuf_code_is_hidden_and_ranked_lowest(self):
         for path in ('Modules/Models/Proto/Sources/Generated/user/v2/user.pb.swift', 'Sources/Generated/api.grpc.swift',
@@ -515,12 +566,13 @@ class ReviewTests(unittest.TestCase):
     def test_finish_iteration_keeps_the_agents_change_summary_for_the_branch_and_the_interaction(self):
         self.review.begin_iteration('first', 'Retry reorders')
         self.write('Interactor.swift', 'let value = 3\n')
-        design = {'nodes': [{'id': 'interactor', 'label': 'ReorderInteractor', 'status': 'changed', 'file': 'Interactor.swift'},
+        design = {'title': 'Reproduction path', 'nodes': [{'id': 'interactor', 'label': 'ReorderInteractor', 'status': 'changed', 'file': 'Interactor.swift'},
                             {'id': 'service', 'label': 'OrderService', 'kind': 'protocol'}],
                   'edges': [{'from': 'interactor', 'to': 'service', 'label': 'retries', 'status': 'added'}]}
         self.review.finish_iteration('first', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.', self.change_summary(design=design, focus=['Retry count is fixed at one']))
         summary = self.review.summary()['summary']
         self.assertEqual(summary['iteration'], 'first')
+        self.assertEqual(summary['design']['title'], 'Reproduction path')
         self.assertEqual(summary['design']['nodes'][1], {'id': 'service', 'label': 'OrderService', 'kind': 'protocol', 'status': 'unchanged'})
         self.assertEqual(summary['design']['edges'], [{'from': 'interactor', 'to': 'service', 'status': 'added', 'label': 'retries'}])
         self.review.begin_iteration('second', 'Polish')

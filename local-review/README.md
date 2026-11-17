@@ -104,7 +104,12 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   checkbox, **Viewed → next** or `V`, jumps to the next unreviewed file, wrapping
   to the top. It's always explicit, never automatic on scroll.
 - **Snapshots** show old, new and a highlighted pixel diff (exact RGBA,
-  including size changes).
+  including size changes) for images matching `files.snapshot`. Use the
+  appearance selector to see only `.light` or `.dark` snapshots. All
+  appearances includes snapshots with no appearance suffix. Other images
+  are available in **Changes**. The default looks under `__Snapshots__`.
+  Set `files.snapshot` to match your snapshot directories if you use another
+  layout, such as `ReferenceImages_64`.
 
   ![The Snapshots feed for the same mock app: the order history screen before and after a Reorder button was added, with changed pixels highlighted in the third column.](images/snapshots.png)
  Click an image to inspect it. Missing Git LFS
@@ -167,7 +172,8 @@ The **Summary** tab is the change on one screen, drawn rather than written:
 - **Check before approving:** what the agent says a reviewer should verify.
 - **Design:** when the change has a structure worth seeing, the agent's
   diagram of the types it added or changed and how they connect, colored by
-  status. Click a node to open its file.
+  status. Click a node to open its file. A bug-fix summary can use this
+  diagram to show the steps to reproduce the failure and where it occurs.
 - **Module graph:** when the scope changes a module manifest, which modules,
   targets and dependencies were added, removed or moved between groups, as a
   tree and a graph. It's
@@ -190,11 +196,12 @@ The agent writes the summary as JSON and passes it with
   ],
   "focus": ["Retry count is fixed at one; no backoff"],
   "design": {
+    "title": "Reproduction path",
     "nodes": [
-      {"id": "interactor", "label": "ReorderInteractor", "kind": "type", "status": "changed", "file": "Sources/ReorderInteractor.swift"},
-      {"id": "service", "label": "OrderService", "kind": "protocol"}
+      {"id": "tap", "label": "Tap Reorder", "kind": "view"},
+      {"id": "failure", "label": "ReorderInteractor", "status": "changed", "note": "The first failed call ends the reorder", "file": "Sources/ReorderInteractor.swift"}
     ],
-    "edges": [{"from": "interactor", "to": "service", "label": "retries", "status": "added"}]
+    "edges": [{"from": "tap", "to": "failure", "label": "Request fails"}]
   }
 }
 ```
@@ -205,7 +212,8 @@ several lines, unknown fields, and filler such as "seamless", "robust" or
 "comprehensive" in prose; code in backticks and node labels aren't checked. `kind` is `added`, `changed`, `removed` or `fixed`. Design nodes
 take `kind` (`module`, `type`, `protocol`, `view`, `service`, `data` or
 `external`), `status` (`added`, `changed`, `removed` or `unchanged`), an
-optional `note` and `file`; at most 20 nodes and 40 edges. Text in
+optional `note` and `file`; at most 20 nodes and 40 edges. The diagram's
+optional `title` overrides the default **Design** heading. Text in
 `backticks` renders as code.
 
 #### Module graph
@@ -233,7 +241,10 @@ Files sort by one 0–100 importance score. Path is the tie-breaker.
 Without an evaluator, scores come from the path and are labeled
 **Fallback**. Localization, tests and manifests rank lowest, views low, and
 code matching `files.important` (services, repositories, auth and similar)
-high. Generated code ranks lowest too.
+high. Generated code, asset catalog metadata and edits limited to standalone
+Swift line comments also rank low, including on prioritized paths. Comment
+edits with possible tool directives, multiline literals or changes to file
+mode use normal ranking.
 
 With `JEV_API_KEY` in the server's environment, Jev (Typesafe's evaluation
 API at `api.typesafe.ai`) scores each actual diff with three evaluators: business logic and correctness,
@@ -246,7 +257,9 @@ Some files never leave the machine and keep fallback scores:
 - diffs that mention passwords, secrets, credentials, API keys or DSNs
 - text files over 2 MB, or with oversized lines
 - generated code, such as `*.pb.swift`; review its schema instead
-- image pixels
+- `Contents.json` in asset catalog folders, image sets and app icon sets,
+  and recognized Swift comment-only diffs
+- images outside the Snapshots feed, and the pixels of snapshot images
 
 Results are cached by content and by your evaluation preferences, which you
 edit under **Defaults**.
@@ -578,7 +591,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `name` | `local-review` | State directory in the Git common dir, ref namespace, and `<NAME>_HANDOFF`/`<NAME>_QUEUE_PID` variables |
 | `title` | `Local` | Brand word in the page header and tab |
 | `launcher` | `python3 <path>/server.py` | Command given to agents and on the queue page |
-| `[files]` | iOS and Elixir defaults | Regexes for snapshot, localization, generated, manifest, test and view files, `model` and `important` |
+| `[files]` | iOS and Elixir defaults | Regexes for snapshot, image, asset-metadata, localization, generated, manifest, test and view files, `model` and `important` |
 | `[[priority]]` | Ecto migrations | `pattern` and `label` for paths that never score below 95; setting any replaces the default |
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |

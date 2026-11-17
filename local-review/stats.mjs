@@ -1,7 +1,7 @@
 // Line counts for the files in the selected review scope, grouped by review kind and by file type.
 export const KIND_LABELS = {
-  code: 'Code', view: 'Views and navigation', test: 'Unit tests', snapshot: 'Snapshots',
-  localization: 'Localization', manifest: 'Project manifests', generated: 'Generated code',
+  code: 'Code', view: 'Views and navigation', test: 'Unit tests', snapshot: 'Snapshots', image: 'Images',
+  localization: 'Localization', manifest: 'Project manifests', generated: 'Generated code', 'asset-metadata': 'Asset catalog metadata',
 };
 
 export function fileType(path) {

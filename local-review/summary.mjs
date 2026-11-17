@@ -103,7 +103,7 @@ export function moduleFootprint(files, moduleFor) {
 
 // The changes to read first: highest importance, then the biggest diff.
 export function hotspots(files, count = 6) {
-  return files.filter(file => !['localization', 'generated', 'snapshot'].includes(file.kind))
+  return files.filter(file => !['localization', 'generated', 'snapshot', 'image', 'asset-metadata'].includes(file.kind))
     .sort((a, b) => b.score - a.score || b.added + b.deleted - a.added - a.deleted || a.path.localeCompare(b.path)).slice(0, count);
 }
 
