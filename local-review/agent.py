@@ -11,7 +11,10 @@ import sys
 import time
 import uuid
 
-from server import clean_env, env_prefix, read_json, write_json, process_alive, queue_slot
+import threading
+
+from server import (clean_env, early_prompt, env_prefix, load_config, next_while_merging, process_alive, queue_slot,
+                    read_json, update_queue_owner, validate_batch, write_json)
 
 CLAUDE_TOOLS = ('Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash')
 
@@ -54,14 +57,52 @@ def deliver(path):
             return
         request.update(workerPid=os.getpid(), delivery='queued', summary='Waiting for its merge queue turn; no preparation or tests have started.')
         write_json(path, request)
+    early = []
+
+    def deliver_early():
+        # Preparing the next approval overlaps the current one's validation; execution still waits for the turn.
+        if early or not (prompt := early_prompt(request)) or not next_while_merging(path.parent, request['id']):
+            return
+        early.append(threading.Thread(target=deliver_reserved, args=(path,), kwargs={'prompt': prompt}, daemon=True))
+        early[0].start()
+
+    conversation = request.get('agent') if request.get('deliveryMode') == 'conversation' else None
     try:
-        with queue_slot(path.parent, request['id'], wait=True, conversation=request.get('agent') if request.get('deliveryMode') == 'conversation' else None):
+        with queue_slot(path.parent, request['id'], wait=True, conversation=conversation,
+                        waiting=deliver_early if conversation else None):
+            run_batch(path, request)
+            if early:
+                early[0].join()
+                hold_until_finished(path)
+                return
             deliver_reserved(path)
     except ValueError:
         return  # A withdrawn approval leaves the queue without launching an agent.
 
 
-def deliver_reserved(path):
+def run_batch(path, request):
+    """Validate this approval together with those waiting behind it before its agent starts, if the repository batches."""
+    try:
+        config = load_config(request['mergeRoot'], strict=False)
+    except (OSError, ValueError):
+        return
+    if config['merge']['batch']['max'] < 2:
+        return
+    update_queue_owner(path.parent, request['id'], batching=True)
+    try:
+        validate_batch(path.parent, request['mergeRoot'], config, request['id'])
+    except Exception as error:
+        print(f'Merge batch validation failed to run: {error}', file=sys.stderr, flush=True)
+    finally:
+        update_queue_owner(path.parent, request['id'], batching=False)
+
+
+def hold_until_finished(path):
+    while (current := read_json(path, None)) and (current['status'] in ('pending', 'working') or process_alive(current.get('mergePid'))):
+        time.sleep(.5)
+
+
+def deliver_reserved(path, prompt=None):
     path = Path(path)
     request = read_json(path, None)
     if not request:
@@ -85,7 +126,9 @@ def deliver_reserved(path):
         origin = request.get('agent') or ({'provider': 'codex'} if request.get('threadId') else {})
         provider, label, cli = agent_cli(origin)
         if request.get('deliveryMode') == 'conversation':
-            deliver_merge_conversation(path, request, provider, label, cli, update)
+            if prompt:
+                update(deliveredEarly=True)
+            deliver_merge_conversation(path, {**request, 'prompt': prompt or request['prompt']}, provider, label, cli, update)
             return
         session_id = str(uuid.uuid4()) if provider == 'claude' else None
         if not update(workerSessionId=session_id, delivery='started', summary=f'Sent to a local {label} agent. It is checking readiness and will handle the merge.'):
@@ -151,11 +194,21 @@ def deliver_merge_conversation(path, request, provider, label, cli, update):
         return
     if provider == 'claude':
         response = final_response(provider, log_path, output).strip()
+        # A turn can end while its detached execution still waits for the queue or validates.
+        while (current := read_json(path, None)) and process_alive(current.get('mergePid')):
+            time.sleep(.5)
         update(status='blocked', delivery='finished', summary=response or 'The agent stopped before merging. Resume the saved request in its conversation.')
         return
     update(delivery='delivered', summary='Merge request queued in the original Codex conversation. Follow its progress and reply there.')
+    delivered = time.monotonic()
+    timeout = request.get('pickupTimeout') or 0
     # Queueing confirms delivery, not completion. The original chat executes the saved request.
     while (current := read_json(path, None)) and current['status'] in ('pending', 'working'):
+        if timeout and time.monotonic() - delivered > timeout and not current.get('pickedUpAt') and not current.get('mergePid'):
+            minutes = round(timeout / 60)
+            update(status='blocked', summary=f'The Codex conversation did not inspect this approval within {minutes} min, so the queue moved on. '
+                   'Resume the same request from that conversation with --resume-merge-request; it keeps its queue position.')
+            return
         time.sleep(.5)
 
 

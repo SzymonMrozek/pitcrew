@@ -30,9 +30,11 @@ same request until it merges. Don't ask for fresh approval for routine
 completion work, and don't require the user to resolve comment flags. Preserve
 unrelated edits, keep validation intact, and never merge a withdrawn approval.
 
-Approval workers reserve the repository queue before preparation and hold
-their turn through cleanup. Don't prepare or validate a later merge while
-another merge owns the queue. Let `--execute-merge-request` run the configured
+Approval workers reserve the repository queue before validation and hold
+their turn through cleanup. An approval delivered while the one ahead still
+executes says so: prepare and execute it right away, and its execution waits
+for the turn. Otherwise don't prepare or validate a later merge while another
+merge owns the queue. Let `--execute-merge-request` run the configured
 merge checks and Worktrunk hooks; don't repeat them immediately beforehand on
 unchanged content. Resume a stopped worker with
 `review --resume-merge-request <id>` from its existing worktree.
