@@ -3578,7 +3578,7 @@ def main():
                 origin, saved = detect_agent(config['name']), request.get('agent') or {}
                 if origin and all(origin.get(key) == saved.get(key) for key in ('provider', 'sessionId')):
                     request['agent'] = {**saved, 'cli': origin.get('cli') or saved.get('cli')}
-                request.update(status='pending', delivery='not_sent', workerPid=None, mergePid=None,
+                request.update(status='pending', delivery='not_sent', workerPid=None, mergePid=None, pickedUpAt=None, deliveredEarly=False,
                                summary='Approval resumed. Waiting for its queue turn.')
                 write_json(Path(request['path']), request)
             review.notify_merge_request(request)

@@ -2043,12 +2043,13 @@ class ReviewTests(unittest.TestCase):
 
     def test_resume_cli_reuses_stopped_approval_and_rejects_live_or_withdrawn_worker(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
-        m.write_json(Path(request['path']), {**request, 'status': 'blocked', 'workerPid': None})
+        m.write_json(Path(request['path']), {**request, 'status': 'blocked', 'workerPid': None, 'pickedUpAt': 'earlier', 'deliveredEarly': True})
         argv = ['server.py', '--repo', str(self.root), '--resume-merge-request', request['id']]
         with patch.object(sys, 'argv', argv), patch('sys.stdout', new=io.StringIO()):
             m.main()
         resumed = self.review.merge_request()
         self.assertEqual(resumed['status'], 'pending')
+        self.assertEqual((resumed['pickedUpAt'], resumed['deliveredEarly']), (None, False), 'Redelivery needs a fresh pickup')
         for field in ('id', 'requestedAt', 'snapshotRef', 'snapshotCommit'):
             self.assertEqual(resumed[field], request[field])
         self.assertEqual(self.notify.call_count, 2)
