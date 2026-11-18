@@ -33,7 +33,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.18.1'
+RELEASE = '0.19.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -143,6 +143,12 @@ CONFIG = {
         'prepare': [],
         # Project rules appended to the merge agent's instructions.
         'instructions': '',
+        # Seconds a Codex conversation may take to inspect its delivered approval before the queue moves on; 0 waits.
+        'pickup-timeout': 600,
+        # Up to max waiting approvals are stacked onto the target and validated once by command, where {commit} is the
+        # stacked commit and {target} the merge target. A member whose final commit has the tree validated for it merges
+        # with env added, where {batch} is the batch ID. max 1 turns batching off.
+        'batch': {'max': 1, 'command': [], 'env': {}},
     },
     # Changes on these paths alter what people see in the app, so the review expects a demo recording.
     # Simulator recordings switch the device to this appearance, dark or light, and restore it afterwards.
@@ -214,6 +220,19 @@ def load_config(root, strict=None):
             re.compile(pattern)
     for item in config['priority']:
         re.compile(item['pattern'])
+    batch = config['merge']['batch'] = {**CONFIG['merge']['batch'], **config['merge']['batch']}
+    if set(batch) - set(CONFIG['merge']['batch']):
+        raise ValueError(f'Unknown [merge.batch] setting in {path}')
+    if type(batch['max']) is not int or batch['max'] < 1:
+        raise ValueError(f'[merge.batch] max in {path} must be a positive integer')
+    if not isinstance(batch['command'], list) or not all(isinstance(arg, str) for arg in batch['command']):
+        raise ValueError(f'[merge.batch] command in {path} must be a list of strings')
+    if batch['max'] > 1 and not any('{commit}' in arg for arg in batch['command']):
+        raise ValueError(f'[merge.batch] in {path} needs a command that uses {{commit}} when max is above 1')
+    if not isinstance(batch['env'], dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in batch['env'].items()):
+        raise ValueError(f'[merge.batch] env in {path} must map names to strings')
+    if type(config['merge']['pickup-timeout']) is not int or config['merge']['pickup-timeout'] < 0:
+        raise ValueError(f'[merge] pickup-timeout in {path} must be a non-negative number of seconds')
     for check in [*config['merge']['prepare'], *config['merge']['checks']]:
         if not check.get('command') or not all(isinstance(arg, str) for arg in check['command']):
             raise ValueError(f'Each merge check in {path} needs a command list')
@@ -543,8 +562,8 @@ def queue_requests(store):
 
 
 @contextmanager
-def queue_slot(store, request_id, wait=False, conversation=None):
-    """Reserve preparation through cleanup, before launching any expensive work."""
+def queue_slot(store, request_id, wait=False, conversation=None, waiting=None, claim=None):
+    """Reserve preparation through cleanup, before launching any expensive work; call waiting while queued."""
     owner_path = store / 'queue-owner.json'
     owner = read_json(owner_path, {})
     # A reservation belongs to its legacy child or the conversation receiving the approval.
@@ -573,13 +592,149 @@ def queue_slot(store, request_id, wait=False, conversation=None):
                 fcntl.flock(lock, fcntl.LOCK_UN)
             if not wait:
                 raise ValueError('Another merge is ahead of this request. Wait for its queue turn before rebasing or validating.')
+            if waiting:
+                waiting()
             time.sleep(.5)
-        write_json(owner_path, {'id': request_id, 'pid': os.getpid(), 'conversation': conversation})
+        write_json(owner_path, {'id': request_id, 'pid': os.getpid(), 'conversation': conversation, **(claim or {})})
         try:
             yield
         finally:
             owner_path.unlink(missing_ok=True)
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+RESERVED_TURN = ('The delivery process has reserved the repository merge queue. Inspect the request and queue to confirm that reservation is still alive and belongs to this request before any preparation. '
+                 'If its delivery process has stopped, resume the SAME request with --resume-merge-request and wait for redelivery; do not prepare without a reservation. '
+                 'Keep the reservation through preparation, validation and cleanup. ')
+EARLY_TURN = ('This request is next in the repository merge queue while the approval ahead of it validates, so prepare it now instead of waiting. '
+              'Its delivery process holds its queue place; if that process has stopped, resume the SAME request with --resume-merge-request. '
+              'Execute as soon as the branch is ready: the detached execution waits for this request\'s queue turn, then rebases onto the target '
+              'that turn finds when that needs no conflict resolution, and otherwise returns the request to pending for you to rebase and execute again. ')
+
+
+UPDATE_TARGET = ('First fetch the merge target’s configured upstream if it has one. Integrate its latest commits into the local target '
+                 'without dropping local commits or disturbing unrelated working changes, then rebase this worktree branch onto that latest target. '
+                 'If the target has no configured upstream, use its latest local commit. ')
+# The approval ahead validates against the local target, so moving it now would fail that attempt.
+EARLY_TARGET = ('Leave the local target branch where it is until this request owns the queue: do not fetch into it or integrate its upstream. '
+                'Rebase this worktree branch onto the local target as it is now. ')
+
+
+def early_prompt(request):
+    """The approval prompt for delivery before the queue turn, or None for approvals saved before early delivery."""
+    prompt = request.get('prompt', '')
+    if RESERVED_TURN not in prompt or UPDATE_TARGET not in prompt:
+        return None
+    return prompt.replace(RESERVED_TURN, EARLY_TURN).replace(UPDATE_TARGET, EARLY_TARGET)
+
+
+def active_requests(store):
+    return [r for r in queue_requests(store) if r['status'] in ('pending', 'working')]
+
+
+def next_while_merging(store, request_id):
+    """Whether this approval is next and the one ahead already executes, so its preparation can overlap."""
+    active = active_requests(store)
+    return len(active) > 1 and active[1]['id'] == request_id and active[0]['status'] == 'working'
+
+
+def update_queue_owner(store, request_id, **fields):
+    path = store / 'queue-owner.json'
+    owner = read_json(path, {})
+    if owner.get('id') == request_id:
+        write_json(path, {**owner, **fields})
+
+
+def wait_for_queue_turn(store, request_id, poll=1.0):
+    """Block an execution prepared early until its delivery process owns the queue and finished any batch."""
+    while True:
+        owner = read_json(store / 'queue-owner.json', {})
+        if owner.get('id') == request_id and process_alive(owner.get('pid')) and not owner.get('batching'):
+            return
+        request = next((r for r in queue_requests(store) if r['id'] == request_id), None)
+        if request and request['status'] in ('pending', 'blocked') and not process_alive(request.get('workerPid')):
+            raise ValueError('The delivery process holding this approval\'s queue place stopped. Resume the same request.')
+        if not request or request['status'] != 'pending':
+            raise ValueError('No matching pending approval')
+        time.sleep(poll)
+
+
+def stack_batch(root, requests, target, limit):
+    """Apply approved snapshots in queue order onto the target; stop at the first one that does not merge cleanly."""
+    def git(*args):
+        result = subprocess.run([git_executable(), *args], cwd=root, capture_output=True, text=True, timeout=120)
+        return result.returncode, result.stdout.strip()
+    status, current = git('rev-parse', '--verify', target + '^{commit}')
+    if status:
+        return None, []
+    target_head, members = current, []
+    for request in requests[:limit]:
+        if request.get('target') != target or not request.get('snapshotCommit') or not request.get('snapshotBase'):
+            break
+        status, output = git('merge-tree', '--write-tree', '--merge-base', request['snapshotBase'], current, request['snapshotCommit'])
+        if status:
+            break
+        tree = output.splitlines()[0]
+        status, commit = git('commit-tree', tree, '-p', current, '-m', f'Merge batch member {request["id"]}: {request.get("title") or request["branch"]}')
+        if status:
+            break
+        members.append({'id': request['id'], 'branch': request['branch'], 'tree': tree, 'commit': commit})
+        current = commit
+    return target_head, members
+
+
+def batch_for(store, request_id):
+    for path in sorted((store / 'batches').glob('*.json')):
+        batch = read_json(path, None)
+        if batch and any(member['id'] == request_id for member in batch['members']):
+            yield batch
+
+
+def validate_batch(store, root, config, leader_id):
+    """Validate the leader and the approvals waiting behind it as one stacked commit; record which trees passed."""
+    settings = config['merge']['batch']
+    if settings['max'] < 2 or any(batch_for(store, leader_id)):
+        return None
+    queue = active_requests(store)
+    if not queue or queue[0]['id'] != leader_id:
+        return None
+    waiting = [queue[0]]
+    for request in queue[1:]:
+        if request['status'] != 'pending' or any(batch_for(store, request['id'])):
+            break
+        waiting.append(request)
+    target_head, members = stack_batch(root, waiting, queue[0]['target'], settings['max'])
+    if len(members) < 2:
+        return None
+    batch_id = secrets.token_hex(8)
+    tip = members[-1]['commit']
+    subprocess.run([git_executable(), 'update-ref', f'refs/{config["name"]}/batch/{batch_id}', tip], cwd=root, capture_output=True, timeout=30)
+    path = store / 'batches' / f'{batch_id}.json'
+    log_path = store / 'batches' / f'{batch_id}.log'
+    batch = {'id': batch_id, 'status': 'validating', 'target': queue[0]['target'], 'targetHead': target_head, 'commit': tip,
+             'members': members, 'log': str(log_path), 'startedAt': datetime.now(timezone.utc).isoformat()}
+    write_json(path, batch)
+    command = [arg.replace('{commit}', tip).replace('{target}', batch['target']) for arg in settings['command']]
+    with log_path.open('w') as log:
+        log.write(f'Validating merge batch {batch_id} at {tip}: {", ".join(m["branch"] for m in members)}\n')
+        log.flush()
+        try:
+            status = subprocess.run(command, cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT).returncode
+        except OSError as error:
+            log.write(f'{error}\n')
+            status = 1
+    batch.update(status='passed' if status == 0 else 'failed', finishedAt=datetime.now(timezone.utc).isoformat())
+    write_json(path, batch)
+    return batch
+
+
+def validated_batch_env(store, config, request_id, tree):
+    """Extra merge environment when this commit's tree is the one its passed batch validated."""
+    for batch in batch_for(store, request_id):
+        member = next(m for m in batch['members'] if m['id'] == request_id)
+        if batch['status'] == 'passed' and member['tree'] == tree:
+            return batch['id'], {name: value.replace('{batch}', batch['id']) for name, value in config['merge']['batch']['env'].items()}
+    return None, {}
 
 
 def merge_queue(store):
@@ -589,8 +744,9 @@ def merge_queue(store):
         active = request['status'] in ('pending', 'working')
         phase = 'waiting' if active else request['status']
         if active and ((owner.get('id') == request['id'] and process_alive(owner.get('pid')))
-                       or request['status'] == 'working' or (request.get('delivery') == 'started' and not request.get('workerPid'))):
-            phase = 'merging' if request['status'] == 'working' else 'preparing'
+                       or request['status'] == 'working' or (request.get('delivery') == 'started' and not request.get('workerPid'))
+                       or request.get('deliveredEarly')):
+            phase = 'merging' if request['status'] == 'working' else 'batching' if owner.get('batching') and owner.get('id') == request['id'] else 'preparing'
         entries.append({key: request.get(key) for key in ('id', 'branch', 'target', 'repo', 'requestedAt', 'finishedAt',
                         'title', 'sessionId', 'snapshotRef', 'snapshotCommit', 'snapshotBase', 'changedPaths')} |
                        {'status': request['status'], 'phase': phase, 'provider': request.get('agent', {}).get('provider'),
@@ -2637,7 +2793,8 @@ class Review:
                    'threadId': agent.get('sessionId') if agent['provider'] == 'codex' else None,
                    'agent': agent,
                    'title': title.strip(), 'description': description.strip(), 'instructions': instructions.strip(),
-                   'comments': self.session['comments'], 'summary': 'Approval saved. Waiting for an agent.'}
+                   'comments': self.session['comments'], 'summary': 'Approval saved. Waiting for an agent.',
+                   'pickupTimeout': self.config['merge']['pickup-timeout']}
         # A private commit exposes the complete approved diff, including uncommitted files.
         tree = self.snapshot('queue-' + request['id'])
         request['snapshotBase'] = self.git('merge-base', self.target, 'HEAD').strip()
@@ -2657,12 +2814,8 @@ class Review:
         request['prompt'] = (f'The user approved the full local review and delegated completing the local merge. '
             f'Read merge request {request["id"]} at {path} and verify it is still pending. '
             'This request was sent to the conversation that wrote the change, just like review comments. '
-            'The delivery process has reserved the repository merge queue. Inspect the request and queue to confirm that reservation is still alive and belongs to this request before any preparation. '
-            'If its delivery process has stopped, resume the SAME request with --resume-merge-request and wait for redelivery; do not prepare without a reservation. '
-            'Keep the reservation through preparation, validation and cleanup. '
-            'First fetch the merge target’s configured upstream if it has one. Integrate its latest commits into the local target '
-            'without dropping local commits or disturbing unrelated working changes, then rebase this worktree branch onto that latest target. '
-            'If the target has no configured upstream, use its latest local commit. Do not run git pull on the feature branch. '
+            + RESERVED_TURN + UPDATE_TARGET +
+            'Do not run git pull on the feature branch. '
             'Resolve conflicts yourself, preserving the feature intent and unrelated changes. After updating the branch, inspect the complete diff and current review comments. '
             'Handle release readiness and required validation yourself: address actionable comments, fix failing checks, '
             'rebase onto the target and resolve conflicts as needed. Unresolved comment flags are not merge blockers. '
@@ -2861,7 +3014,7 @@ class Review:
             write_json(Path(request['path']), request)
             return {key: request[key] for key in ('id', 'status', 'mergePid', 'executionLog')}
 
-    def execute_merge_request(self, request_id, title, description):
+    def execute_merge_request(self, request_id, title, description, wait=False):
         with self.merge_request_lock():
             request = self.recover_interrupted_merge(self.merge_request())
             if not request or request['id'] != request_id or request['status'] != 'pending':
@@ -2869,6 +3022,11 @@ class Review:
             if request.get('workerPid') and not process_alive(request['workerPid']):
                 request.update(workerPid=None)
                 write_json(Path(request['path']), request)
+        if wait:
+            owner = read_json(self.store / 'queue-owner.json', {})
+            if owner.get('id') != request_id or owner.get('batching'):
+                self.update_request(request_id, summary='Prepared. The execution waits for this request\'s merge queue turn.')
+            wait_for_queue_turn(self.store, request_id)
         with queue_slot(self.store, request_id):
             self.execute_queued_merge(request_id, title, description)
 
@@ -2881,7 +3039,11 @@ class Review:
                 raise ValueError('The approved branch or target changed')
             # Approval covers completing the task; freeze the agent's prepared content for this attempt.
             self.refresh()
+            if self.git('merge-base', self.target, 'HEAD').strip() != self.target_head:
+                self.rebase_onto_target(request_id)
+                self.refresh()
             self.merge_backup_head = request['head']
+            self.merge_request_id = request_id
             self.start_merge(self.revision, title, description)
             request.update(status='working', summary='The agent is validating and merging the prepared changes.',
                            preparedRevision=self.revision, mergePid=os.getpid())
@@ -2900,9 +3062,47 @@ class Review:
         if request['status'] != 'merged':
             raise ValueError('Merge attempt failed; fix the cause and retry the same request: ' + request['summary'])
 
-    def command(self, args):
+    def update_request(self, request_id, **fields):
+        with self.merge_request_lock():
+            request = self.merge_request()
+            if request and request['id'] == request_id and request['status'] == 'pending':
+                request.update(fields)
+                write_json(Path(request['path']), request)
+
+    def rebase_onto_target(self, request_id):
+        """Move prepared content onto a target that advanced, without conflict resolution or touching the approved changes.
+
+        The merge squashes the branch into one commit anyway, so the worktree's complete content, uncommitted files
+        included, is merged with the new target and becomes a single commit on it."""
+        base = self.git('merge-base', self.target, 'HEAD').strip()
+        if any(line.split()[0] == ':160000' or line.split()[1] == '160000'
+               for line in self.git('diff', '--raw', '--no-abbrev', base, self.target_head).splitlines() if line.startswith(':')):
+            raise ValueError('The target moved a submodule pin. Rebase, update the submodule checkout, validate and retry the same request.')
+        branch, head = self.git('branch', '--show-current').strip(), self.git('rev-parse', 'HEAD').strip()
+        prepared = self.snapshot('pre-rebase-' + request_id)
+        merged = subprocess.run([git_executable(), 'merge-tree', '--write-tree', '--merge-base', base, self.target_head,
+                                 self.git('commit-tree', prepared, '-p', 'HEAD', '-m', 'Prepared content').strip()],
+                                cwd=self.repo, capture_output=True, text=True, timeout=120)
+        if merged.returncode:
+            raise ValueError('The target moved and the prepared changes conflict with it. Rebase, resolve, validate and retry the same request.')
+        commit = self.git('commit-tree', merged.stdout.splitlines()[0], '-p', self.target_head,
+                          '-m', f'Prepared {self.branch} on {self.target}').strip()
+        # Merging can take a while; anything saved meanwhile must not be overwritten.
+        if (self.git('branch', '--show-current').strip(), self.git('rev-parse', 'HEAD').strip()) != (branch, head) or \
+                self.snapshot('pre-rebase-' + request_id) != prepared:
+            raise ValueError('Files or the branch changed while moving onto the target. Inspect, validate and retry the same request.')
+        self.git('reset', '--hard', commit)
+        self.log_merge(f'Rebased the prepared changes onto {self.target} at {self.target_head[:12]}; the snapshot before it is {prepared}.\n')
+
+    def log_merge(self, text):
+        if getattr(self, 'stream_merge_log', False):
+            print(text, end='', flush=True)
+        with self.lock:
+            self.job['log'] = (self.job['log'] + text)[-100000:]
+
+    def command(self, args, env=None):
         with subprocess.Popen(args, cwd=self.repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, stdin=subprocess.DEVNULL, env={**os.environ, 'NO_COLOR': '1'}) as process:
+                              text=True, stdin=subprocess.DEVNULL, env={**os.environ, 'NO_COLOR': '1', **(env or {})}) as process:
             for line in process.stdout:
                 if getattr(self, 'stream_merge_log', False):
                     print(line, end='', flush=True)
@@ -2951,7 +3151,11 @@ class Review:
             # The agent prepares rebases; Worktrunk runs validation and cleanup on the frozen attempt.
             if self.git('rev-parse', self.target).strip() != self.target_head:
                 raise ValueError('Target moved during validation. Rebase, validate and retry the same request.')
-            self.command([arg.replace('{target}', self.target) for arg in self.config['merge']['command']])
+            request_id = getattr(self, 'merge_request_id', None)
+            batch_id, env = validated_batch_env(self.store, self.config, request_id, self.git('rev-parse', 'HEAD^{tree}').strip()) if request_id else (None, {})
+            if batch_id:
+                self.log_merge(f'Merge batch {batch_id} validated this exact tree; merging with {", ".join(sorted(env)) or "no extra environment"}.\n')
+            self.command([arg.replace('{target}', self.target) for arg in self.config['merge']['command']], **({'env': env} if env else {}))
             self.job['status'] = 'merged'
         except Exception as error:
             with self.lock:
@@ -3393,7 +3597,7 @@ def main():
                 origin, saved = detect_agent(config['name']), request.get('agent') or {}
                 if origin and all(origin.get(key) == saved.get(key) for key in ('provider', 'sessionId')):
                     request['agent'] = {**saved, 'cli': origin.get('cli') or saved.get('cli')}
-                request.update(status='pending', delivery='not_sent', workerPid=None, mergePid=None,
+                request.update(status='pending', delivery='not_sent', workerPid=None, mergePid=None, pickedUpAt=None, deliveredEarly=False,
                                summary='Approval resumed. Waiting for its queue turn.')
                 write_json(Path(request['path']), request)
             review.notify_merge_request(request)
@@ -3456,6 +3660,9 @@ def main():
         if args.merge_request:
             with review.merge_request_lock():
                 request = review.recover_interrupted_merge(review.merge_request())
+                if request and request['id'] == args.merge_request and request['status'] == 'pending' and not request.get('pickedUpAt'):
+                    request['pickedUpAt'] = datetime.now(timezone.utc).isoformat()
+                    write_json(Path(request['path']), request)
             if not request or request['id'] != args.merge_request:
                 parser.error('No matching merge request')
             print(json.dumps({**request, 'currentRevision': review.revision,
@@ -3466,7 +3673,7 @@ def main():
             if args.merge_worker:
                 review.stream_merge_log = True
                 try:
-                    review.execute_merge_request(args.execute_merge_request, args.title, description)
+                    review.execute_merge_request(args.execute_merge_request, args.title, description, wait=True)
                 except ValueError as error:
                     with review.merge_request_lock():
                         request = review.merge_request()

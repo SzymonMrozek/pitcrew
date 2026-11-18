@@ -382,8 +382,8 @@ done, the worktree is gone, there is nothing to merge, or a submodule has
 uncommitted changes. The server decides this in one place and returns it as
 `mergeBlocker`.
 
-The delivery process waits for its turn in the [queue](#merge-queue), reserves
-it through cleanup, then queues the request into the original Codex chat or
+The delivery process waits for its turn in the [queue](#merge-queue) (or until
+it is next while the approval ahead executes), reserves it through cleanup, then queues the request into the original Codex chat or
 resumes the original Claude conversation. Follow the progress and reply there.
 The agent then:
 
@@ -436,9 +436,43 @@ that need attention, and the last 20 merges.
 without starting a server. `review --queue-page` prints the URL of a standalone
 page.
 
-The queue is one lock held from preparation through cleanup. A waiting
-approval costs nothing: no agent run, rebase or tests start until its turn. A
-blocked worker moves to **Needs attention**, and the queue continues.
+The queue is one lock held from validation through cleanup. A waiting
+approval costs nothing until it is next: no agent run, rebase or tests start.
+A blocked worker moves to **Needs attention**, and the queue continues.
+
+- **Next in line prepares early.** While the approval ahead of it executes, the
+  next approval is delivered to its conversation with instructions to prepare
+  now. Its `--execute-merge-request` starts a detached execution that waits for
+  the queue turn. Until then the agent leaves the local target alone, because
+  the approval ahead validates against it. At the turn, a target that moved
+  meanwhile is merged into the prepared content (uncommitted files included)
+  when that needs no conflict resolution and moves no submodule pin; otherwise
+  the approval returns to pending for the agent to rebase and execute again.
+- **Pickup timeout.** A Codex conversation that hasn't inspected its delivered
+  approval with `--merge-request <id>` after `merge.pickup-timeout` seconds
+  (600 by default, 0 waits forever) moves to **Needs attention**, and the queue
+  continues. Resuming keeps its position.
+- **Batches.** With `[merge.batch] max` above 1, the approval taking its turn
+  stacks the approvals waiting behind it onto the target in queue order with
+  `git merge-tree`, up to `max` and stopping at the first conflict. When at
+  least two stack, `command` validates the stacked commit once (`{commit}`,
+  `{target}`) while the queue shows **Validating batch**. Each member then
+  merges as usual; when the batch passed and a member's final commit has the
+  exact tree validated for its position, the merge command runs with `env`
+  added (`{batch}` is the batch ID), for example to skip a test suite the batch
+  already ran. Any other tree, a withdrawn member or a failed batch merges with
+  full validation. Batches and their logs live in the state directory's
+  `batches/`, and the stacked commit at `refs/<name>/batch/<id>`.
+
+```toml
+[merge]
+pickup-timeout = 600
+
+[merge.batch]
+max = 4
+command = ["scripts/validate-batch.sh", "{commit}", "{target}"]
+env = { SKIP_FULL_TESTS = "1", MERGE_BATCH = "{batch}" }
+```
 
 Every pending approval has a private snapshot commit containing the complete
 approved files, including uncommitted ones, on top of its merge base.
@@ -599,7 +633,7 @@ The tool reads `.config/local-review.toml` from the repository root.
 | `[[priority]]` | Ecto migrations | `pattern` and `label` for paths that never score below 95; setting any replaces the default |
 | `[[modules]]` | none | JavaScript regexes with `name`, `group` and `target` named groups |
 | `[simulator]` | `.worktree-simulator/simulator.env` | Metadata file and the keys holding the UDID and name |
-| `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, and `[[merge.checks]]` (`paths`, `command`) |
+| `[merge]` | `wt merge {target} --no-commit --no-rebase` | `command`, extra agent `instructions`, `pickup-timeout`, `[[merge.checks]]` (`paths`, `command`) and `[merge.batch]` (`max`, `command`, `env`) |
 | `[demos]` | dark, no paths | `paths` whose changes should come with a demo recording, and the recording `appearance` |
 | `[run]` | none | `destinations` and `command` for **Run…** |
 | `[module-graph]` | none | `manifests` path regexes and the `command` that prints the module graph for **Summary** |

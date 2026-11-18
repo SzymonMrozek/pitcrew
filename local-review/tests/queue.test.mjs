@@ -18,7 +18,7 @@ test('queue cards display all states and keep untrusted titles and paths as text
     assert.ok(nodes.some(node => node.textContent === '<img src=x>'));
     assert.ok(nodes.some(node => node.href === '/?merge=abc&review=other-review#token'));
     assert.equal(queueLabel(entry), 'Waiting · #2');
-    for (const phase of ['preparing', 'merging', 'merged', 'blocked']) assert.ok(queueLabel({...entry, phase}));
+    for (const phase of ['preparing', 'batching', 'merging', 'merged', 'blocked']) assert.ok(queueLabel({...entry, phase}));
     assert.ok(nodes.some(node => node.textContent === 'No recorded merges yet.'));
   } finally {delete globalThis.document;}
 });

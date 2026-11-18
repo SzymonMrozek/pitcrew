@@ -2043,12 +2043,13 @@ class ReviewTests(unittest.TestCase):
 
     def test_resume_cli_reuses_stopped_approval_and_rejects_live_or_withdrawn_worker(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
-        m.write_json(Path(request['path']), {**request, 'status': 'blocked', 'workerPid': None})
+        m.write_json(Path(request['path']), {**request, 'status': 'blocked', 'workerPid': None, 'pickedUpAt': 'earlier', 'deliveredEarly': True})
         argv = ['server.py', '--repo', str(self.root), '--resume-merge-request', request['id']]
         with patch.object(sys, 'argv', argv), patch('sys.stdout', new=io.StringIO()):
             m.main()
         resumed = self.review.merge_request()
         self.assertEqual(resumed['status'], 'pending')
+        self.assertEqual((resumed['pickedUpAt'], resumed['deliveredEarly']), (None, False), 'Redelivery needs a fresh pickup')
         for field in ('id', 'requestedAt', 'snapshotRef', 'snapshotCommit'):
             self.assertEqual(resumed[field], request[field])
         self.assertEqual(self.notify.call_count, 2)
@@ -2175,6 +2176,307 @@ if '--output-last-message' in sys.argv:
             deliver(request['path'])
         self.assertEqual(self.review.merge_request()['status'], 'merged')
         self.assertEqual(self.review.merge_request()['summary'], 'Done')
+
+    def approved_commit(self, base, path, text, gitlink=None):
+        """A snapshot-like commit on base that changes one file or submodule pin, as a queued approval stores it."""
+        blob = gitlink or subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=self.root, input=text, capture_output=True, text=True, check=True).stdout.strip()
+        index = self.root / '.git' / 'test-index'
+        env = {**os.environ, 'GIT_INDEX_FILE': str(index)}
+        subprocess.run(['git', 'read-tree', base], cwd=self.root, env=env, check=True)
+        subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'{"160000" if gitlink else "100644"},{blob},{path}'], cwd=self.root, env=env, check=True)
+        tree = subprocess.run(['git', 'write-tree'], cwd=self.root, env=env, capture_output=True, text=True, check=True).stdout.strip()
+        index.unlink()
+        return self.git('commit-tree', tree, '-p', base, '-m', 'approved')
+
+    def queued_batch(self, *changes):
+        base = self.git('rev-parse', 'main')
+        requests = []
+        for number, (path, text) in enumerate(changes):
+            request = {'id': f'{number:024x}', 'status': 'pending', 'branch': f'feature-{number}', 'target': 'main',
+                       'requestedAt': f'2026-01-01T00:00:0{number}+00:00', 'sessionId': f'session-{number}', 'title': f'fix(test): change {number}',
+                       'snapshotBase': base, 'snapshotCommit': self.approved_commit(base, path, text),
+                       'path': str(self.review.store / f'session-{number}-merge-request.json'), 'workerPid': os.getpid()}
+            m.write_json(Path(request['path']), request)
+            requests.append(request)
+        return requests
+
+    def batch_config(self, command, max_size=4):
+        config = json.loads(json.dumps(m.CONFIG))
+        config['merge']['batch'] = {'max': max_size, 'command': command, 'env': {'SKIP_TESTS': '1', 'BATCH': '{batch}'}}
+        return config
+
+    def test_batch_config_defaults_and_validation(self):
+        config = m.load_config(self.root)
+        self.assertEqual(config['merge']['batch'], {'max': 1, 'command': [], 'env': {}})
+        self.assertEqual(config['merge']['pickup-timeout'], 600)
+        settings = self.root / 'review.toml'
+        os.environ['LOCAL_REVIEW_CONFIG'] = str(settings)
+        settings.write_text('[merge.batch]\nmax = 3\ncommand = ["validate", "{commit}"]\n')
+        self.assertEqual(m.load_config(self.root)['merge']['batch'], {'max': 3, 'command': ['validate', '{commit}'], 'env': {}})
+        for text in ('[merge.batch]\nmax = 3\ncommand = ["validate"]\n', '[merge.batch]\nmax = 0\n',
+                     '[merge.batch]\nenv = { SKIP = 1 }\n', '[merge.batch]\nsize = 2\n', '[merge]\npickup-timeout = -1\n'):
+            settings.write_text(text)
+            with self.assertRaises(ValueError, msg=text):
+                m.load_config(self.root)
+
+    def test_batch_stacks_waiting_approvals_validates_once_and_skips_only_matching_trees(self):
+        first, second, conflicting, later = self.queued_batch(('a.txt', 'a\n'), ('b.txt', 'b\n'), ('a.txt', 'other\n'), ('c.txt', 'c\n'))
+        record = self.root / 'validated'
+        config = self.batch_config(['sh', '-c', f'git ls-tree --name-only {{commit}} > {record}; echo {{target}} >> {record}'])
+        batch = m.validate_batch(self.review.store, self.root, config, first['id'])
+        self.assertEqual(batch['status'], 'passed')
+        self.assertEqual([member['id'] for member in batch['members']], [first['id'], second['id']], 'Stacking stops at the first conflict to keep queue order')
+        self.assertIn('a.txt', record.read_text())
+        self.assertIn('b.txt', record.read_text())
+        self.assertTrue(record.read_text().endswith('main\n'))
+        self.assertEqual(self.git('rev-parse', f'refs/local-review/batch/{batch["id"]}'), batch['commit'])
+        self.assertEqual(self.git('rev-parse', batch['members'][0]['commit'] + '^'), self.git('rev-parse', 'main'))
+        self.assertIsNone(m.validate_batch(self.review.store, self.root, config, first['id']), 'An approval joins one batch')
+        member = batch['members'][1]
+        self.assertEqual(m.validated_batch_env(self.review.store, config, second['id'], member['tree']), (batch['id'], {'SKIP_TESTS': '1', 'BATCH': batch['id']}))
+        self.assertEqual(m.validated_batch_env(self.review.store, config, second['id'], batch['members'][0]['tree']), (None, {}))
+        self.assertEqual(m.validated_batch_env(self.review.store, config, later['id'], member['tree']), (None, {}))
+        for request in (first, second):
+            m.write_json(Path(request['path']), {**request, 'status': 'merged'})
+        failing = m.validate_batch(self.review.store, self.root, self.batch_config(['false']), conflicting['id'])
+        self.assertEqual((failing['status'], [m['id'] for m in failing['members']]), ('failed', [conflicting['id'], later['id']]))
+        self.assertEqual(m.validated_batch_env(self.review.store, config, later['id'], failing['members'][1]['tree']), (None, {}))
+
+    def test_batch_needs_two_members_and_the_queue_turn(self):
+        first, second = self.queued_batch(('a.txt', 'a\n'), ('b.txt', 'b\n'))
+        config = self.batch_config(['true', '{commit}'])
+        self.assertIsNone(m.validate_batch(self.review.store, self.root, config, second['id']), 'Only the head of the queue forms a batch')
+        self.assertIsNone(m.validate_batch(self.review.store, self.root, self.batch_config(['true', '{commit}'], max_size=1), first['id']))
+        m.write_json(Path(second['path']), {**second, 'status': 'cancelled'})
+        self.assertIsNone(m.validate_batch(self.review.store, self.root, config, first['id']))
+        self.assertFalse((self.review.store / 'batches').exists() and any((self.review.store / 'batches').glob('*.json')))
+
+    def test_merge_adds_batch_environment_only_for_the_validated_tree(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.review.merge_request_id = request['id']
+        self.review.config = self.batch_config(['true', '{commit}'])
+        self.review.config['merge']['command'] = ['wt', 'merge', '{target}']
+        self.git('add', '--all')
+        tree = self.git('write-tree')
+        self.git('reset', '-q')
+        batch = {'id': 'feed' * 4, 'status': 'passed', 'members': [{'id': request['id'], 'tree': tree}]}
+        m.write_json(self.review.store / 'batches' / 'feedfeedfeedfeed.json', batch)
+        calls = []
+        def command(args, **kwargs):
+            calls.append((args, kwargs.get('env')))
+            if args[0] == 'git':
+                self.git(*args[1:])
+        with patch.object(self.review, 'command', side_effect=command):
+            self.review.start_merge(self.review.revision, 'fix(test): batched', 'Validated in a batch.')
+            for _ in range(200):
+                if self.review.job['status'] != 'running':
+                    break
+                time.sleep(.05)
+        self.assertEqual(self.review.job['status'], 'merged', self.review.job)
+        self.assertEqual(calls[-1], (['wt', 'merge', 'main'], {'SKIP_TESTS': '1', 'BATCH': 'feed' * 4}))
+        self.assertIn('validated this exact tree', self.review.job['log'])
+
+    def test_pickup_timeout_releases_a_codex_conversation_that_never_inspects(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.assertEqual(request['pickupTimeout'], 600)
+        m.write_json(Path(request['path']), {**request, 'pickupTimeout': 1})
+        clock = iter([0, 0.5, 2])
+        with patch('agent.subprocess.run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch('agent.time.monotonic', side_effect=lambda: next(clock)), patch('agent.time.sleep'):
+            deliver(request['path'])
+        saved = self.review.merge_request()
+        self.assertEqual(saved['status'], 'blocked')
+        self.assertIn('did not inspect this approval', saved['summary'])
+        self.assertFalse((self.review.store / 'queue-owner.json').exists(), 'The queue moves on')
+
+    def test_pickup_that_wins_the_race_with_the_timeout_keeps_the_turn(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        m.write_json(Path(request['path']), {**request, 'pickupTimeout': 1})
+        times = iter([0, 5])
+        def clock():
+            value = next(times, 10)
+            if value == 5:
+                m.write_json(Path(request['path']), {**self.review.merge_request(), 'pickedUpAt': 'now'})
+            return value
+        def finish(_):
+            m.write_json(Path(request['path']), {**self.review.merge_request(), 'status': 'merged'})
+        with patch('agent.subprocess.run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch('agent.time.monotonic', side_effect=clock), patch('agent.time.sleep', side_effect=finish):
+            deliver(request['path'])
+        self.assertEqual(self.review.merge_request()['status'], 'merged')
+
+    def test_inspecting_the_request_counts_as_pickup(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        argv = ['server.py', '--repo', str(self.root), '--merge-request', request['id']]
+        with patch.object(sys, 'argv', argv), patch('sys.stdout', new=io.StringIO()):
+            m.main()
+        picked = self.review.merge_request()
+        self.assertTrue(picked['pickedUpAt'])
+        m.write_json(Path(request['path']), {**picked, 'pickupTimeout': 1})
+        clock = iter([0, 5, 10])
+        def finish(_):
+            saved = self.review.merge_request()
+            m.write_json(Path(request['path']), {**saved, 'status': 'merged'})
+        with patch('agent.subprocess.run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch('agent.time.monotonic', side_effect=lambda: next(clock)), patch('agent.time.sleep', side_effect=finish):
+            deliver(request['path'])
+        self.assertEqual(self.review.merge_request()['status'], 'merged')
+
+    def test_next_approval_is_delivered_early_and_keeps_its_turn_until_merged(self):
+        first, second = self.queued_pair()
+        m.write_json(Path(first['path']), {**first, 'status': 'working', 'mergePid': os.getpid()})
+        prompts = []
+        def queued(command, **kwargs):
+            prompts.append(command[command.index('--message') + 1])
+            return subprocess.CompletedProcess(command, 0)
+        with patch('agent.subprocess.run', side_effect=queued):
+            with m.queue_slot(self.review.store, first['id']):
+                worker = threading.Thread(target=deliver, args=(second['path'],))
+                worker.start()
+                deadline = time.monotonic() + 5
+                while not prompts and time.monotonic() < deadline:
+                    time.sleep(.05)
+                self.assertEqual(len(prompts), 1, 'The next approval prepares while the one ahead validates')
+                self.assertIn(m.EARLY_TURN, prompts[0])
+                self.assertNotIn(m.RESERVED_TURN, prompts[0])
+                self.assertIn(m.EARLY_TARGET, prompts[0])
+                self.assertNotIn(m.UPDATE_TARGET, prompts[0], 'Moving the target would fail the validation ahead')
+                self.assertTrue(m.read_json(Path(second['path']), {})['deliveredEarly'])
+                self.assertEqual(m.read_json(self.review.store / 'queue-owner.json', {})['id'], first['id'])
+                self.assertEqual([r['phase'] for r in self.review.merge_queue()['pending']], ['merging', 'preparing'])
+                m.write_json(Path(first['path']), {**m.read_json(Path(first['path']), {}), 'status': 'merged', 'mergePid': None})
+            deadline = time.monotonic() + 5
+            while m.read_json(self.review.store / 'queue-owner.json', {}).get('id') != second['id'] and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertEqual(m.read_json(self.review.store / 'queue-owner.json', {})['id'], second['id'], 'It takes its turn after the first')
+            self.assertTrue(worker.is_alive(), 'It holds the turn until its own merge finishes')
+            m.write_json(Path(second['path']), {**m.read_json(Path(second['path']), {}), 'status': 'merged'})
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(prompts), 1, 'Early delivery is not repeated at the turn')
+        self.assertFalse((self.review.store / 'queue-owner.json').exists())
+
+    def test_waiting_execution_starts_only_at_its_turn(self):
+        first, second = self.queued_pair()
+        m.write_json(Path(second['path']), {**second, 'workerPid': os.getpid()})
+        with m.queue_slot(self.review.store, first['id']):
+            started = []
+            waiter = threading.Thread(target=lambda: (m.wait_for_queue_turn(self.review.store, second['id'], poll=.05), started.append(True)))
+            waiter.start()
+            time.sleep(.3)
+            self.assertFalse(started)
+        m.write_json(self.review.store / 'queue-owner.json', {'id': second['id'], 'pid': os.getpid(), 'batching': True})
+        time.sleep(.3)
+        self.assertFalse(started, 'Execution waits for the batch validation of its turn')
+        m.update_queue_owner(self.review.store, second['id'], batching=False)
+        waiter.join(timeout=5)
+        self.assertEqual(started, [True])
+        exited = subprocess.Popen([sys.executable, '-c', 'pass'])
+        exited.wait()
+        (self.review.store / 'queue-owner.json').unlink()
+        m.write_json(Path(second['path']), {**second, 'workerPid': exited.pid})
+        with self.assertRaisesRegex(ValueError, 'Resume the same request'):
+            m.wait_for_queue_turn(self.review.store, second['id'], poll=.01)
+        m.write_json(Path(second['path']), {**second, 'status': 'cancelled'})
+        with self.assertRaisesRegex(ValueError, 'pending approval'):
+            m.wait_for_queue_turn(self.review.store, second['id'], poll=.01)
+
+    def test_execution_rebases_prepared_changes_onto_an_advanced_target(self):
+        self.write('notes.txt', 'uncommitted approved file\n')
+        self.review.refresh()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.git('checkout', '-q', 'main')
+        main = self.git('rev-parse', 'HEAD')
+        self.git('checkout', '-q', 'feature')
+        advanced = self.approved_commit(main, 'other.txt', 'landed meanwhile\n')
+        self.git('update-ref', 'refs/heads/main', advanced)
+        self.review.refresh()
+        self.review.rebase_onto_target(request['id'])
+        self.assertEqual(self.git('rev-parse', 'HEAD^'), advanced)
+        self.assertEqual((self.root / 'Interactor.swift').read_text(), 'let value = 2\n')
+        self.assertEqual((self.root / 'notes.txt').read_text(), 'uncommitted approved file\n')
+        self.assertEqual((self.root / 'other.txt').read_text(), 'landed meanwhile\n')
+        self.assertEqual(self.git('status', '--porcelain'), '')
+        conflicting = self.approved_commit(advanced, 'Interactor.swift', 'let value = 9\n')
+        self.git('update-ref', 'refs/heads/main', conflicting)
+        self.review.refresh()
+        before = self.git('rev-parse', 'HEAD')
+        with self.assertRaisesRegex(ValueError, 'conflict'):
+            self.review.rebase_onto_target(request['id'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), before, 'A conflict leaves the prepared branch untouched')
+        pinned = self.approved_commit(advanced, 'proto', None, gitlink=advanced)
+        self.git('update-ref', 'refs/heads/main', pinned)
+        self.review.refresh()
+        with self.assertRaisesRegex(ValueError, 'submodule pin'):
+            self.review.rebase_onto_target(request['id'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), before, 'A moved pin needs its checkout updated by the agent')
+
+    def test_rebase_refuses_content_saved_while_merging(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        advanced = self.approved_commit(self.git('rev-parse', 'main'), 'other.txt', 'landed meanwhile\n')
+        self.git('update-ref', 'refs/heads/main', advanced)
+        self.review.refresh()
+        before = self.git('rev-parse', 'HEAD')
+        snapshot = self.review.snapshot
+        calls = []
+        def saving(name):
+            calls.append(name)
+            if len(calls) == 2:
+                self.write('Interactor.swift', 'let value = 7\n')
+            return snapshot(name)
+        with patch.object(self.review, 'snapshot', side_effect=saving), self.assertRaisesRegex(ValueError, 'changed while moving'):
+            self.review.rebase_onto_target(request['id'])
+        self.assertEqual((self.git('rev-parse', 'HEAD'), (self.root / 'Interactor.swift').read_text()), (before, 'let value = 7\n'))
+
+    def test_execution_rebases_before_freezing_the_attempt(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        advanced = self.approved_commit(self.git('rev-parse', 'main'), 'other.txt', 'landed meanwhile\n')
+        self.git('update-ref', 'refs/heads/main', advanced)
+        with patch.object(self.review, 'start_merge') as merge, self.assertRaisesRegex(ValueError, 'Merge attempt failed'):
+            self.review.execute_queued_merge(request['id'], 'fix(test): rebased', 'Rebased automatically.')
+        merge.assert_called_once()
+        self.assertEqual(self.git('rev-parse', 'HEAD^'), advanced)
+        self.assertEqual(self.review.target_head, advanced)
+
+    def test_delivery_validates_a_batch_before_the_leader_starts(self):
+        first = self.review.request_merge(self.review.approval_revision(), '', '')
+        _, second = self.queued_batch(('unused.txt', '\n'), ('b.txt', 'b\n'))
+        m.write_json(Path(second['path']), {**second, 'requestedAt': '9999-01-01T00:00:00+00:00', 'target': 'main'})
+        (self.review.store / 'session-0-merge-request.json').unlink()
+        marker = self.root / '.git' / 'batch-ran'
+        settings = self.root / '.git' / 'review.toml'
+        owner = self.review.store / 'queue-owner.json'
+        settings.write_text(f'[merge.batch]\nmax = 2\ncommand = ["sh", "-c", "cat {owner} > {marker}.owner; echo {{commit}} > {marker}"]\n')
+        os.environ['LOCAL_REVIEW_CONFIG'] = str(settings)
+        order = []
+        def delivered(path, request, *args):
+            order.append(('delivered', marker.exists(), m.read_json(self.review.store / 'queue-owner.json', {}).get('batching')))
+            m.write_json(Path(path), {**m.read_json(Path(path), {}), 'status': 'merged'})
+        with patch('agent.deliver_merge_conversation', side_effect=delivered):
+            deliver(first['path'])
+        self.assertEqual(order, [('delivered', True, False)])
+        batch = next(m.batch_for(self.review.store, first['id']))
+        self.assertEqual((batch['status'], [member['id'] for member in batch['members']]), ('passed', [first['id'], second['id']]))
+        self.assertEqual(marker.read_text().strip(), batch['commit'])
+        self.assertTrue(json.loads(Path(f'{marker}.owner').read_text())['batching'], 'Executions wait while the batch validates')
+
+    def test_claude_turn_that_ends_during_execution_keeps_the_queue_until_it_finishes(self):
+        with patch.dict(os.environ, {'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}), patch.object(m.shutil, 'which', return_value='/fake/claude'):
+            self.review.record_agent()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        # A detached execution is not the delivery process's child, so it never lingers as a zombie.
+        detached = subprocess.run([sys.executable, '-c', 'import subprocess, sys; print(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)'],
+                                  capture_output=True, text=True, check=True)
+        execution_pid = int(detached.stdout)
+        def resumed(command, **kwargs):
+            m.write_json(Path(request['path']), {**self.review.merge_request(), 'mergePid': execution_pid})
+            kwargs['stdout'].write(json.dumps({'type': 'result', 'result': 'Executing; polling stopped.'}) + '\n')
+            return subprocess.CompletedProcess(command, 0)
+        started = time.monotonic()
+        with patch('agent.subprocess.run', side_effect=resumed):
+            deliver(request['path'])
+        self.assertGreaterEqual(time.monotonic() - started, .8, 'The queue stays reserved while the execution runs')
+        self.assertEqual(self.review.merge_request()['status'], 'blocked')
 
     def comment(self, text, resolved=False):
         file = self.review.files[0]

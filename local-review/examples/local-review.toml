@@ -70,6 +70,16 @@ instructions = "The Worktrunk pre-merge hook runs the affected tests; don't run 
 # paths = ['\.swift$']
 # command = ["make", "format-changed"]
 
+# Seconds a Codex conversation may take to inspect its delivered approval before the queue moves on.
+# pickup-timeout = 600
+
+# Optional: validate approvals waiting together as one stacked commit, then merge each one whose final
+# tree matches with env added. {commit} is the stacked commit, {target} the target, {batch} the batch ID.
+# [merge.batch]
+# max = 4
+# command = ["scripts/validate-batch.sh", "{commit}", "{target}"]
+# env = { SKIP_FULL_TESTS = "1", MERGE_BATCH = "{batch}" }
+
 # Runs before committing when any changed path matches one of `paths`.
 [[merge.checks]]
 paths = ['^(App|Modules)/', '^Project\.swift$']

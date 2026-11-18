@@ -1,7 +1,7 @@
 const node = (tag, text, className) => {const result = document.createElement(tag); if (text !== undefined) result.textContent = text; if (className) result.className = className; return result;};
 
 export function queueLabel(entry) {
-  return ({waiting: `Waiting · #${entry.position}`, preparing: 'Preparing', merging: 'Validating & merging', merged: 'Merged', blocked: 'Needs attention'})[entry.phase] || entry.phase;
+  return ({waiting: `Waiting · #${entry.position}`, preparing: 'Preparing', batching: 'Validating batch', merging: 'Validating & merging', merged: 'Merged', blocked: 'Needs attention'})[entry.phase] || entry.phase;
 }
 
 export function renderQueue(root, state, token) {

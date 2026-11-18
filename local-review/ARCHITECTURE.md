@@ -49,9 +49,15 @@ Keep these, whatever your stack.
    the attempt. Files can change while a long validation runs.
 3. **A withdrawn approval never merges.** Every attempt rereads the request
    status under a lock before touching the index.
-4. **The queue lock is held from preparation through cleanup.** It isn't just
-   held around the merge. Rebasing and testing against a target that's about to
-   move is wasted work. Waiting holds no agent and runs nothing.
+4. **The queue lock is held from validation through cleanup.** It isn't just
+   held around the merge. Testing against a target that's about to move is
+   wasted work. Waiting runs nothing, with one exception: the approval next in
+   line is delivered while the one ahead executes, so its agent's reading and
+   rebasing overlap that validation. Its execution still waits for the lock,
+   then moves the prepared content onto the target it finds, or stops on a
+   conflict. A batch validated as one stacked commit lets each member skip
+   only the checks the batch ran, and only when its final tree is the one the
+   batch validated for it.
 5. **The worker belongs to the conversation that wrote the change.** The
    provider, session and CLI path are recorded when the agent starts the review
    or an iteration. The approval freezes that choice. The tool never falls back
