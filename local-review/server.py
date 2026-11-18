@@ -562,7 +562,7 @@ def queue_requests(store):
 
 
 @contextmanager
-def queue_slot(store, request_id, wait=False, conversation=None, waiting=None):
+def queue_slot(store, request_id, wait=False, conversation=None, waiting=None, claim=None):
     """Reserve preparation through cleanup, before launching any expensive work; call waiting while queued."""
     owner_path = store / 'queue-owner.json'
     owner = read_json(owner_path, {})
@@ -595,7 +595,7 @@ def queue_slot(store, request_id, wait=False, conversation=None, waiting=None):
             if waiting:
                 waiting()
             time.sleep(.5)
-        write_json(owner_path, {'id': request_id, 'pid': os.getpid(), 'conversation': conversation})
+        write_json(owner_path, {'id': request_id, 'pid': os.getpid(), 'conversation': conversation, **(claim or {})})
         try:
             yield
         finally:
@@ -612,9 +612,20 @@ EARLY_TURN = ('This request is next in the repository merge queue while the appr
               'that turn finds when that needs no conflict resolution, and otherwise returns the request to pending for you to rebase and execute again. ')
 
 
+UPDATE_TARGET = ('First fetch the merge target’s configured upstream if it has one. Integrate its latest commits into the local target '
+                 'without dropping local commits or disturbing unrelated working changes, then rebase this worktree branch onto that latest target. '
+                 'If the target has no configured upstream, use its latest local commit. ')
+# The approval ahead validates against the local target, so moving it now would fail that attempt.
+EARLY_TARGET = ('Leave the local target branch where it is until this request owns the queue: do not fetch into it or integrate its upstream. '
+                'Rebase this worktree branch onto the local target as it is now. ')
+
+
 def early_prompt(request):
     """The approval prompt for delivery before the queue turn, or None for approvals saved before early delivery."""
-    return request['prompt'].replace(RESERVED_TURN, EARLY_TURN) if RESERVED_TURN in request.get('prompt', '') else None
+    prompt = request.get('prompt', '')
+    if RESERVED_TURN not in prompt or UPDATE_TARGET not in prompt:
+        return None
+    return prompt.replace(RESERVED_TURN, EARLY_TURN).replace(UPDATE_TARGET, EARLY_TARGET)
 
 
 def active_requests(store):
@@ -2803,10 +2814,8 @@ class Review:
         request['prompt'] = (f'The user approved the full local review and delegated completing the local merge. '
             f'Read merge request {request["id"]} at {path} and verify it is still pending. '
             'This request was sent to the conversation that wrote the change, just like review comments. '
-            + RESERVED_TURN +
-            'First fetch the merge target’s configured upstream if it has one. Integrate its latest commits into the local target '
-            'without dropping local commits or disturbing unrelated working changes, then rebase this worktree branch onto that latest target. '
-            'If the target has no configured upstream, use its latest local commit. Do not run git pull on the feature branch. '
+            + RESERVED_TURN + UPDATE_TARGET +
+            'Do not run git pull on the feature branch. '
             'Resolve conflicts yourself, preserving the feature intent and unrelated changes. After updating the branch, inspect the complete diff and current review comments. '
             'Handle release readiness and required validation yourself: address actionable comments, fix failing checks, '
             'rebase onto the target and resolve conflicts as needed. Unresolved comment flags are not merge blockers. '
@@ -3013,8 +3022,10 @@ class Review:
             if request.get('workerPid') and not process_alive(request['workerPid']):
                 request.update(workerPid=None)
                 write_json(Path(request['path']), request)
-        if wait and read_json(self.store / 'queue-owner.json', {}).get('id') != request_id:
-            self.update_request(request_id, summary='Prepared. The execution waits for this request\'s merge queue turn.')
+        if wait:
+            owner = read_json(self.store / 'queue-owner.json', {})
+            if owner.get('id') != request_id or owner.get('batching'):
+                self.update_request(request_id, summary='Prepared. The execution waits for this request\'s merge queue turn.')
             wait_for_queue_turn(self.store, request_id)
         with queue_slot(self.store, request_id):
             self.execute_queued_merge(request_id, title, description)
@@ -3064,6 +3075,10 @@ class Review:
         The merge squashes the branch into one commit anyway, so the worktree's complete content, uncommitted files
         included, is merged with the new target and becomes a single commit on it."""
         base = self.git('merge-base', self.target, 'HEAD').strip()
+        if any(line.split()[0] == ':160000' or line.split()[1] == '160000'
+               for line in self.git('diff', '--raw', '--no-abbrev', base, self.target_head).splitlines() if line.startswith(':')):
+            raise ValueError('The target moved a submodule pin. Rebase, update the submodule checkout, validate and retry the same request.')
+        branch, head = self.git('branch', '--show-current').strip(), self.git('rev-parse', 'HEAD').strip()
         prepared = self.snapshot('pre-rebase-' + request_id)
         merged = subprocess.run([git_executable(), 'merge-tree', '--write-tree', '--merge-base', base, self.target_head,
                                  self.git('commit-tree', prepared, '-p', 'HEAD', '-m', 'Prepared content').strip()],
@@ -3072,6 +3087,10 @@ class Review:
             raise ValueError('The target moved and the prepared changes conflict with it. Rebase, resolve, validate and retry the same request.')
         commit = self.git('commit-tree', merged.stdout.splitlines()[0], '-p', self.target_head,
                           '-m', f'Prepared {self.branch} on {self.target}').strip()
+        # Merging can take a while; anything saved meanwhile must not be overwritten.
+        if (self.git('branch', '--show-current').strip(), self.git('rev-parse', 'HEAD').strip()) != (branch, head) or \
+                self.snapshot('pre-rebase-' + request_id) != prepared:
+            raise ValueError('Files or the branch changed while moving onto the target. Inspect, validate and retry the same request.')
         self.git('reset', '--hard', commit)
         self.log_merge(f'Rebased the prepared changes onto {self.target} at {self.target_head[:12]}; the snapshot before it is {prepared}.\n')
 

@@ -67,10 +67,13 @@ def deliver(path):
         early[0].start()
 
     conversation = request.get('agent') if request.get('deliveryMode') == 'conversation' else None
+    batching = batches(request)
     try:
+        # Claimed with the turn, so no execution starts between taking the queue and validating the batch.
         with queue_slot(path.parent, request['id'], wait=True, conversation=conversation,
-                        waiting=deliver_early if conversation else None):
-            run_batch(path, request)
+                        waiting=deliver_early if conversation else None, claim={'batching': True} if batching else None):
+            if batching:
+                run_batch(path, request, batching)
             if early:
                 early[0].join()
                 hold_until_finished(path)
@@ -80,15 +83,17 @@ def deliver(path):
         return  # A withdrawn approval leaves the queue without launching an agent.
 
 
-def run_batch(path, request):
-    """Validate this approval together with those waiting behind it before its agent starts, if the repository batches."""
+def batches(request):
+    """The repository configuration when it batches approvals, else None."""
     try:
         config = load_config(request['mergeRoot'], strict=False)
     except (OSError, ValueError):
-        return
-    if config['merge']['batch']['max'] < 2:
-        return
-    update_queue_owner(path.parent, request['id'], batching=True)
+        return None
+    return config if config['merge']['batch']['max'] > 1 else None
+
+
+def run_batch(path, request, config):
+    """Validate this approval together with those waiting behind it before its agent starts."""
     try:
         validate_batch(path.parent, request['mergeRoot'], config, request['id'])
     except Exception as error:
@@ -110,11 +115,11 @@ def deliver_reserved(path, prompt=None):
     request_id = request['id']
     lock_path = path.with_suffix('.lock')
 
-    def update(**fields):
+    def update(condition=None, **fields):
         with lock_path.open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             current = read_json(path, None)
-            if not current or current['id'] != request_id or current['status'] != 'pending':
+            if not current or current['id'] != request_id or current['status'] != 'pending' or (condition and not condition(current)):
                 return False
             current.update(fields)
             write_json(path, current)
@@ -206,9 +211,10 @@ def deliver_merge_conversation(path, request, provider, label, cli, update):
     while (current := read_json(path, None)) and current['status'] in ('pending', 'working'):
         if timeout and time.monotonic() - delivered > timeout and not current.get('pickedUpAt') and not current.get('mergePid'):
             minutes = round(timeout / 60)
-            update(status='blocked', summary=f'The Codex conversation did not inspect this approval within {minutes} min, so the queue moved on. '
-                   'Resume the same request from that conversation with --resume-merge-request; it keeps its queue position.')
-            return
+            if update(lambda latest: not latest.get('pickedUpAt') and not latest.get('mergePid'), status='blocked',
+                      summary=f'The Codex conversation did not inspect this approval within {minutes} min, so the queue moved on. '
+                      'Resume the same request from that conversation with --resume-merge-request; it keeps its queue position.'):
+                return
         time.sleep(.5)
 
 

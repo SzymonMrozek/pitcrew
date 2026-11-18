@@ -2177,13 +2177,13 @@ if '--output-last-message' in sys.argv:
         self.assertEqual(self.review.merge_request()['status'], 'merged')
         self.assertEqual(self.review.merge_request()['summary'], 'Done')
 
-    def approved_commit(self, base, path, text):
-        """A snapshot-like commit on base that changes one file, as a queued approval stores it."""
-        blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=self.root, input=text, capture_output=True, text=True, check=True).stdout.strip()
+    def approved_commit(self, base, path, text, gitlink=None):
+        """A snapshot-like commit on base that changes one file or submodule pin, as a queued approval stores it."""
+        blob = gitlink or subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=self.root, input=text, capture_output=True, text=True, check=True).stdout.strip()
         index = self.root / '.git' / 'test-index'
         env = {**os.environ, 'GIT_INDEX_FILE': str(index)}
         subprocess.run(['git', 'read-tree', base], cwd=self.root, env=env, check=True)
-        subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'100644,{blob},{path}'], cwd=self.root, env=env, check=True)
+        subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'{"160000" if gitlink else "100644"},{blob},{path}'], cwd=self.root, env=env, check=True)
         tree = subprocess.run(['git', 'write-tree'], cwd=self.root, env=env, capture_output=True, text=True, check=True).stdout.strip()
         index.unlink()
         return self.git('commit-tree', tree, '-p', base, '-m', 'approved')
@@ -2289,6 +2289,22 @@ if '--output-last-message' in sys.argv:
         self.assertIn('did not inspect this approval', saved['summary'])
         self.assertFalse((self.review.store / 'queue-owner.json').exists(), 'The queue moves on')
 
+    def test_pickup_that_wins_the_race_with_the_timeout_keeps_the_turn(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        m.write_json(Path(request['path']), {**request, 'pickupTimeout': 1})
+        times = iter([0, 5])
+        def clock():
+            value = next(times, 10)
+            if value == 5:
+                m.write_json(Path(request['path']), {**self.review.merge_request(), 'pickedUpAt': 'now'})
+            return value
+        def finish(_):
+            m.write_json(Path(request['path']), {**self.review.merge_request(), 'status': 'merged'})
+        with patch('agent.subprocess.run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch('agent.time.monotonic', side_effect=clock), patch('agent.time.sleep', side_effect=finish):
+            deliver(request['path'])
+        self.assertEqual(self.review.merge_request()['status'], 'merged')
+
     def test_inspecting_the_request_counts_as_pickup(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
         argv = ['server.py', '--repo', str(self.root), '--merge-request', request['id']]
@@ -2323,6 +2339,8 @@ if '--output-last-message' in sys.argv:
                 self.assertEqual(len(prompts), 1, 'The next approval prepares while the one ahead validates')
                 self.assertIn(m.EARLY_TURN, prompts[0])
                 self.assertNotIn(m.RESERVED_TURN, prompts[0])
+                self.assertIn(m.EARLY_TARGET, prompts[0])
+                self.assertNotIn(m.UPDATE_TARGET, prompts[0], 'Moving the target would fail the validation ahead')
                 self.assertTrue(m.read_json(Path(second['path']), {})['deliveredEarly'])
                 self.assertEqual(m.read_json(self.review.store / 'queue-owner.json', {})['id'], first['id'])
                 self.assertEqual([r['phase'] for r in self.review.merge_queue()['pending']], ['merging', 'preparing'])
@@ -2386,6 +2404,29 @@ if '--output-last-message' in sys.argv:
         with self.assertRaisesRegex(ValueError, 'conflict'):
             self.review.rebase_onto_target(request['id'])
         self.assertEqual(self.git('rev-parse', 'HEAD'), before, 'A conflict leaves the prepared branch untouched')
+        pinned = self.approved_commit(advanced, 'proto', None, gitlink=advanced)
+        self.git('update-ref', 'refs/heads/main', pinned)
+        self.review.refresh()
+        with self.assertRaisesRegex(ValueError, 'submodule pin'):
+            self.review.rebase_onto_target(request['id'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), before, 'A moved pin needs its checkout updated by the agent')
+
+    def test_rebase_refuses_content_saved_while_merging(self):
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        advanced = self.approved_commit(self.git('rev-parse', 'main'), 'other.txt', 'landed meanwhile\n')
+        self.git('update-ref', 'refs/heads/main', advanced)
+        self.review.refresh()
+        before = self.git('rev-parse', 'HEAD')
+        snapshot = self.review.snapshot
+        calls = []
+        def saving(name):
+            calls.append(name)
+            if len(calls) == 2:
+                self.write('Interactor.swift', 'let value = 7\n')
+            return snapshot(name)
+        with patch.object(self.review, 'snapshot', side_effect=saving), self.assertRaisesRegex(ValueError, 'changed while moving'):
+            self.review.rebase_onto_target(request['id'])
+        self.assertEqual((self.git('rev-parse', 'HEAD'), (self.root / 'Interactor.swift').read_text()), (before, 'let value = 7\n'))
 
     def test_execution_rebases_before_freezing_the_attempt(self):
         request = self.review.request_merge(self.review.approval_revision(), '', '')
@@ -2404,7 +2445,8 @@ if '--output-last-message' in sys.argv:
         (self.review.store / 'session-0-merge-request.json').unlink()
         marker = self.root / '.git' / 'batch-ran'
         settings = self.root / '.git' / 'review.toml'
-        settings.write_text(f'[merge.batch]\nmax = 2\ncommand = ["sh", "-c", "echo {{commit}} > {marker}"]\n')
+        owner = self.review.store / 'queue-owner.json'
+        settings.write_text(f'[merge.batch]\nmax = 2\ncommand = ["sh", "-c", "cat {owner} > {marker}.owner; echo {{commit}} > {marker}"]\n')
         os.environ['LOCAL_REVIEW_CONFIG'] = str(settings)
         order = []
         def delivered(path, request, *args):
@@ -2416,6 +2458,7 @@ if '--output-last-message' in sys.argv:
         batch = next(m.batch_for(self.review.store, first['id']))
         self.assertEqual((batch['status'], [member['id'] for member in batch['members']]), ('passed', [first['id'], second['id']]))
         self.assertEqual(marker.read_text().strip(), batch['commit'])
+        self.assertTrue(json.loads(Path(f'{marker}.owner').read_text())['batching'], 'Executions wait while the batch validates')
 
     def test_claude_turn_that_ends_during_execution_keeps_the_queue_until_it_finishes(self):
         with patch.dict(os.environ, {'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}), patch.object(m.shutil, 'which', return_value='/fake/claude'):

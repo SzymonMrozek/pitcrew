@@ -443,9 +443,11 @@ A blocked worker moves to **Needs attention**, and the queue continues.
 - **Next in line prepares early.** While the approval ahead of it executes, the
   next approval is delivered to its conversation with instructions to prepare
   now. Its `--execute-merge-request` starts a detached execution that waits for
-  the queue turn. At the turn, a target that moved meanwhile is merged into the
-  prepared content (uncommitted files included) when that needs no conflict
-  resolution; a conflict returns the approval to pending for the agent.
+  the queue turn. Until then the agent leaves the local target alone, because
+  the approval ahead validates against it. At the turn, a target that moved
+  meanwhile is merged into the prepared content (uncommitted files included)
+  when that needs no conflict resolution and moves no submodule pin; otherwise
+  the approval returns to pending for the agent to rebase and execute again.
 - **Pickup timeout.** A Codex conversation that hasn't inspected its delivered
   approval with `--merge-request <id>` after `merge.pickup-timeout` seconds
   (600 by default, 0 waits forever) moves to **Needs attention**, and the queue
