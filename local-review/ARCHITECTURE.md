@@ -110,7 +110,7 @@ Replace these freely:
   `NAVIGATION` in `definitions.mjs` picks which highlighted tokens link. Another
   language needs a grammar in `highlight.mjs` and both providers. Elixir finds
   the module around a line from indentation, which `mix format` guarantees.
-- **Codex and Claude.** Supporting another agent means detecting its session,
+- **Codex, Claude and Antigravity.** Supporting another agent means detecting its session,
   delivering the prompt to its originating conversation.
 
 ## Pitfalls
@@ -154,6 +154,13 @@ Each of these cost real debugging time.
   controls stay disabled until the worker exits. **Send to agent** resumes the
   originating conversation itself, so it waits until no interaction is pending
   and no previous review is still being handled.
+- **Antigravity's send-message accepts any recipient.** A message to a
+  missing conversation returns success and vanishes, so delivery checks the
+  conversation with `get-conversation-metadata` first. `agentapi` also needs
+  the running app's hub address and CSRF token, which change with every launch;
+  delivery reads them from the hub file of a live process, never from a saved or
+  inherited environment. The agent's command sandbox blocks loopback, so the
+  launcher must run outside it to reach the server.
 - **A desktop Codex chat already has a persistence writer.** Starting
   `codex exec resume` from another process conflicts with that writer even
   between turns. Send review feedback with `codex queue` instead. Successful

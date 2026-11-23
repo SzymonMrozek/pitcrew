@@ -108,7 +108,7 @@ function updateChrome() {
   const current = state.iterations.find(i => i.id === reviewScope), lines = diffStats(state.files);
   const sourceLabel = {'branch-start': 'branch start', target: `latest local ${state.target}`, full: 'merge base'}[comparison];
   const scopeLabel = current ? `iteration ${current.number}` : reviewScope === 'thread' ? 'this thread' : `full review · ${sourceLabel}`;
-  $('#revision').textContent = `${state.head.slice(0, 8)} · ${scopeLabel} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${state.agent.provider === 'claude' ? 'Claude' : 'Codex'}` : ''}`;
+  $('#revision').textContent = `${state.head.slice(0, 8)} · ${scopeLabel} · ${state.files.length} changed files · ${signed(lines.added)} ${signed(-lines.deleted)}${state.agent ? ` · ${agentName(state.agent)}` : ''}`;
   const selector = $('#iteration');
   const branchStart = el('option', '', 'Branch start'); branchStart.value = 'branch-start'; branchStart.disabled = !state.branchStart;
   branchStart.title = state.branchStart ? `Branch creation commit ${state.branchStart}` : 'The branch creation reflog entry is unavailable';
@@ -228,12 +228,13 @@ function renderMergeRequest() {
     const details = el('details'), prompt = el('textarea'); prompt.readOnly = true; prompt.value = request.prompt; prompt.rows = 4; prompt.setAttribute('aria-label', 'Request for agent'); details.append(el('summary', '', 'Request for agent'), prompt); box.append(details);
   }
 }
-function agentName(agent) {return agent?.provider === 'claude' ? 'Claude' : 'Codex';}
+function agentName(agent, fallback = 'Codex') {return {claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity'}[agent?.provider] || fallback;}
+function queuesMessages(agent) {return ['codex', 'antigravity'].includes(agent?.provider);}
 function renderHandoff() {
   const handoff = state.handoff, last = handoff?.last, send = $('#send-review'), box = $('#review-handoff-status');
   send.hidden = !handoff;
   send.disabled = !handoff || Boolean(handoff.blocker) || Boolean(watchedMerge);
-  send.textContent = last?.status === 'running' ? (last.agent?.provider === 'codex' ? 'Sending…' : 'Agent working…') : `Send to agent${handoff?.unsent ? ` · ${handoff.unsent}` : ''}`;
+  send.textContent = last?.status === 'running' ? (queuesMessages(last.agent) ? 'Sending…' : 'Agent working…') : `Send to agent${handoff?.unsent ? ` · ${handoff.unsent}` : ''}`;
   send.title = handoff?.blocker || `Send ${handoff?.unsent || 'no'} new unresolved comment${handoff?.unsent === 1 ? '' : 's'} to the ${agentName(state.agent)} conversation that wrote this change`;
   let dismissed = null;
   try {dismissed = sessionStorage.getItem('review-handoff-dismissed');} catch {}
@@ -241,7 +242,7 @@ function renderHandoff() {
   box.replaceChildren();
   if (box.hidden) return;
   const name = agentName(last.agent), count = `${last.comments.length} comment${last.comments.length === 1 ? '' : 's'}`;
-  box.append(el('strong', '', last.status === 'running' ? (last.agent?.provider === 'codex' ? `Sending review to ${name}` : `${name} is working on your review`) : last.status === 'delivered' ? `Review sent to ${name}` : last.status === 'finished' ? `${name} finished your review` : 'Review not delivered'));
+  box.append(el('strong', '', last.status === 'running' ? (queuesMessages(last.agent) ? `Sending review to ${name}` : `${name} is working on your review`) : last.status === 'delivered' ? `Review sent to ${name}` : last.status === 'finished' ? `${name} finished your review` : 'Review not delivered'));
   box.append(el('span', '', last.status === 'running' ? `Sending ${count}${last.note ? ' and a note' : ''} to the conversation that wrote this change. Follow its reply there, then refresh to review the changes.` : last.summary));
   if (last.status !== 'running') {
     if (['delivered', 'finished'].includes(last.status)) box.append(button('Refresh', () => load(true)));
@@ -589,7 +590,7 @@ async function updateFileComments(fileId) {
 }
 function commentNode(comment) {
   const file = state.files.find(f => f.id === comment.file), stale = !file || file.fingerprint !== comment.fingerprint;
-  const finding = comment.author?.kind === 'agent-review', speaker = provider => provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Agent';
+  const finding = comment.author?.kind === 'agent-review', speaker = provider => agentName({provider}, 'Agent');
   const node = el('div', 'comment' + (comment.resolved ? ' resolved' : '') + (stale ? ' stale' : '') + (finding ? ` agent-finding ${comment.severity}` : ''));
   if (finding) {
     node.dataset.content = `agent-review:${comment.id}`;
@@ -1241,9 +1242,10 @@ $('#send-review').onclick = () => {
   const unsent = state.handoff.unsent;
   $('#send-heading').textContent = `Send review to ${agentName(state.agent)}`;
   $('#send-summary').textContent = unsent ? `Send ${unsent} new unresolved comment${unsent === 1 ? '' : 's'} from every review scope. Resolved comments and comments sent earlier stay here.` : 'No new comments. Write a note to send one anyway.';
-  $('#send-agent-note').textContent = state.agent?.provider === 'codex'
-    ? 'Queues feedback in the Codex conversation that wrote this change, including when it is open in the desktop app. Follow its reply there. It never merges.'
-    : 'Resumes the Claude conversation that wrote this change, in the background. It records its work as a new interaction; it never merges.';
+  $('#send-agent-note').textContent = {
+    codex: 'Queues feedback in the Codex conversation that wrote this change, including when it is open in the desktop app. Follow its reply there. It never merges.',
+    antigravity: 'Sends feedback as a message to the Antigravity conversation that wrote this change, which must be running in the app. Follow its reply there. It never merges.',
+  }[state.agent?.provider] || 'Resumes the Claude conversation that wrote this change, in the background. It records its work as a new interaction; it never merges.';
   $('#send-form').reset(); $('#send-dialog').showModal(); $('#send-form').elements.note.focus();
 };
 $('#send-form').onsubmit = event => {
@@ -1260,7 +1262,7 @@ $('#approve').onclick = () => {
   $('#merge-description').textContent = `Ask the agent to merge the full ${state.branch} branch into ${state.target}?`;
   $('#merge-summary').textContent = `Approve all ${state.merge.fileCount} files in the full diff, including filtered files. The agent will first update from the latest ${state.target}, then handle comments, fix failing checks and resolve conflicts, then merge with one final commit. These corrections are covered by your approval; you do not need to resolve comment flags or approve again.`;
   if (demoMissing(state.demos)) $('#merge-summary').textContent += ` No demo recording is attached, although ${uiChanges(state.demos)} the app UI.`;
-  $('#merge-agent-note').textContent = state.agent ? `Saves your approval and sends the merge request to the ${agentName(state.agent)} conversation that wrote this change, just like review comments. Follow its progress and reply there. Commit notes are optional; the agent will finalize them.` : 'Start review from your Codex or Claude session so the merge can be handed to the correct agent.';
+  $('#merge-agent-note').textContent = state.agent ? `Saves your approval and sends the merge request to the ${agentName(state.agent)} conversation that wrote this change, just like review comments. Follow its progress and reply there. Commit notes are optional; the agent will finalize them.` : 'Start review from your Codex, Claude or Antigravity session so the merge can be handed to the correct agent.';
   const form = $('#merge-form');
   form.elements.title.value = state.merge.draft.title;
   form.elements.description.value = state.merge.draft.description;

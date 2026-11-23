@@ -70,7 +70,7 @@ instructions = "The Worktrunk pre-merge hook runs the affected tests; don't run 
 # paths = ['\.swift$']
 # command = ["make", "format-changed"]
 
-# Seconds a Codex conversation may take to inspect its delivered approval before the queue moves on.
+# Seconds a Codex or Antigravity conversation may take to inspect its delivered approval before the queue moves on.
 # pickup-timeout = 600
 
 # Optional: validate approvals waiting together as one stacked commit, then merge each one whose final
@@ -106,8 +106,8 @@ manifests = ['(^|/)Package\.swift$']
 command = ["python3", "scripts/module-graph.py", "{root}"]
 
 # --agent-review has a fresh, read-only reviewer agent review the diff before you do. "opposite" picks
-# the provider other than the change's author, so Codex reviews Claude's work and the other way round;
-# "claude" or "codex" always uses that one. instructions is your review policy; nits caps minor findings.
+# the provider other than the change's author, so Codex reviews Claude's work and the other way round,
+# and Claude reviews Antigravity's; "claude" or "codex" always uses that one. instructions is your review policy; nits caps minor findings.
 [agent-review]
 reviewer = "opposite"
 instructions = "REVIEW.md"
