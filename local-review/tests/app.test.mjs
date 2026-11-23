@@ -618,7 +618,8 @@ test('comment locations jump to their exact side and line and handle file, stale
 
 test('agent review findings show their reviewer, severity and the author replies', () => {
   const source = readFileSync(new URL('../app.mjs', import.meta.url), 'utf8');
-  const fn = source.slice(source.indexOf('function commentNode('), source.indexOf('function renderComments('));
+  const fn = source.slice(source.indexOf('function agentName('), source.indexOf('function queuesMessages('))
+    + source.slice(source.indexOf('function commentNode('), source.indexOf('function renderComments('));
   const node = (tag, className, text) => ({tag, className, textContent: text, children: [], dataset: {}, append(...items) {this.children.push(...items);}});
   const context = vm.createContext({state: {files: [{id: 'file', fingerprint: 'current'}]}, el: node,
     button: (text, action, className) => ({...node('button', className, text), action})});
@@ -632,6 +633,8 @@ test('agent review findings show their reviewer, severity and the author replies
   assert.equal(finding.children.find(child => child.tag === 'small').textContent, 'Claude · important · bugs · new line 4');
   const reply = finding.children.find(child => child.className === 'comment-reply');
   assert.deepEqual(reply.children.map(child => child.textContent), ['Codex replied', 'Read it in the interactor.']);
+  const antigravity = context.commentNode({...comment, replies: [{provider: 'antigravity', text: 'Done.'}]});
+  assert.equal(antigravity.children.find(child => child.className === 'comment-reply').children[0].textContent, 'Antigravity replied');
   const plain = context.commentNode({...comment, author: undefined, replies: undefined});
   assert.equal(plain.className, 'comment');
   assert.equal(plain.children.some(child => child.className === 'agent-review-badge'), false);

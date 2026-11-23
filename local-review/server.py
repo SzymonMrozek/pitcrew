@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local, persistent Git review. Python standard library only."""
 import argparse
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import difflib
 from datetime import datetime, timezone
 import fcntl
@@ -18,6 +18,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -33,7 +34,7 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.19.0'
+RELEASE = '0.20.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
@@ -60,10 +61,15 @@ MAX_SEARCH_RESULTS = 500
 PRIORITY_SCORE = 95
 # Data model types shape everything built on them, even when their diff looks like plain declarations.
 MODEL_SCORE = 85
-AGENT_PROVIDERS = ('claude', 'codex')
+REVIEWER_PROVIDERS = ('claude', 'codex')
+# Agents whose conversations can receive review feedback and approvals.
+ORIGIN_PROVIDERS = ('claude', 'codex', 'antigravity')
+AGENT_LABELS = {'claude': 'Claude', 'codex': 'Codex', 'antigravity': 'Antigravity'}
+ANTIGRAVITY_DATA_DIR = Path.home() / '.gemini' / 'antigravity'
 # Session markers inherited from whichever agent started the review server.
 AGENT_MARKERS = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PATH', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
-                 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PID')
+                 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PID',
+                 'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_TRAJECTORY_ID')
 # The only tools a Claude reviewer has: it reads the diff and the worktree. Even read-like Git commands can
 # write (git diff --output), so it gets no shell; Codex reviews in its read-only sandbox instead.
 AGENT_REVIEW_TOOLS = ('Read', 'Glob', 'Grep')
@@ -157,7 +163,7 @@ CONFIG = {
     # {id, name, kind, detail}; command runs in the worktree with {destination} replaced by the chosen id.
     'run': {'destinations': [], 'command': []},
     # --agent-review hands the diff to a fresh, read-only reviewer agent before the person sees it.
-    # reviewer is "opposite" (the other provider than the change's author), "claude" or "codex";
+    # reviewer is "opposite" (the other provider than the change's author, Claude for Antigravity), "claude" or "codex";
     # instructions is the repository's review policy, relative to its root; nits caps minor findings.
     'agent-review': {'reviewer': 'opposite', 'instructions': 'REVIEW.md', 'nits': 5},
     # The Summary tab diffs the module graph when a scope changes a file matching manifests. command runs
@@ -257,7 +263,7 @@ def load_config(root, strict=None):
     for pattern in graph['manifests']:
         re.compile(pattern)
     agent_review = config['agent-review']
-    if agent_review['reviewer'] not in AGENT_PROVIDERS + ('opposite',):
+    if agent_review['reviewer'] not in REVIEWER_PROVIDERS + ('opposite',):
         raise ValueError(f'[agent-review] reviewer in {path} must be opposite, claude or codex')
     if not isinstance(agent_review['instructions'], str) or type(agent_review['nits']) is not int or agent_review['nits'] < 0:
         raise ValueError(f'[agent-review] in {path} needs an instructions path and a non-negative nits count')
@@ -801,6 +807,11 @@ def detect_agent(name=CONFIG['name']):
             cli = parent['cli'] if isinstance(parent, dict) and parent['provider'] == 'codex' else shutil.which('codex')
         return {'provider': 'codex', 'sessionId': codex_session,
                 'cli': cli}
+    if antigravity_session := os.environ.get('ANTIGRAVITY_CONVERSATION_ID'):
+        # Antigravity runs each command with its conversation ID and the agentapi executable that messages it.
+        return {'provider': 'antigravity', 'sessionId': antigravity_session,
+                'cli': os.environ.get('ANTIGRAVITY_AGENTAPI_EXE') or shutil.which('agentapi'),
+                'dataDir': os.environ.get('ANTIGRAVITY_APP_DATA_DIR') or str(ANTIGRAVITY_DATA_DIR)}
     return None
 
 
@@ -844,6 +855,18 @@ def last_jsonl_title(path, marker, field, entry_id=None):
         return title
 
 
+def antigravity_title(data_dir, conversation):
+    database = data_dir / 'conversation_summaries.db'
+    if not database.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=1)) as connection:
+            row = connection.execute('SELECT title FROM conversation_summaries WHERE conversation_id = ?', (conversation,)).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0].strip() or None if row and isinstance(row[0], str) else None
+
+
 def thread_title(agent):
     if not agent or not agent.get('sessionId'):
         return None
@@ -851,6 +874,8 @@ def thread_title(agent):
     if agent['provider'] == 'codex':
         index = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'session_index.jsonl'
         return last_jsonl_title(index, session.encode(), 'thread_name', session)
+    if agent['provider'] == 'antigravity':
+        return antigravity_title(Path(agent.get('dataDir') or ANTIGRAVITY_DATA_DIR), session)
     if not re.fullmatch(r'[A-Za-z0-9-]{1,80}', session):
         return None
     projects = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude') / 'projects'
@@ -2274,7 +2299,7 @@ class Review:
         instructions = self.repo / self.config['agent-review']['instructions']
         policy = instructions.read_text() if instructions.is_file() else AGENT_REVIEW_DEFAULT_INSTRUCTIONS
         source = self.config['agent-review']['instructions'] if instructions.is_file() else 'default'
-        author = {'claude': 'Claude', 'codex': 'Codex'}.get(record['author'], 'another coding agent')
+        author = AGENT_LABELS.get(record['author'], 'another coding agent')
         return (
             f'You are an independent code reviewer. {author} wrote a change in the Git worktree {self.repo}, and a person reviews it after you. '
             'Find the problems they would otherwise have to find. You only review: never edit, create or delete files, '
@@ -2780,8 +2805,8 @@ class Review:
                 raise ValueError('Withdraw the previous approval before approving a different diff')
             return previous
         agent = self.origin_agent()
-        if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
-            raise ValueError(f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.')
+        if not agent or agent.get('provider') not in ORIGIN_PROVIDERS or not agent.get('sessionId'):
+            raise ValueError(f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex, Claude or Antigravity session first.')
         if blocker := self.handoff_blocker(merging=True):
             raise ValueError(blocker)
         if previous:
@@ -2827,7 +2852,7 @@ class Review:
             'run extra checks only for an actual correction or unresolved concern. '
             'Before each attempt, verify the request is still pending and the branch and target are the intended ones. '
             'A withdrawn approval must never merge. Use Worktrunk hooks and default cleanup; do not push. '
-            'Do not open review or queue pages in any browser, including Chrome, the Codex or Claude built-in browser and Computer Use; '
+            "Do not open review or queue pages in any browser, including Chrome, any agent's built-in browser and Computer Use; "
             'the user opens them manually, and the CLI commands below provide the approval, comments and merge status. '
             f'Use {cli} --base {self.target} --merge-request {request["id"]} to inspect the approval and latest comments. '
             f'After validation, use {cli} --base {self.target} --execute-merge-request {request["id"]} '
@@ -2910,8 +2935,8 @@ class Review:
         if not self.worktree_available():
             return 'Only the live worktree review can be sent to its agent.'
         agent = self.origin_agent()
-        if not agent or agent.get('provider') not in ('codex', 'claude') or not agent.get('sessionId'):
-            return f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex or Claude session first.'
+        if not agent or agent.get('provider') not in ORIGIN_PROVIDERS or not agent.get('sessionId'):
+            return f'No originating agent conversation detected. Start {launcher(self.config)} from your Codex, Claude or Antigravity session first.'
         if read_json(self.store / f'{self.session_id}.json', self.session).get('pendingIteration'):
             return f"The agent is still working on its current request. {'Approve' if merging else 'Send the review'} after it finishes its turn."
         request = self.merge_request()

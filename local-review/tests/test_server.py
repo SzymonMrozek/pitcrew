@@ -2918,6 +2918,106 @@ if '--output-last-message' in sys.argv:
         self.review.save_session('threadId')
         self.assertEqual(self.review.origin_agent()['provider'], 'codex')
 
+    def antigravity_origin(self, hub_pid=None):
+        """Record an Antigravity origin whose data directory holds a hub file for the running app."""
+        data = self.homes / 'antigravity'
+        (data / 'daemon').mkdir(parents=True, exist_ok=True)
+        m.write_json(data / 'daemon' / 'hub_4242.json', {'pid': hub_pid or os.getpid(), 'httpPort': 4242, 'csrfToken': 'hub-token'})
+        os.environ.pop('CODEX_THREAD_ID', None)
+        with patch.dict(os.environ, {'ANTIGRAVITY_AGENT': '1', 'ANTIGRAVITY_CONVERSATION_ID': 'agy-chat', 'ANTIGRAVITY_TRAJECTORY_ID': 'step',
+                                     'ANTIGRAVITY_AGENTAPI_EXE': '/fake/language_server', 'ANTIGRAVITY_APP_DATA_DIR': str(data)}):
+            self.review.record_agent()
+        return data
+
+    def antigravity_cli(self, calls, conversation_found=True):
+        def agentapi(command, **kwargs):
+            calls.append(command)
+            self.assertEqual(command[:2], ['/fake/language_server', 'agentapi'])
+            self.assertEqual((kwargs['env']['ANTIGRAVITY_LS_ADDRESS'], kwargs['env']['ANTIGRAVITY_CSRF_TOKEN']), ('127.0.0.1:4242', 'hub-token'))
+            self.assertNotIn('ANTIGRAVITY_CONVERSATION_ID', kwargs['env'])
+            self.assertNotIn('LOCAL_REVIEW_HANDOFF', kwargs['env'], 'The original conversation keeps recording interactions')
+            if command[2] == 'get-conversation-metadata':
+                found = json.dumps({'response': {'conversationMetadata': {}}})
+                missing = json.dumps({'response': {}, 'error': 'trajectory not found: agy-chat'})
+                return subprocess.CompletedProcess(command, 0 if conversation_found else 1, found if conversation_found else missing, '')
+            self.assertIsNone(kwargs['input'])
+            return subprocess.CompletedProcess(command, 0)
+        return agentapi
+
+    def test_antigravity_origin_is_detected_from_its_command_environment(self):
+        data = self.antigravity_origin()
+        self.assertEqual(self.review.origin_agent(), {'provider': 'antigravity', 'sessionId': 'agy-chat', 'cli': '/fake/language_server', 'dataDir': str(data)})
+        self.assertIsNone(self.review.session['threadId'], 'Antigravity conversations must never create a Codex chat link')
+        with patch.dict(os.environ, {'ANTIGRAVITY_CONVERSATION_ID': 'agy-chat', 'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'claude-chat'}):
+            self.assertEqual(m.detect_agent()['provider'], 'claude', 'An agent started from an Antigravity command is the nearer origin')
+        with patch.dict(os.environ, {'ANTIGRAVITY_CONVERSATION_ID': 'agy-chat'}), patch.object(m.shutil, 'which', return_value='/path/agentapi'):
+            self.assertEqual(m.detect_agent()['cli'], '/path/agentapi')
+        with patch.dict(os.environ, {'ANTIGRAVITY_CONVERSATION_ID': 'agy-chat', 'LOCAL_REVIEW_HANDOFF': '1'}):
+            self.assertIsNone(m.detect_agent())
+        with patch.dict(os.environ, {'ANTIGRAVITY_CONVERSATION_ID': 'agy-chat'}):
+            self.assertNotIn('ANTIGRAVITY_CONVERSATION_ID', m.clean_env(), 'A reviewer or worker must not adopt the conversation')
+        with patch.object(m.shutil, 'which', side_effect=lambda name: f'/fake/{name}'):
+            self.assertEqual(self.review.agent_reviewer('antigravity'), ('claude', '/fake/claude'))
+
+    def test_antigravity_thread_title_comes_from_its_conversation_summaries(self):
+        import sqlite3
+        data = self.antigravity_origin()
+        self.assertIsNone(self.review.state()['threadTitle'])
+        with sqlite3.connect(data / 'conversation_summaries.db') as connection:
+            connection.execute('CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text NOT NULL DEFAULT "")')
+            connection.executemany('INSERT INTO conversation_summaries VALUES (?, ?)', [('agy-chat', 'Daily cap screen'), ('other', 'Unrelated')])
+        self.assertEqual(self.review.state()['threadTitle'], 'Daily cap screen')
+
+    def test_review_delivery_messages_the_original_antigravity_conversation(self):
+        self.antigravity_origin()
+        self.comment('Rename value.')
+        handoff = self.send_review()
+        calls = []
+        with patch('agent.subprocess.run', side_effect=self.antigravity_cli(calls)):
+            deliver_review(handoff['path'])
+        self.assertEqual(calls, [['/fake/language_server', 'agentapi', 'get-conversation-metadata', 'agy-chat'],
+                                 ['/fake/language_server', 'agentapi', 'send-message', 'agy-chat', handoff['prompt']]])
+        result = self.review.review_handoff()
+        self.assertEqual(result['status'], 'delivered')
+        self.assertIn('Review queued in the original Antigravity conversation', result['summary'])
+
+    def test_antigravity_delivery_never_sends_to_a_missing_conversation_or_a_closed_app(self):
+        self.antigravity_origin()
+        self.comment('Rename value.')
+        handoff = self.send_review()
+        calls = []
+        with patch('agent.subprocess.run', side_effect=self.antigravity_cli(calls, conversation_found=False)):
+            deliver_review(handoff['path'])
+        self.assertEqual([command[2] for command in calls], ['get-conversation-metadata'], 'send-message accepts unknown recipients silently')
+        self.assertEqual(self.review.review_handoff()['status'], 'failed')
+        self.assertIn('trajectory not found', self.review.review_handoff()['summary'])
+        self.assertEqual(self.review.handoff_state()['unsent'], 1)
+        closed = subprocess.Popen([sys.executable, '-c', ''])
+        closed.wait()
+        self.antigravity_origin(hub_pid=closed.pid)
+        retry = self.send_review()
+        with patch('agent.subprocess.run', side_effect=AssertionError('No hub, no command')):
+            deliver_review(retry['path'])
+        self.assertIn('Antigravity is not running', self.review.review_handoff()['summary'])
+
+    def test_merge_delivery_messages_the_original_antigravity_conversation_and_holds_its_turn(self):
+        self.antigravity_origin()
+        request = self.review.request_merge(self.review.approval_revision(), '', '')
+        self.assertIsNone(request['threadId'])
+        calls, observed = [], []
+        def finish(_):
+            saved = self.review.merge_request()
+            observed.append(saved['delivery'])
+            self.assertEqual(saved['status'], 'pending', 'A sent message is not merge completion')
+            self.assertEqual(m.read_json(self.review.store / 'queue-owner.json', {})['conversation']['sessionId'], 'agy-chat')
+            m.write_json(Path(request['path']), {**saved, 'status': 'merged'})
+        with patch('agent.subprocess.run', side_effect=self.antigravity_cli(calls)), patch('agent.time.sleep', side_effect=finish):
+            deliver(request['path'])
+        self.assertEqual(calls[-1], ['/fake/language_server', 'agentapi', 'send-message', 'agy-chat', request['prompt']])
+        self.assertEqual(observed, ['delivered'])
+        self.assertEqual(self.review.merge_request()['status'], 'merged')
+        self.assertFalse((self.review.store / 'queue-owner.json').exists())
+
     def test_merge_message_requires_title_and_final_description(self):
         with self.assertRaisesRegex(ValueError, 'description'):
             self.review.start_merge(self.review.revision, 'feat(test): behavior', '')

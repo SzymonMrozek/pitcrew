@@ -3,7 +3,7 @@
 A local code review page and merge queue for work done in git worktrees,
 most of it by coding agents. You review a worktree's diff in the browser,
 comment, and click **Approve & merge**. The tool then hands the merge back to
-the Codex or Claude session that wrote the change. That agent rebases, handles
+the Codex, Claude or Antigravity session that wrote the change. That agent rebases, handles
 your comments, validates, squashes to one commit and merges with
 [Worktrunk](https://github.com/max-sixty/worktrunk). Approvals from different
 worktrees wait in one queue, so merges never race each other.
@@ -41,7 +41,7 @@ build step, no dependency to install, and no hosting.
 - Python 3.11 or later and Git
 - [Worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) for merging, or
   another merge command you configure
-- Codex CLI or Claude Code, to hand approvals to
+- Codex CLI, Claude Code or Antigravity, to hand approvals to
 - macOS with Xcode, only for **Open Simulator** and demo recording
 
 ## Run it
@@ -161,7 +161,7 @@ trigger actions you didn't take. The tool doesn't open browsers either.
   summary" reaches the instructions that produced the card, not the code that
   draws it. Renderers opt in with `data-content="source:field"`.
 - **Tab title.** The browser tab shows the originating agent's thread title,
-  read from local Codex or Claude logs.
+  read from local Codex, Claude or Antigravity logs.
 
 ### Summary
 
@@ -338,13 +338,14 @@ repository's agents last ran from, such as a desktop app's bundled Codex, then
 `PATH`. If
 the reviewer's CLI isn't installed, the command fails rather than falling back
 to the author's provider, whose blind spots it shares; set `reviewer` to choose
-one explicitly. Logs, diffs and reports are kept in
+one explicitly. Antigravity can't review: it has no read-only mode or report
+schema, so Claude reviews its changes under `opposite`. Logs, diffs and reports are kept in
 `<git-common-dir>/<name>/agent-reviews/`.
 
 ## Send a review to the agent
 
 **Send to agent** hands your review back without approving it. It sends to the
-Codex or Claude conversation that wrote the change, in the same worktree,
+Codex, Claude or Antigravity conversation that wrote the change, in the same worktree,
 with every new unresolved comment from all review scopes and
 an optional note. The agent treats it as a new request: it records an
 interaction, makes the changes and replies to each comment. It never merges.
@@ -360,6 +361,19 @@ approval, content, or queue position. Other conversations cannot rebind it.
 The page confirms delivery; follow the reply in the original chat and refresh
 to review what changed. Claude resumes in the background and its reply appears
 on the page when it finishes.
+
+Antigravity runs each agent command with `ANTIGRAVITY_CONVERSATION_ID` and
+`ANTIGRAVITY_AGENTAPI_EXE`, so the launcher records that conversation as the
+origin. Delivery messages it with `agentapi send-message`, which starts a turn
+when the conversation is idle and joins the running one otherwise. Antigravity
+must be open: delivery reads the running app's address and token from
+`~/.gemini/antigravity/daemon/hub_*.json`, since both change with every launch.
+`send-message` accepts any recipient without an error, so delivery first checks
+the conversation with `get-conversation-metadata` and fails, keeping the review
+or approval for retry, when it's gone. Like Codex, success means delivered.
+Antigravity's command sandbox blocks loopback connections, so the launcher
+can't reach the review server from a sandboxed command. Let the agent run the
+launcher outside the sandbox, for example by always allowing its command prefix.
 
 Each comment is sent once and marked **sent to agent**. Failed deliveries return
 their comments to the unsent list so you can retry. Resolve or add comments
@@ -383,8 +397,8 @@ uncommitted changes. The server decides this in one place and returns it as
 `mergeBlocker`.
 
 The delivery process waits for its turn in the [queue](#merge-queue) (or until
-it is next while the approval ahead executes), reserves it through cleanup, then queues the request into the original Codex chat or
-resumes the original Claude conversation. Follow the progress and reply there.
+it is next while the approval ahead executes), reserves it through cleanup, then queues the request into the original Codex chat,
+messages the original Antigravity conversation or resumes the original Claude conversation. Follow the progress and reply there.
 The agent then:
 
 1. fetches the target's upstream, if it has one, and rebases onto the latest target
@@ -417,7 +431,7 @@ It never pushes. A failed attempt returns the same approval to pending, so the
 agent fixes the cause and retries.
 
 The review page shows delivery and merge status. The original conversation
-contains the agent's progress and reply. Successful Codex queueing means the
+contains the agent's progress and reply. Successful Codex or Antigravity delivery means the
 request was delivered; the approval stays pending until the agent executes it.
 Delivery failures keep the same approval available for retry with
 `review --resume-merge-request <id>`. Older approvals retain their saved worker
@@ -448,7 +462,7 @@ A blocked worker moves to **Needs attention**, and the queue continues.
   meanwhile is merged into the prepared content (uncommitted files included)
   when that needs no conflict resolution and moves no submodule pin; otherwise
   the approval returns to pending for the agent to rebase and execute again.
-- **Pickup timeout.** A Codex conversation that hasn't inspected its delivered
+- **Pickup timeout.** A Codex or Antigravity conversation that hasn't inspected its delivered
   approval with `--merge-request <id>` after `merge.pickup-timeout` seconds
   (600 by default, 0 waits forever) moves to **Needs attention**, and the queue
   continues. Resuming keeps its position.

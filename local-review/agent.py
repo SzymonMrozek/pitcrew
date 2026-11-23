@@ -13,21 +13,53 @@ import uuid
 
 import threading
 
-from server import (clean_env, early_prompt, env_prefix, load_config, next_while_merging, process_alive, queue_slot,
-                    read_json, update_queue_owner, validate_batch, write_json)
+from server import (AGENT_LABELS, ANTIGRAVITY_DATA_DIR, ORIGIN_PROVIDERS, clean_env, early_prompt, env_prefix, load_config,
+                    next_while_merging, process_alive, queue_slot, read_json, update_queue_owner, validate_batch, write_json)
 
 CLAUDE_TOOLS = ('Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash')
+# These conversations take the message and reply on their own; delivery confirms receipt, not the reply.
+QUEUED_PROVIDERS = ('codex', 'antigravity')
 
 
 def agent_cli(origin):
     provider = origin.get('provider')
-    if provider not in ('codex', 'claude'):
-        raise ValueError('No recognized originating agent. Start review from Codex or Claude.')
-    label = 'Claude' if provider == 'claude' else 'Codex'
-    cli = origin.get('cli') or (os.environ.get('CODEX_CLI_PATH') if provider == 'codex' else None) or shutil.which(provider)
+    if provider not in ORIGIN_PROVIDERS:
+        raise ValueError('No recognized originating agent. Start review from Codex, Claude or Antigravity.')
+    label = AGENT_LABELS[provider]
+    if provider == 'antigravity':
+        shim = Path(origin.get('dataDir') or ANTIGRAVITY_DATA_DIR) / 'bin' / 'agentapi'
+        cli = origin.get('cli') or shutil.which('agentapi') or (str(shim) if os.access(shim, os.X_OK) else None)
+    else:
+        cli = origin.get('cli') or (os.environ.get('CODEX_CLI_PATH') if provider == 'codex' else None) or shutil.which(provider)
     if not cli:
         raise ValueError(f'{label} CLI is unavailable. Copy the saved request into your agent chat.')
     return provider, label, cli
+
+
+def agentapi(cli, *args):
+    """Antigravity hands commands its server executable, which runs agentapi as a subcommand, or the agentapi shim."""
+    return [cli, *args] if Path(cli).name == 'agentapi' else [cli, 'agentapi', *args]
+
+
+def conversation_env(origin):
+    """The environment that reaches the originating conversation: Antigravity's agentapi needs the running app's hub."""
+    env = clean_env()
+    if origin.get('provider') != 'antigravity':
+        return env
+    # The hub's port and token change with every launch, so a saved or inherited value can be stale.
+    daemon = Path(origin.get('dataDir') or ANTIGRAVITY_DATA_DIR) / 'daemon'
+    try:
+        hubs = sorted(daemon.glob('hub_*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+    except OSError:
+        hubs = []
+    for path in hubs:
+        try:
+            hub = read_json(path, None)
+        except (OSError, ValueError):
+            continue
+        if isinstance(hub, dict) and process_alive(hub.get('pid')) and hub.get('httpPort') and hub.get('csrfToken'):
+            return {**env, 'ANTIGRAVITY_LS_ADDRESS': f'127.0.0.1:{hub["httpPort"]}', 'ANTIGRAVITY_CSRF_TOKEN': hub['csrfToken']}
+    raise ValueError('Antigravity is not running. Open it, then try again; the saved request is kept.')
 
 
 def final_response(provider, log_path, output):
@@ -130,7 +162,8 @@ def deliver_reserved(path, prompt=None):
     try:
         origin = request.get('agent') or ({'provider': 'codex'} if request.get('threadId') else {})
         provider, label, cli = agent_cli(origin)
-        if request.get('deliveryMode') == 'conversation':
+        # Antigravity has no headless worker, so its approvals always go to the original conversation.
+        if request.get('deliveryMode') == 'conversation' or provider == 'antigravity':
             if prompt:
                 update(deliveredEarly=True)
             deliver_merge_conversation(path, {**request, 'prompt': prompt or request['prompt']}, provider, label, cli, update)
@@ -173,26 +206,45 @@ def require_codex_queue(cli):
                          'Review feedback remains available to retry; no new approval is needed.')
 
 
-def conversation_command(provider, cli, session, prompt):
+def require_antigravity_conversation(cli, session, env):
+    try:
+        result = subprocess.run(agentapi(cli, 'get-conversation-metadata', session), capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f'Cannot reach Antigravity through {cli}: {error}. The saved request can be retried.') from error
+    # send-message accepts any recipient, so a message to a missing conversation would vanish.
+    if result.returncode:
+        try:
+            reason = json.loads(result.stdout).get('error')
+        except (ValueError, AttributeError):
+            reason = None
+        raise ValueError(f'Antigravity cannot open conversation {session}: {reason or result.stderr.strip() or result.stdout.strip()[-500:]}. '
+                         'The saved request can be retried once the conversation is available.')
+
+
+def conversation_command(provider, cli, session, prompt, env):
     if not session:
         raise ValueError('No originating agent conversation. Start review from its chat first.')
     if provider == 'claude':
         return [cli, '--resume', session, '--print', '--output-format', 'stream-json', '--verbose',
                 '--permission-mode', 'dontAsk', '--allowedTools', *CLAUDE_TOOLS]
+    if provider == 'antigravity':
+        require_antigravity_conversation(cli, session, env)
+        return agentapi(cli, 'send-message', session, prompt)
     require_codex_queue(cli)
     return [cli, 'queue', '--thread', session, '--message', prompt]
 
 
 def deliver_merge_conversation(path, request, provider, label, cli, update):
     """Keep the queue reserved while the originating conversation handles its approval."""
-    command = conversation_command(provider, cli, request['agent'].get('sessionId'), request['prompt'])
+    env = conversation_env(request['agent'])
+    command = conversation_command(provider, cli, request['agent'].get('sessionId'), request['prompt'], env)
     if not update(delivery='started', summary=f'Sending the merge request to the original {label} conversation. Follow its reply there.'):
         return
     log_path = path.with_name(request['id'] + '-agent.log')
     output = path.with_name(request['id'] + '-agent-response.txt')
     with log_path.open('w') as log:
         result = subprocess.run(command, cwd=request['repo'], input=request['prompt'] if provider == 'claude' else None,
-                                stdout=log, stderr=subprocess.STDOUT, text=True, env=clean_env())
+                                stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
     if result.returncode:
         response = final_response(provider, log_path, output).strip()
         update(status='blocked', delivery='failed', summary=response or f'Could not send the merge request to {label}. Resume the saved request.')
@@ -204,7 +256,7 @@ def deliver_merge_conversation(path, request, provider, label, cli, update):
             time.sleep(.5)
         update(status='blocked', delivery='finished', summary=response or 'The agent stopped before merging. Resume the saved request in its conversation.')
         return
-    update(delivery='delivered', summary='Merge request queued in the original Codex conversation. Follow its progress and reply there.')
+    update(delivery='delivered', summary=f'Merge request queued in the original {label} conversation. Follow its progress and reply there.')
     delivered = time.monotonic()
     timeout = request.get('pickupTimeout') or 0
     # Queueing confirms delivery, not completion. The original chat executes the saved request.
@@ -212,7 +264,7 @@ def deliver_merge_conversation(path, request, provider, label, cli, update):
         if timeout and time.monotonic() - delivered > timeout and not current.get('pickedUpAt') and not current.get('mergePid'):
             minutes = round(timeout / 60)
             if update(lambda latest: not latest.get('pickedUpAt') and not latest.get('mergePid'), status='blocked',
-                      summary=f'The Codex conversation did not inspect this approval within {minutes} min, so the queue moved on. '
+                      summary=f'The {label} conversation did not inspect this approval within {minutes} min, so the queue moved on. '
                       'Resume the same request from that conversation with --resume-merge-request; it keeps its queue position.'):
                 return
         time.sleep(.5)
@@ -237,13 +289,14 @@ def deliver_review(path):
     log_path = path.with_name(handoff['id'] + '-review.log')
     try:
         provider, label, cli = agent_cli(handoff['agent'])
-        command = conversation_command(provider, cli, handoff['agent'].get('sessionId'), handoff['prompt'])
+        env = conversation_env(handoff['agent'])
+        command = conversation_command(provider, cli, handoff['agent'].get('sessionId'), handoff['prompt'], env)
         with log_path.open('w') as log:
             result = subprocess.run(command, cwd=handoff['repo'], input=handoff['prompt'] if provider == 'claude' else None,
-                                    stdout=log, stderr=subprocess.STDOUT, text=True, env=clean_env())
-        if provider == 'codex' and result.returncode == 0:
+                                    stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
+        if provider in QUEUED_PROVIDERS and result.returncode == 0:
             update(status='delivered', finishedAt=datetime.now(timezone.utc).isoformat(),
-                   summary='Review queued in the original Codex conversation. Follow its reply there, then refresh to review the changes.')
+                   summary=f'Review queued in the original {label} conversation. Follow its reply there, then refresh to review the changes.')
             return
         response = final_response(provider, log_path, output).strip()
         update(status='finished' if result.returncode == 0 else 'failed', finishedAt=datetime.now(timezone.utc).isoformat(),
