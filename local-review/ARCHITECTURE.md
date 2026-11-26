@@ -84,6 +84,12 @@ Keep these, whatever your stack.
     a read-only sandbox. Its findings are comments the author must answer
     before finishing; they never approve or block a merge on their own. A
     missing review is an explicit, recorded skip, never a silent one.
+13. **The Summary quotes code; the agent only points at it.** Interface and
+    key-code sections are line ranges that the tool resolves against the
+    branch diff when the interaction finishes. A range that doesn't exist or
+    touches no changed line is rejected, so the code a reviewer reads on the
+    Summary is the code that ships. Diagrams render with Mermaid's strict
+    security level and no click handlers or init directives.
 
 The recorded CLI follows the actual ancestor agent binary (or an explicit
 `CODEX_CLI_PATH`), since a desktop app and `PATH` can contain different Codex

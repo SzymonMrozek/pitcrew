@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {codeSpans, layoutGraph, moduleFootprint, hotspots, moduleGraphDrawing, nodeWidth} from '../summary.mjs';
+import {codeSpans, moduleFootprint, hotspots, moduleGraphDrawing, graphMermaid, mermaidText, summaryFiles, topFindings} from '../summary.mjs';
 
 const node = (id, extra = {}) => ({id, label: id, ...extra});
 
@@ -9,31 +9,30 @@ test('backticks mark code spans and unmatched ones stay text', () => {
   assert.deepEqual(codeSpans('A `lone tick'), [{code: false, text: 'A `lone tick'}]);
 });
 
-test('dependencies sit below their dependents and edges run top to bottom', () => {
-  const layout = layoutGraph([node('View'), node('Interactor'), node('Service'), node('Store')],
-    [{from: 'View', to: 'Interactor'}, {from: 'Interactor', to: 'Service'}, {from: 'Interactor', to: 'Store'}, {from: 'View', to: 'Missing'}]);
-  const y = Object.fromEntries(layout.nodes.map(n => [n.id, n.y]));
-  assert.ok(y.View < y.Interactor && y.Interactor < y.Service);
-  assert.equal(y.Service, y.Store);
-  assert.equal(layout.edges.length, 3, 'Edges to unknown nodes are dropped');
-  for (const n of layout.nodes) assert.ok(n.x >= 0 && n.x + n.w <= layout.width + 0.001);
+test('graphs become Mermaid flowcharts with safe ids, status classes and file links', () => {
+  const {source, ids} = graphMermaid([node('Order View', {kind: 'view', status: 'added', file: 'Sources/OrderView.swift'}),
+    node('Service<T>', {kind: 'protocol', note: 'Retries "once"'}), node('Store', {kind: 'data', status: 'removed'})],
+    [{from: 'Order View', to: 'Service<T>', label: 'calls', status: 'added'}, {from: 'Service<T>', to: 'Store', status: 'removed'}, {from: 'Store', to: 'Missing'}]);
+  const lines = source.split('\n');
+  assert.equal(lines[0], 'flowchart TD');
+  assert.ok(lines.includes('  n0(["Order View"]):::added'));
+  assert.ok(lines.includes('  n1{{"Service#lt;T#gt;<br/><small>Retries #quot;once#quot;</small>"}}:::unchanged'));
+  assert.ok(lines.includes('  n2[("Store")]:::removed'));
+  assert.ok(lines.includes('  n0 -->|"calls"| n1') && lines.includes('  n1 -.-> n2'));
+  assert.equal(lines.filter(line => line.includes('Missing')).length, 0, 'Edges to unknown nodes are dropped');
+  assert.ok(lines.includes('  linkStyle 0 stroke:#4f9e6e,stroke-width:1.8px') && lines.includes('  linkStyle 1 stroke:#b5545f,stroke-width:1.6px'));
+  assert.equal(ids.get('n0').file, 'Sources/OrderView.swift');
+  assert.equal(mermaidText('`a` #1\n  "b"'), "'a' #35;1 #quot;b#quot;");
 });
 
-test('cycles still lay out, with the back edge pointing up', () => {
-  const layout = layoutGraph([node('A'), node('B')], [{from: 'A', to: 'B'}, {from: 'B', to: 'A'}]);
-  const [a, b] = ['A', 'B'].map(id => layout.nodes.find(n => n.id === id));
-  assert.ok(a.y < b.y);
-  assert.match(layout.edges[1].path, new RegExp(`^M${b.x + b.w / 2},${b.y} `), 'The back edge leaves from the top of its source');
-});
-
-test('barycenter ordering uncrosses edges and wide layers wrap', () => {
-  const layout = layoutGraph([node('P1'), node('P2'), node('C2'), node('C1')], [{from: 'P1', to: 'C1'}, {from: 'P2', to: 'C2'}]);
-  const x = Object.fromEntries(layout.nodes.map(n => [n.id, n.x]));
-  assert.ok((x.P1 < x.P2) === (x.C1 < x.C2));
-  const wide = layoutGraph(Array.from({length: 12}, (_, i) => node(`TargetNumber${i}`)), [], {maxWidth: 500});
-  assert.ok(wide.width <= 500 && new Set(wide.nodes.map(n => n.y)).size > 1);
-  assert.ok(nodeWidth(node('A', {note: 'a much longer explanation'})) > nodeWidth(node('A')));
-  assert.equal(nodeWidth(node('OrderService', {tag: 'P'})) - nodeWidth(node('OrderService')), 16);
+test('test changes leave the Summary unless included, and only unresolved important findings surface', () => {
+  const files = [{path: 'A.swift', kind: 'code'}, {path: 'ATests.swift', kind: 'test'}, {path: '__Snapshots__/a.png', kind: 'snapshot'}];
+  assert.deepEqual(summaryFiles(files, false).map(f => f.path), ['A.swift']);
+  assert.equal(summaryFiles(files, true).length, 3);
+  const finding = (id, extra) => ({id, author: {kind: 'agent-review'}, severity: 'important', resolved: false, ...extra});
+  const comments = [finding('a'), finding('b', {resolved: true}), finding('c', {severity: 'nit'}), {id: 'd', author: {kind: 'person'}, resolved: false},
+                    finding('e'), finding('f'), finding('g')];
+  assert.deepEqual(topFindings(comments).map(c => c.id), ['a', 'e', 'f']);
 });
 
 test('module footprint and hotspots rank what to read first', () => {

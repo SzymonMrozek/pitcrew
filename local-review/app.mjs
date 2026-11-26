@@ -7,7 +7,7 @@ import {NAVIGATION, navigationLinks, rankDefinitions} from './definitions.mjs';
 import {mountQueue} from './queue.mjs';
 import {isMarkdown, renderMarkdown} from './markdown.mjs';
 import {diffStats, signed} from './stats.mjs';
-import {codeSpans, layoutGraph, moduleFootprint, hotspots, moduleGraphDrawing} from './summary.mjs';
+import {codeSpans, moduleFootprint, hotspots, moduleGraphDrawing, graphMermaid, summaryFiles, topFindings, TEST_KINDS} from './summary.mjs';
 import {feedbackWhere, mountElementFeedback} from './element-feedback.mjs';
 const $ = selector => document.querySelector(selector);
 const token = location.hash.slice(1) || sessionStorage.getItem('review-token');
@@ -20,7 +20,7 @@ document.querySelector('#queue').onclick = () => {document.querySelector('#queue
 let {scope: reviewScope, comparison, iteration} = readSelection(new URLSearchParams(location.search));
 const watchedMerge = new URLSearchParams(location.search).get('merge');
 let mergeLogLoading = false, mergeLogRunning = false, mergeLogId;
-let definitionsRequested = false, state, active, tab = 'all', commentTarget, lineSelection, renderVersion = 0, loadVersion = 0, simulatorOpening = false, devMenuTriggering = false, claudeConversationOpening = false;
+let definitionsRequested = false, state, active, tab = 'summary', commentTarget, lineSelection, renderVersion = 0, loadVersion = 0, simulatorOpening = false, devMenuTriggering = false, claudeConversationOpening = false;
 const images = new Map();
 // Expanded context survives lazy remounting; keyed by scope, file and fingerprint so edits reset it.
 const expansions = new Map(), fileLines = new Map(), sources = new Map();
@@ -574,6 +574,7 @@ $('#comment-dialog').addEventListener('close', () => {lineSelection = null; docu
 async function updateFileComments(fileId) {
   updateChrome();
   if (tab === 'comments') {renderComments(); return;}
+  if (tab === 'summary') {await renderSummary(loadVersion); return;}
   const card = [...document.querySelectorAll('.review-file')].find(card => card.dataset.file === fileId);
   const body = card?.querySelector('.file-body');
   if (!body?.ready) return;
@@ -652,13 +653,6 @@ function renderStats() {
   if (!stats.files) {main.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to count them.' : 'No changes to review.')); return;}
   main.append(el('h2', 'comments-title', 'By kind'), statsTable('Kind', stats.byKind, max), el('h2', 'comments-title', 'By file type'), statsTable('Type', stats.byType, maxType));
 }
-const SVG_NS = 'http://www.w3.org/2000/svg';
-function svgNode(tag, attributes = {}, text) {
-  const node = document.createElementNS(SVG_NS, tag);
-  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 function codeText(className, text) {
   const node = el('span', className);
   for (const part of codeSpans(text)) node.append(part.code ? el('code', '', part.text) : document.createTextNode(part.text));
@@ -676,43 +670,45 @@ function fileChip(path) {
   chip.disabled = !known;
   return chip;
 }
-const KIND_TAGS = {module: 'M', type: 'T', protocol: 'P', view: 'V', service: 'S', data: 'D', external: 'E'};
-let graphIds = 0;
-// Draws a laid-out graph; status colors nodes and edges, and kind sets a node's tag and outline.
-function graphSvg(nodes, edges, {label, onNode} = {}) {
-  const layout = layoutGraph(nodes, edges), pad = 14, id = `graph-${++graphIds}`;
-  const linked = Boolean(onNode && layout.nodes.some(node => node.file));
-  // A diagram with file links is a group of links; without them it reads as one image.
-  const svg = svgNode('svg', {class: 'summary-graph', viewBox: `${-pad} ${-pad} ${layout.width + 2 * pad} ${layout.height + 2 * pad}`, width: layout.width + 2 * pad, role: linked ? 'group' : 'img', 'aria-label': label || 'Diagram'});
-  const defs = svgNode('defs');
-  for (const status of ['added', 'removed', 'unchanged']) {
-    const marker = svgNode('marker', {id: `${id}-${status}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse'});
-    marker.append(svgNode('path', {d: 'M0,0 L10,5 L0,10 z', class: `arrow ${status}`})); defs.append(marker);
-  }
-  svg.append(defs);
-  for (const edge of layout.edges) {
-    const group = svgNode('g', {class: `edge ${edge.status || 'unchanged'}`});
-    group.append(svgNode('path', {d: edge.path, 'marker-end': `url(#${id}-${edge.status || 'unchanged'})`}));
-    if (edge.label) group.append(svgNode('text', {x: edge.mid.x, y: edge.mid.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, edge.label));
-    svg.append(group);
-  }
-  for (const node of layout.nodes) {
-    const group = svgNode('g', {class: `node ${node.status || 'unchanged'} kind-${node.kind || 'type'}${onNode && node.file ? ' linked' : ''}`, transform: `translate(${node.x},${node.y})`});
-    group.append(svgNode('title', {}, [node.label, node.kind && node.kind !== 'module' ? node.kind : '', node.status && node.status !== 'unchanged' ? node.status : '', node.file || ''].filter(Boolean).join(' · ')));
-    group.append(svgNode('rect', {width: node.w, height: node.h, rx: node.kind === 'view' ? node.h / 2 : node.kind === 'module' ? 3 : 7}));
-    const text = svgNode('text', {x: node.w / 2 + (node.tag ? 7 : 0), y: node.note ? 17 : node.h / 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle'});
-    text.append(svgNode('tspan', {class: 'label'}, node.label));
-    group.append(text);
-    if (node.tag) group.append(svgNode('text', {x: 12, y: node.note ? 17 : node.h / 2, class: 'tag', 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, node.tag));
-    if (node.note) group.append(svgNode('text', {x: node.w / 2, y: 33, class: 'note', 'text-anchor': 'middle', 'dominant-baseline': 'middle'}, node.note));
-    if (onNode && node.file) {
-      Object.entries({tabindex: 0, role: 'link', 'aria-label': `${node.label}, ${node.status || 'unchanged'} ${node.kind || 'type'}. Open ${node.file}`}).forEach(([name, value]) => group.setAttribute(name, value));
-      group.addEventListener('click', () => onNode(node));
-      group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); onNode(node);}});
+let mermaidLoading, diagramIds = 0;
+// The diagram renderer is 3.6 MB, so the page loads it the first time a Summary has a diagram.
+function loadMermaid() {
+  mermaidLoading ||= new Promise((resolve, reject) => {
+    const script = el('script'); script.src = '/vendor/mermaid.min.js';
+    script.onload = () => {
+      window.mermaid.initialize({startOnLoad: false, suppressErrorRendering: true, securityLevel: 'strict', theme: 'dark', fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+        themeVariables: {background: '#18181b', primaryColor: '#26262b', primaryTextColor: '#e1e1e5', primaryBorderColor: '#5b5b63', lineColor: '#8a8a94',
+          actorBkg: '#26262b', actorBorder: '#5b5b63', actorTextColor: '#e1e1e5', noteBkgColor: '#2b2618', noteTextColor: '#e1e1e5', noteBorderColor: '#a78a3c', edgeLabelBackground: '#18181b'},
+        flowchart: {htmlLabels: true, curve: 'basis'}, sequence: {mirrorActors: false}});
+      resolve(window.mermaid);
+    };
+    script.onerror = () => {mermaidLoading = null; reject(new Error('The diagram renderer could not load'));};
+    document.head.append(script);
+  });
+  return mermaidLoading;
+}
+// Draws Mermaid source into a frame; nodes in `links` open their files. A diagram that fails to parse shows its source.
+function diagramNode(source, {label, links} = {}) {
+  const frame = el('div', 'summary-diagram');
+  frame.setAttribute('role', 'img'); frame.setAttribute('aria-label', label || 'Diagram');
+  frame.append(el('div', 'muted', 'Drawing…'));
+  run(async () => {
+    try {
+      const mermaid = await loadMermaid(), {svg} = await mermaid.render(`summary-diagram-${++diagramIds}`, source);
+      frame.innerHTML = svg;
+      if (links) for (const group of frame.querySelectorAll('g.node')) {
+        const node = links.get(group.id.match(/-(n\d+)-\d+$/)?.[1]);
+        if (!node?.file) continue;
+        group.classList.add('linked'); group.tabIndex = 0; group.setAttribute('role', 'link'); group.setAttribute('aria-label', `Open ${node.file}`);
+        const open = () => run(() => state.files.some(f => f.path === node.file) ? openInChanges(node.file) : openSource(node.file, 1));
+        group.addEventListener('click', open);
+        group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); open();}});
+      }
+    } catch (error) {
+      document.querySelectorAll(`#summary-diagram-${diagramIds}, #dsummary-diagram-${diagramIds}`).forEach(node => node.remove());
+      frame.replaceChildren(el('div', 'demo-note attention', `This diagram could not be drawn: ${error.message}`), el('pre', 'summary-diagram-source', source));
     }
-    svg.append(group);
-  }
-  const frame = el('div', 'summary-graph-frame'); frame.append(svg);
+  });
   return frame;
 }
 function graphLegend(items) {
@@ -788,10 +784,107 @@ function moduleGraphNode(graph) {
     }
   }
   const children = [tiles, tree], drawing = moduleGraphDrawing(graph);
-  if (drawing) children.push(graphSvg(drawing.nodes, drawing.edges, {label: 'Changed module dependencies'}), graphLegend([['added', 'added'], ['removed', 'removed'], ['unchanged', 'existing']]));
+  if (drawing) children.push(diagramNode(graphMermaid(drawing.nodes, drawing.edges).source, {label: 'Changed module dependencies'}), graphLegend([['added', 'added'], ['removed', 'removed'], ['unchanged', 'existing']]));
   else if (Object.keys(graph.nodes).length) children.push(el('p', 'muted', `${Object.keys(graph.nodes).length} targets take part in these changes, too many to draw; the tree above lists every change.`));
   children.push(el('p', 'muted', `Built from ${graph.manifests.length} changed manifest${graph.manifests.length === 1 ? '' : 's'}: ${graph.manifests.join(', ')}`));
   return summarySection('Module graph', ...children);
+}
+const RULE_SOURCES = {request: 'Your request', design: 'Design', existing: 'Existing behavior', agent: 'Agent'};
+const SCOPE_COLUMNS = [['asked', '✓ Asked'], ['extra', '+ Not asked'], ['removed', '− Removed or changed'], ['deferred', '⏸ Not done']];
+function includeTests() {try {return localStorage.getItem('summary-include-tests') === '1';} catch {return false;}}
+function scopeNode(scope) {
+  const ledger = el('div', 'scope-ledger');
+  for (const [kind, title] of SCOPE_COLUMNS) {
+    const column = el('div', `scope-column ${kind}`), items = scope[kind] || [];
+    column.append(el('strong', '', title));
+    if (!items.length) column.append(el('span', 'muted', kind === 'asked' ? '' : 'Nothing'));
+    items.forEach((item, index) => {
+      const line = el('div', 'scope-item'); line.dataset.content = `agent-summary:scope.${kind}[${index}]`;
+      line.append(codeText('', item.text));
+      if (item.files.length) {const files = el('div', 'change-files'); files.append(...item.files.map(fileChip)); line.append(files);}
+      column.append(line);
+    });
+    ledger.append(column);
+  }
+  return ledger;
+}
+function rulesNode(rules, withTests) {
+  const table = el('table', 'rules-table'), head = el('tr');
+  head.append(...['When', 'Then', 'Decided by', ...(withTests ? ['Covered by'] : [])].map(text => el('th', '', text)));
+  table.append(el('thead'), el('tbody')); table.tHead.append(head);
+  rules.forEach((rule, index) => {
+    const row = el('tr', rule.decidedBy === 'agent' ? 'agent-decided' : ''); row.dataset.content = `agent-summary:rules[${index}]`;
+    const cell = text => {const td = el('td'); td.append(codeText('', text)); return td;};
+    row.append(cell(rule.when), cell(rule.then), el('td', 'rule-source', RULE_SOURCES[rule.decidedBy]));
+    if (withTests) {const td = el('td', 'rule-tests'); if (rule.tests.length) td.append(...rule.tests.map(test => el('code', '', test))); else td.append(el('span', 'untested', 'Not tested')); row.append(td);}
+    table.tBodies[0].append(row);
+  });
+  const frame = el('div', 'rules-frame'); frame.append(table);
+  return frame;
+}
+// Lines the tool quoted from the diff when the summary was written, with their real line numbers.
+function excerptNode(ref) {
+  const box = el('div', 'excerpt'), title = el('div', 'excerpt-head');
+  title.append(fileChip(ref.file), el('span', 'muted', `${ref.side === 'old' ? 'old ' : ''}lines ${ref.start}–${ref.end}`));
+  if (ref.why) title.append(codeText('excerpt-why', ref.why));
+  if (ref.stale) title.append(el('span', 'excerpt-stale', 'This file changed after the summary was written; Changes shows the current code'));
+  const language = languageFor(ref.file, ref.rows[0]?.text), highlighted = highlightRows(ref.rows, language), code = el('div', 'excerpt-code');
+  ref.rows.forEach((row, index) => {
+    const line = el('div', `excerpt-line ${row.type}`), text = codeNode(row.type === 'delete' ? highlighted[index].old : highlighted[index].new, row.text, language);
+    text.classList.add('excerpt-text');
+    line.append(el('span', 'excerpt-number', String(row.type === 'delete' ? row.old : row.new)), el('span', 'excerpt-mark', row.type === 'add' ? '+' : row.type === 'delete' ? '−' : ''), text);
+    code.append(line);
+  });
+  box.append(title, code);
+  return box;
+}
+function deviceNode(checks, demos) {
+  const list = el('div', 'device-list');
+  checks.forEach((check, index) => {
+    const demo = check.demo && demos.find(item => item.id === check.demo || item.title.toLowerCase() === check.demo.toLowerCase());
+    const row = el('div', 'device-check'), line = el('div', 'device-line'); row.dataset.content = `agent-summary:device[${index}]`;
+    line.append(codeText('', check.text));
+    if (demo?.available && demo.src) {
+      // The Summary may describe a recording from another interaction than the selected scope, so it plays here.
+      const play = button(`▶ ${demo.title}${check.at !== undefined ? ` · ${formatDuration(check.at)}` : ''}`, () => {
+        let video = row.querySelector('video');
+        if (video) {video.remove(); return;}
+        video = el('video'); video.controls = true; video.playsInline = true; video.preload = 'metadata'; video.src = demo.src;
+        if (check.at !== undefined) video.addEventListener('loadedmetadata', () => {video.currentTime = check.at;}, {once: true});
+        row.append(video); void video.play().catch(() => {});
+      }, 'device-demo');
+      line.append(play);
+    } else if (check.demo) line.append(el('span', 'muted', demo ? 'Recording file missing' : 'Demo not attached'));
+    row.append(line);
+    list.append(row);
+  });
+  return list;
+}
+function testsNode(tests) {
+  const list = el('div', 'tests-list'), snapshots = tests.filter(test => test.kind === 'snapshot');
+  for (const test of tests.filter(test => test.kind === 'test')) {
+    const row = el('div', 'tests-row'), names = el('div', 'tests-names');
+    row.append(fileChip(test.path), el('span', 'added', signed(test.added)), el('span', 'removed', signed(-test.deleted)));
+    names.append(...test.names.slice(0, 12).map(name => el('code', '', name)));
+    if (test.names.length > 12) names.append(el('span', 'muted', `${test.names.length - 12} more`));
+    if (test.names.length) row.append(names);
+    list.append(row);
+  }
+  if (snapshots.length) {
+    const row = el('div', 'tests-row'); row.append(el('strong', '', `${snapshots.length} snapshot image${snapshots.length === 1 ? '' : 's'}`), button('Open Snapshots', async () => {tab = 'snapshot'; await load();}));
+    list.append(row);
+  }
+  return list;
+}
+function changesNode(changes) {
+  const list = el('div', 'change-list');
+  changes.forEach((change, index) => {
+    const row = el('div', `change-row ${change.kind}`); row.dataset.content = `agent-summary:changes[${index}]`;
+    row.append(el('span', 'change-kind', change.kind), codeText('change-text', change.text));
+    if (change.files.length) {const files = el('div', 'change-files'); files.append(...change.files.map(fileChip)); row.append(files);}
+    list.append(row);
+  });
+  return list;
 }
 async function renderSummary(version) {
   feedObserver?.disconnect();
@@ -799,52 +892,73 @@ async function renderSummary(version) {
   if (!main.querySelector('.summary')) main.replaceChildren(el('div', 'empty', 'Preparing the summary…'));
   const data = await api('summary');
   if (version !== loadVersion) return;
-  const included = $('#show-hidden').checked ? state.files : state.files.filter(file => !hidden(file)), stats = diffStats(included), summary = data.summary;
-  const page = el('div', 'summary'), head = el('div', 'summary-head');
+  const withTests = includeTests(), summary = data.summary;
+  // The Summary's own toggle decides about tests, whatever the global filter hides.
+  const shown = $('#show-hidden').checked ? state.files : state.files.filter(file => !hidden(file) || (withTests && TEST_KINDS.includes(file.kind)));
+  const included = summaryFiles(shown, withTests), stats = diffStats(included);
+  const page = el('div', 'summary'), head = el('div', 'summary-head'), top = el('div', 'summary-top');
+  const toggle = el('label', 'summary-toggle'), box = el('input'); box.type = 'checkbox'; box.id = 'summary-include-tests'; box.checked = withTests;
+  box.onchange = () => {try {localStorage.setItem('summary-include-tests', box.checked ? '1' : '0');} catch {} run(() => renderSummary(loadVersion));};
+  toggle.append(box, document.createTextNode('Include test changes'));
   if (summary) {
     const written = state.iterations.find(i => i.id === summary.iteration);
     const headline = codeText('summary-headline', summary.headline); headline.dataset.content = 'agent-summary:headline';
     head.append(headline, el('small', 'muted', `${agentName(state.agent)} summary of the whole branch${written ? ` · written at iteration ${written.number}` : ''}`));
+    if (summary.since) {const since = codeText('summary-since', summary.since); since.dataset.content = 'agent-summary:since'; head.append(since);}
   } else head.append(el('div', 'summary-headline muted', state.merge.draft.title || 'No summary yet'), el('small', 'muted', 'The agent has not written a change summary. It adds one with --summary-file when it finishes an interaction.'));
+  top.append(head, toggle);
+  page.append(top);
+  if (summary?.scope) {const section = summarySection('Asked and built', scopeNode(summary.scope)); section.dataset.content = 'agent-summary:scope'; page.append(section);}
+  if (summary?.rules?.length) {const section = summarySection('Behavior rules', rulesNode(summary.rules, withTests)); section.dataset.content = 'agent-summary:rules'; page.append(section);}
+  if (summary?.focus?.length) {
+    const list = el('ul', 'focus-list');
+    list.append(...summary.focus.map((item, index) => {const line = el('li', 'focus-item'); line.dataset.content = `agent-summary:focus[${index}]`; line.append(codeText('', item)); return line;}));
+    page.append(summarySection('Check before approving', list));
+  }
+  const findings = topFindings(visibleComments());
+  if (findings.length) {
+    const unresolved = state.session.comments.filter(comment => comment.author?.kind === 'agent-review' && !comment.resolved && comment.severity === 'important').length;
+    const list = el('div', 'summary-findings'); list.append(...findings.map(comment => commentNode(comment)));
+    if (unresolved > findings.length) list.append(button(`All ${unresolved} unresolved findings`, async () => {tab = 'comments'; await load();}));
+    page.append(summarySection('Unresolved agent review', list));
+  }
+  for (const [index, flow] of (summary?.flows || []).entries()) {const section = summarySection(flow.title, diagramNode(flow.mermaid, {label: flow.title})); section.dataset.content = `agent-summary:flows[${index}]`; page.append(section);}
+  if (summary?.design) {
+    const {source, ids} = graphMermaid(summary.design.nodes, summary.design.edges);
+    const design = summarySection(summary.design.title || 'Design', diagramNode(source, {label: summary.design.title || 'Program design', links: ids}),
+      graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context']]));
+    design.dataset.content = 'agent-summary:design'; page.append(design);
+  }
+  if (summary?.interface?.length) page.append(summarySection('Interface', ...summary.interface.map(excerptNode)));
+  if (summary?.snippets?.length) page.append(summarySection('Key code', ...summary.snippets.map(excerptNode)));
+  if (summary?.device?.length) page.append(summarySection('Check in the running app', deviceNode(summary.device, data.demos || [])));
+  if (withTests && data.tests?.length) page.append(summarySection('Tests', testsNode(data.tests)));
+  const rest = el('details', 'summary-rest'), restBody = el('div', 'summary-rest-body');
+  // A summary without the ledger is an older one; its change list is the content, so it starts open.
+  rest.open = Boolean(summary && !summary.scope);
+  const restCount = (summary?.rest?.length || 0) + (summary?.changes?.length || 0);
+  rest.append(el('summary', '', `Everything else${restCount ? ` · ${restCount} item${restCount === 1 ? '' : 's'}` : ''} · stats${data.moduleGraph ? ' · module graph' : ''}`));
+  if (summary?.changes?.length) restBody.append(changesNode(summary.changes));
+  if (summary?.rest?.length) {
+    const list = el('ul', 'rest-list');
+    list.append(...summary.rest.map((item, index) => {const line = el('li'); line.dataset.content = `agent-summary:rest[${index}]`; line.append(codeText('', item)); return line;}));
+    restBody.append(list);
+  }
   const tiles = el('div', 'stats-summary'), modules = new Set(included.map(file => moduleFor(file.path)?.name).filter(Boolean));
   const tile = (label, value, className = '') => {const node = el('div', 'stats-tile'); node.append(el('strong', className, value), el('span', '', label)); return node;};
   tiles.append(tile('files', stats.files.toLocaleString()), tile('added', signed(stats.added), 'added'), tile('removed', signed(-stats.deleted), 'removed'), tile('modules', modules.size.toLocaleString()));
   if (state.demos.total) tiles.append(tile('demos', state.demos.total.toLocaleString()));
-  page.append(head, tiles);
-  if (stats.files) page.append(kindBar(stats));
-  if (summary) {
-    const grid = el('div', 'change-grid');
-    for (const [index, change] of summary.changes.entries()) {
-      const card = el('div', `change-card ${change.kind}`), files = el('div', 'change-files');
-      card.dataset.content = `agent-summary:changes[${index}]`;
-      files.append(...change.files.map(fileChip));
-      card.append(el('span', 'change-kind', change.kind), codeText('change-text', change.text));
-      if (change.files.length) card.append(files);
-      grid.append(card);
-    }
-    page.append(summarySection('What changed', grid));
-    if (summary.focus?.length) {
-      const list = el('ul', 'focus-list');
-      list.append(...summary.focus.map((item, index) => {const line = el('li', 'focus-item'); line.dataset.content = `agent-summary:focus[${index}]`; line.append(codeText('', item)); return line;}));
-      page.append(summarySection('Check before approving', list));
-    }
-    if (summary.design) {
-      const nodes = summary.design.nodes.map(node => ({...node, tag: KIND_TAGS[node.kind]}));
-      // Context nodes and files outside this scope open in the source viewer instead of the diff.
-      const openNode = node => state.files.some(f => f.path === node.file) ? openInChanges(node.file) : openSource(node.file, 1);
-      const title = summary.design.title || 'Design';
-      const design = summarySection(title, graphSvg(nodes, summary.design.edges, {label: summary.design.title || 'Program design', onNode: node => run(() => openNode(node))}),
-        graphLegend([['added', 'added'], ['changed', 'changed'], ['removed', 'removed'], ['unchanged', 'context'], ['tags', 'M module · T type · P protocol · V view · S service · D data · E external']]));
-      design.dataset.content = 'agent-summary:design'; page.append(design);
-    }
-  }
+  restBody.append(tiles);
+  if (stats.files) restBody.append(kindBar(stats));
   // Manifest edits that leave every module and dependency as it was add nothing to read.
-  if (data.moduleGraph && (data.moduleGraph.error || data.moduleGraph.modules.length)) page.append(moduleGraphNode(data.moduleGraph));
+  if (data.moduleGraph && (data.moduleGraph.error || data.moduleGraph.modules.length)) restBody.append(moduleGraphNode(data.moduleGraph));
   if (stats.files) {
     const columns = el('div', 'summary-columns');
     columns.append(summarySection('Read first', hotspotNode(included)), summarySection('Lines by module', footprintNode(included)));
-    page.append(columns);
-  } else page.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files to include them.' : 'No changes to review.'));
+    restBody.append(columns);
+  } else restBody.append(el('div', 'empty', state.files.length ? 'Every change is filtered out. Turn on Show filtered files or Include test changes to see them.' : 'No changes to review.'));
+  rest.append(restBody);
+  page.append(rest);
   main.replaceChildren(page);
 }
 // Changed UI paths with neither a recording nor the agent's reason for skipping one.

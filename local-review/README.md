@@ -15,8 +15,9 @@ build step, no dependency to install, and no hosting.
 
 - **The diff you'd actually review:** the branch against its merge base, plus
   staged, unstaged and untracked files.
-- **Summary first:** the agent's change summary drawn as cards and a design
-  diagram, the module graph's diff, and the files to read first.
+- **Summary first:** the review opens on what was asked and what was built,
+  the behavior rules, flow diagrams, the interface and key code quoted from the
+  diff, and what to check in the running app.
 - **Importance ranking:** files sort by importance. Optionally,
   [Jev](#importance-ranking-with-jev) scores each diff.
 - **Snapshots:** old, new and a pixel diff side by side, preloaded and scrolled
@@ -155,7 +156,7 @@ trigger actions you didn't take. The tool doesn't open browsers either.
 
   A note is about the **content** or the **interface**. Anything somebody wrote
   or computed starts on Content and quotes itself with where it came from:
-  summary cards, focus items and design (`agent-summary`), a finding
+  summary sections: scope items, rules, focus items, flows, design, device checks and minor changes (`agent-summary`), a finding
   (`agent-review`), an iteration summary (`agent-iteration`), a demo title
   (`agent-demo`) and a Read first row (`ranking`). So "too much detail for a
   summary" reaches the instructions that produced the card, not the code that
@@ -165,25 +166,46 @@ trigger actions you didn't take. The tool doesn't open browsers either.
 
 ### Summary
 
-The **Summary** tab is the change on one screen, drawn rather than written:
+The review opens on **Summary**: the change on one screen, ordered by what a
+reviewer most often has to send back. Its content comes from the agent's
+summary; code on it is quoted from the diff, never retyped.
 
-- **Headline and change cards** from the agent's summary: one line per change,
-  tagged added, changed, removed or fixed, with chips that open its files.
-- **Check before approving:** what the agent says a reviewer should verify.
-- **Design:** when the change has a structure worth seeing, the agent's
-  diagram of the types it added or changed and how they connect, colored by
-  status. Click a node to open its file. A bug-fix summary can use this
-  diagram to show the steps to reproduce the failure and where it occurs.
-- **Module graph:** when the scope changes a module manifest, which modules,
-  targets and dependencies were added, removed or moved between groups, as a
-  tree and a graph. It's
-  computed, not written by the agent; see [Module graph](#module-graph).
-- **Read first and lines by module:** the highest-importance files and where
-  the lines changed, from the same data as the feed.
+- **Headline**, and for a later interaction what changed since the person
+  last looked (`since`).
+- **Asked and built** (`scope`): what was asked and done, what the agent added
+  without being asked, what existing behavior it removed or changed, and what
+  it left undone.
+- **Behavior rules** (`rules`): when something happens, what the app does, and
+  who decided it: the request, the design, existing behavior or the agent.
+  Rules the agent decided are highlighted.
+- **Check before approving** (`focus`): open questions for the reviewer.
+- **Unresolved agent review:** the first three unresolved important findings,
+  with a link to the rest on **Comments**.
+- **Flows** (`flows`): Mermaid diagrams of the runtime path, such as a
+  sequence of async calls or a bug's reproduction path. The older `design`
+  graph still draws, as a flowchart whose nodes open their files.
+- **Interface** and **Key code** (`interface`, `snippets`): line ranges the
+  agent points at. `--finish-iteration` quotes them from the branch diff,
+  including files inside a submodule at its old and new commits, and rejects
+  a range that runs past the file or touches no changed line. When a quoted
+  file changes after the summary was written, the full review marks the quote
+  as outdated.
+- **Check in the running app** (`device`): motion, keyboard and layout
+  behavior to verify, each with a button that plays its demo recording on the
+  Summary from the second it shows, whichever interaction recorded it.
+- **Everything else**, folded: minor changes (`rest`), any change cards
+  (`changes`), stats, the [module graph](#module-graph), the files to read
+  first and lines by module. It starts open for a summary without `scope`.
 
-Tiles and the kind bar follow the selected scope and **Show filtered files**.
-The agent's summary always describes the whole branch; an iteration scope
-shows the one written when that interaction finished.
+**Include test changes** adds unit tests and snapshots to the stats, a
+**Covered by** column to the rules and a **Tests** list of the tests each
+changed file adds. The choice is remembered in this browser. Diagrams use a
+vendored copy of Mermaid at its strict security level, loaded the first time
+a Summary draws one.
+
+Stats follow the selected scope and **Show filtered files**. The agent's
+summary always describes the whole branch; an iteration scope shows the one
+written when that interaction finished.
 
 The agent writes the summary as JSON and passes it with
 `--finish-iteration --summary-file`:
@@ -191,30 +213,48 @@ The agent writes the summary as JSON and passes it with
 ```json
 {
   "headline": "Reorder retries a failed `OrderService` call once",
-  "changes": [
-    {"kind": "fixed", "text": "A failed reorder retries once, then shows the error", "files": ["Sources/ReorderInteractor.swift"]}
+  "since": "Retries once instead of twice; the error shows the retry count",
+  "scope": {
+    "asked": [{"text": "A failed reorder retries before showing the error", "files": ["Sources/ReorderInteractor.swift"]}],
+    "extra": [{"text": "The error message shows how many times it tried"}],
+    "removed": [{"text": "The Retry button on the error is gone; the retry is automatic"}],
+    "deferred": [{"text": "Backoff between attempts"}]
+  },
+  "rules": [
+    {"when": "The first call fails", "then": "Retry once, immediately", "decidedBy": "request", "tests": ["retriesOnce"]},
+    {"when": "The retry fails", "then": "Show the error with no Retry button", "decidedBy": "agent"}
   ],
-  "focus": ["Retry count is fixed at one; no backoff"],
-  "design": {
-    "title": "Reproduction path",
-    "nodes": [
-      {"id": "tap", "label": "Tap Reorder", "kind": "view"},
-      {"id": "failure", "label": "ReorderInteractor", "status": "changed", "note": "The first failed call ends the reorder", "file": "Sources/ReorderInteractor.swift"}
-    ],
-    "edges": [{"from": "tap", "to": "failure", "label": "Request fails"}]
-  }
+  "focus": ["Is an automatic retry safe for a payment that may have gone through?"],
+  "flows": [{"title": "Reorder", "mermaid": "sequenceDiagram\n  View->>Interactor: reorder()\n  Interactor->>OrderService: await place(order)\n  OrderService-->>Interactor: failure\n  Interactor->>OrderService: await place(order)"}],
+  "interface": [{"file": "Sources/OrderService.swift", "start": 4, "end": 9}],
+  "snippets": [{"file": "Sources/ReorderInteractor.swift", "start": 31, "end": 38, "why": "The retry runs inside the same task, so cancelling the screen cancels it"}],
+  "device": [{"text": "The error appears once, after the retry", "demo": "Reorder fails twice", "at": 6}],
+  "rest": ["Analytics event `reorder_retried`", "Copy for the new error message"]
 }
 ```
 
-The tool rejects a summary that won't read well at a glance: a headline over
-120 characters, more than 12 changes, change text over 160 characters or on
-several lines, unknown fields, and filler such as "seamless", "robust" or
-"comprehensive" in prose; code in backticks and node labels aren't checked. `kind` is `added`, `changed`, `removed` or `fixed`. Design nodes
+Every section is optional except `headline` and either `scope.asked` or
+`changes`. The tool rejects a summary that won't read well at a glance: a
+headline over 120 characters, text over 160 characters or on several lines,
+more than 6 items in a `scope` list, 8 rules, 5 `focus` items, 2 flows,
+4 `interface` and 3 `snippets` ranges of at most 40 lines, 5 `device` checks
+or 12 `rest` items, 5 tests per rule, unknown fields, and filler such as "seamless", "robust" or
+"comprehensive" in prose; code in backticks and node labels aren't checked.
+`decidedBy` is `request`, `design`, `existing` or `agent`. A flow is Mermaid
+source of at most 4000 characters that starts with `flowchart`, `graph`,
+`sequenceDiagram`, `stateDiagram`, `stateDiagram-v2` or `classDiagram`, with no
+`click` handlers, links, `%%{init}%%` directives, styling (`classDef`, `class`,
+`style`, `linkStyle`, `:::`) or `;`, which Mermaid reads as a line break. A code range takes `file`,
+`start`, `end` and `side` (`new` by default, or `old` for removed code);
+`snippets` also take a `why`. A `device` check's `demo` names a recording by
+title or ID, and `at` is the second it shows.
+
+`changes` and `design` keep their earlier format: changes are `added`,
+`changed`, `removed` or `fixed` with their files, at most 12. Design nodes
 take `kind` (`module`, `type`, `protocol`, `view`, `service`, `data` or
 `external`), `status` (`added`, `changed`, `removed` or `unchanged`), an
-optional `note` and `file`; at most 20 nodes and 40 edges. The diagram's
-optional `title` overrides the default **Design** heading. Text in
-`backticks` renders as code.
+optional `note` and `file`; at most 20 nodes and 40 edges, and an optional
+`title`. Text in `backticks` renders as code.
 
 #### Module graph
 
