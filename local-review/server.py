@@ -34,11 +34,11 @@ import ssl
 from urllib.parse import urlparse, parse_qs
 
 # Bump with every local-review release tag, so launchers can order running servers.
-RELEASE = '0.20.0'
+RELEASE = '0.21.0'
 ASSETS = Path(__file__).resolve().parent
 AGENT_RUNTIME = ASSETS
 GIT = 'git'
-WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'summary.mjs', 'element-feedback.mjs', 'comment-cursor.svg', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs')
+WEB_ASSETS = ('index.html', 'app.mjs', 'context.mjs', 'definitions.mjs', 'diff.mjs', 'highlight.mjs', 'modules.mjs', 'review-time.mjs', 'stats.mjs', 'summary.mjs', 'element-feedback.mjs', 'comment-cursor.svg', 'style.css', 'queue.html', 'queue.mjs', 'markdown.mjs', 'vendor/marked.mjs', 'vendor/mermaid.min.js')
 DEFAULTS = {
     "hideLocalization": True, "hideTests": True, "hideViews": False, "hideManifests": True, "hideGenerated": True,
     "exclude": [], "imageScale": 70, "diffMode": "split",
@@ -74,8 +74,16 @@ AGENT_MARKERS = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PA
 # write (git diff --output), so it gets no shell; Codex reviews in its read-only sandbox instead.
 AGENT_REVIEW_TOOLS = ('Read', 'Glob', 'Grep')
 # The agent's change summary is data the Summary tab draws, so its text stays short and factual.
-SUMMARY_LIMITS = {'headline': 120, 'text': 160, 'changes': 12, 'files': 8, 'nodes': 20, 'edges': 40, 'label': 40, 'note': 60, 'edge': 24, 'focus': 5}
+SUMMARY_LIMITS = {'headline': 120, 'text': 160, 'changes': 12, 'files': 8, 'nodes': 20, 'edges': 40, 'label': 40, 'note': 60, 'edge': 24, 'focus': 5,
+                  'since': 200, 'scope': 6, 'rules': 8, 'rule': 120, 'tests': 5, 'flows': 2, 'mermaid': 4000, 'interface': 4, 'snippets': 3,
+                  'excerpt': 40, 'device': 5, 'rest': 12}
 SUMMARY_CHANGE_KINDS = ('added', 'changed', 'removed', 'fixed')
+# What the person asked for, what the agent added on its own, what it removed or changed that already existed, and what it left for later.
+SUMMARY_SCOPE_KINDS = ('asked', 'extra', 'removed', 'deferred')
+# Who decided a behavior rule; the page flags rules the agent decided without being asked.
+SUMMARY_RULE_SOURCES = ('request', 'design', 'existing', 'agent')
+# Diagram types the Summary tab draws. Mermaid renders them with securityLevel strict.
+SUMMARY_MERMAID_TYPES = ('flowchart', 'graph', 'sequenceDiagram', 'stateDiagram', 'stateDiagram-v2', 'classDiagram')
 SUMMARY_NODE_KINDS = ('module', 'type', 'protocol', 'view', 'service', 'data', 'external')
 SUMMARY_STATUSES = ('added', 'changed', 'removed', 'unchanged')
 # Prose only: words that carry no fact. Code in backticks and node labels name real things and are never checked.
@@ -1008,26 +1016,110 @@ def summary_fields(value, field, allowed):
     return value
 
 
+def summary_files(value, field):
+    limit = SUMMARY_LIMITS['files']
+    if not isinstance(value, list) or len(value) > limit or not all(isinstance(f, str) and 0 < len(f) <= 400 for f in value):
+        raise ValueError(f'{field} must list at most {limit} repository paths')
+    return value
+
+
+def summary_list(data, key, limit, what):
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > limit:
+        raise ValueError(f'{key} must list at most {limit} {what}; keep the most consequential and name the rest in rest')
+    return value
+
+
+def summary_code_ref(ref, field, why=False):
+    """A pointer to changed lines; the tool quotes them from the diff, so the agent never retypes code."""
+    summary_fields(ref, field, ('file', 'start', 'end', 'side', 'why') if why else ('file', 'start', 'end', 'side'))
+    if not isinstance(ref.get('file'), str) or not 0 < len(ref['file']) <= 400:
+        raise ValueError(f'{field}.file must be a repository path')
+    start, end, side = ref.get('start'), ref.get('end', ref.get('start')), ref.get('side', 'new')
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in (start, end)) or end < start:
+        raise ValueError(f'{field} needs a start line and an end line at or after it')
+    if end - start >= SUMMARY_LIMITS['excerpt']:
+        raise ValueError(f'{field} spans {end - start + 1} lines; point at the {SUMMARY_LIMITS["excerpt"]} or fewer that matter')
+    if side not in ('new', 'old'):
+        raise ValueError(f'{field}.side must be new or old')
+    item = {'file': ref['file'], 'start': start, 'end': end, 'side': side}
+    if why:
+        item['why'] = summary_text(ref.get('why'), f'{field}.why', SUMMARY_LIMITS['text'])
+    return item
+
+
 def validate_change_summary(data):
     """Check an agent's change summary and return it normalized: short, factual, drawable."""
     limits = SUMMARY_LIMITS
-    summary_fields(data, 'Summary', ('headline', 'changes', 'design', 'focus'))
-    result = {'headline': summary_text(data.get('headline'), 'headline', limits['headline']), 'changes': []}
+    summary_fields(data, 'Summary', ('headline', 'since', 'scope', 'rules', 'focus', 'flows', 'design', 'interface', 'snippets',
+                                     'device', 'changes', 'rest'))
+    result = {'headline': summary_text(data.get('headline'), 'headline', limits['headline'])}
+    if data.get('since') is not None:
+        result['since'] = summary_text(data['since'], 'since', limits['since'])
+    if (scope := data.get('scope')) is not None:
+        summary_fields(scope, 'scope', SUMMARY_SCOPE_KINDS)
+        result['scope'] = {}
+        for kind in SUMMARY_SCOPE_KINDS:
+            items = scope.get(kind)
+            if items is None:
+                continue
+            if not isinstance(items, list) or len(items) > limits['scope']:
+                raise ValueError(f'scope.{kind} must list at most {limits["scope"]} items; keep the most consequential and fold the rest into one line')
+            entries = []
+            for index, entry in enumerate(items, 1):
+                field = f'scope.{kind}[{index}]'
+                summary_fields(entry, field, ('text', 'files'))
+                entries.append({'text': summary_text(entry.get('text'), f'{field}.text', limits['text']),
+                                'files': summary_files(entry.get('files', []), f'{field}.files')})
+            if entries:
+                result['scope'][kind] = entries
+        if not result['scope'].get('asked'):
+            raise ValueError('scope.asked must list what the person asked for and what was done about it')
     changes = data.get('changes')
-    if not isinstance(changes, list) or not 1 <= len(changes) <= limits['changes']:
-        raise ValueError(f'changes must list 1 to {limits["changes"]} changes')
-    for index, change in enumerate(changes, 1):
-        summary_fields(change, f'changes[{index}]', ('kind', 'text', 'files'))
-        if change.get('kind') not in SUMMARY_CHANGE_KINDS:
-            raise ValueError(f'changes[{index}].kind must be one of {", ".join(SUMMARY_CHANGE_KINDS)}')
-        files = change.get('files', [])
-        if not isinstance(files, list) or len(files) > limits['files'] or not all(isinstance(f, str) and 0 < len(f) <= 400 for f in files):
-            raise ValueError(f'changes[{index}].files must list at most {limits["files"]} repository paths')
-        result['changes'].append({'kind': change['kind'], 'text': summary_text(change.get('text'), f'changes[{index}].text', limits['text']), 'files': files})
-    if (focus := data.get('focus')) is not None:
-        if not isinstance(focus, list) or len(focus) > limits['focus']:
-            raise ValueError(f'focus must list at most {limits["focus"]} things for the reviewer to check')
+    if changes is not None or 'scope' not in result:
+        if not isinstance(changes, list) or not (0 if 'scope' in result else 1) <= len(changes) <= limits['changes']:
+            raise ValueError(f'changes must list 1 to {limits["changes"]} changes, unless scope describes the change')
+        result['changes'] = []
+        for index, change in enumerate(changes, 1):
+            summary_fields(change, f'changes[{index}]', ('kind', 'text', 'files'))
+            if change.get('kind') not in SUMMARY_CHANGE_KINDS:
+                raise ValueError(f'changes[{index}].kind must be one of {", ".join(SUMMARY_CHANGE_KINDS)}')
+            result['changes'].append({'kind': change['kind'], 'text': summary_text(change.get('text'), f'changes[{index}].text', limits['text']),
+                                      'files': summary_files(change.get('files', []), f'changes[{index}].files')})
+    if (rules := summary_list(data, 'rules', limits['rules'], 'behavior rules')) is not None:
+        result['rules'] = []
+        for index, rule in enumerate(rules, 1):
+            field = f'rules[{index}]'
+            summary_fields(rule, field, ('when', 'then', 'decidedBy', 'tests'))
+            if rule.get('decidedBy') not in SUMMARY_RULE_SOURCES:
+                raise ValueError(f'{field}.decidedBy must be one of {", ".join(SUMMARY_RULE_SOURCES)}')
+            tests = rule.get('tests', [])
+            if not isinstance(tests, list) or len(tests) > limits['tests']:
+                raise ValueError(f'{field}.tests must list at most {limits["tests"]} test names')
+            result['rules'].append({'when': summary_text(rule.get('when'), f'{field}.when', limits['rule']),
+                                    'then': summary_text(rule.get('then'), f'{field}.then', limits['rule']),
+                                    'decidedBy': rule['decidedBy'],
+                                    'tests': [summary_text(test, f'{field}.tests', limits['rule'], prose=False) for test in tests]})
+    if (focus := summary_list(data, 'focus', limits['focus'], 'things for the reviewer to check')) is not None:
         result['focus'] = [summary_text(item, f'focus[{index}]', limits['text']) for index, item in enumerate(focus, 1)]
+    if (flows := summary_list(data, 'flows', limits['flows'], 'diagrams')) is not None:
+        result['flows'] = []
+        for index, flow in enumerate(flows, 1):
+            field = f'flows[{index}]'
+            summary_fields(flow, field, ('title', 'mermaid'))
+            source = flow.get('mermaid')
+            if not isinstance(source, str) or not source.strip() or len(source) > limits['mermaid']:
+                raise ValueError(f'{field}.mermaid must be Mermaid source of at most {limits["mermaid"]} characters')
+            lines = [line.strip() for line in source.strip().splitlines() if line.strip() and not line.strip().startswith('%%')]
+            if not lines or lines[0].split()[0] not in SUMMARY_MERMAID_TYPES:
+                raise ValueError(f'{field}.mermaid must start with one of {", ".join(SUMMARY_MERMAID_TYPES)}')
+            if any(re.match(r'(click|href|callback|classDef|class|style|linkStyle)\b', line) for line in lines) or '%%{' in source or ':::' in source:
+                raise ValueError(f'{field}.mermaid must not use click handlers, links, init directives or styling (classDef, class, style, linkStyle, :::)')
+            if ';' in source:
+                raise ValueError(f'{field}.mermaid uses ";", which Mermaid reads as a line break; use a comma or a new line')
+            result['flows'].append({'title': summary_text(flow.get('title'), f'{field}.title', limits['label']), 'mermaid': source.strip()})
     if (design := data.get('design')) is not None:
         summary_fields(design, 'design', ('title', 'nodes', 'edges'))
         nodes, edges = design.get('nodes'), design.get('edges', [])
@@ -1068,7 +1160,105 @@ def validate_change_summary(data):
             if edge.get('label') is not None:
                 item['label'] = summary_text(edge['label'], f'{field}.label', limits['edge'])
             result['design']['edges'].append(item)
+    for key, why in (('interface', False), ('snippets', True)):
+        if (refs := summary_list(data, key, limits[key], 'line ranges')) is not None:
+            result[key] = [summary_code_ref(ref, f'{key}[{index}]', why=why) for index, ref in enumerate(refs, 1)]
+    if (device := summary_list(data, 'device', limits['device'], 'things to check in the running app')) is not None:
+        result['device'] = []
+        for index, check in enumerate(device, 1):
+            field = f'device[{index}]'
+            summary_fields(check, field, ('text', 'demo', 'at'))
+            item = {'text': summary_text(check.get('text'), f'{field}.text', limits['text'])}
+            if check.get('demo') is not None:
+                item['demo'] = summary_text(check['demo'], f'{field}.demo', limits['text'], prose=False)
+            if check.get('at') is not None:
+                if not isinstance(check['at'], (int, float)) or isinstance(check['at'], bool) or not math.isfinite(check['at']) or check['at'] < 0:
+                    raise ValueError(f'{field}.at must be the seconds into the demo where it shows')
+                item['at'] = check['at']
+            result['device'].append(item)
+    if (rest := summary_list(data, 'rest', limits['rest'], 'minor changes')) is not None:
+        result['rest'] = [summary_text(item, f'rest[{index}]', limits['text']) for index, item in enumerate(rest, 1)]
     return result
+
+
+TEST_DECLARATIONS = (re.compile(r'\bfunc\s+(test\w*)\s*\('), re.compile(r'@Test\s*\(\s*"([^"]+)"'), re.compile(r'\bdef\s+(test_\w+)'),
+                     re.compile(r'^\s*(?:test|it)\s*\(\s*[\'"`]([^\'"`]+)'), re.compile(r'^\s*test\s+"([^"]+)"'))
+
+
+def added_tests(rows):
+    """Names of the tests a diff adds: XCTest and Swift Testing functions, pytest, node:test or Jest, and ExUnit."""
+    names, after_attribute = [], False
+    for row in rows:
+        if row['type'] != 'add':
+            after_attribute = False
+            continue
+        text = row['text']
+        if match := next((m for pattern in TEST_DECLARATIONS if (m := pattern.search(text))), None):
+            names.append(match[1])
+            after_attribute = False
+            continue
+        function = re.search(r'\bfunc\s+(\w+)\s*\(', text)
+        if function and (after_attribute or re.match(r'\s*@Test\b', text)):
+            names.append(function[1])
+            after_attribute = False
+        elif re.match(r'\s*@Test\b', text):
+            # A multi-line @Test(arguments: ...) attribute runs until the function it marks.
+            after_attribute = True
+        elif function:
+            after_attribute = False
+    return list(dict.fromkeys(names))
+
+
+def excerpt_rows(old, new, side, start, end):
+    """The diff rows for one line range of a file, with deletions kept where they sit between the range's new lines."""
+    old_lines, new_lines = old.splitlines(), new.splitlines()
+    if end > len(new_lines if side == 'new' else old_lines):
+        return None
+    lines = list(difflib.unified_diff(old_lines, new_lines, n=max(len(old_lines), len(new_lines)), lineterm=''))
+    # One hunk covers the whole file, so only the first three lines are headers; a body line can start with --- or +++.
+    body = lines[3:] if lines else [' ' + text for text in new_lines]
+    rows, old_line, new_line = [], 1, 1
+    for line in body:
+        kind = {'+': 'add', '-': 'delete', ' ': 'context'}.get(line[:1])
+        if kind is None:
+            continue
+        rows.append({'type': kind, 'text': line[1:], 'old': old_line if kind != 'add' else None, 'new': new_line if kind != 'delete' else None,
+                     'anchor': new_line})
+        old_line += kind != 'add'
+        new_line += kind != 'delete'
+    number = 'new' if side == 'new' else 'old'
+    picked = [row for row in rows if (row[number] is not None and start <= row[number] <= end)
+              or (side == 'new' and row['type'] == 'delete' and start <= row['anchor'] <= end)]
+    return [{key: row[key] for key in ('type', 'text', 'old', 'new')} for row in picked]
+
+
+def resolve_summary_code(summary, files, blobs, submodule_blob=None):
+    """Quote every interface and snippet range from the branch diff; a range must exist and touch a changed line.
+    A path inside a pinned submodule is read at the submodule's old and new commits through submodule_blob."""
+    by_path = {file['path']: file for file in files}
+    for key in ('interface', 'snippets'):
+        for index, ref in enumerate(summary.get(key, []), 1):
+            field = f'{key}[{index}]'
+            file = by_path.get(ref['file'])
+            parent = None if file else next((f for f in files if f['submodule'] and ref['file'].startswith(f['path'] + '/')), None)
+            if parent and submodule_blob:
+                inner = ref['file'][len(parent['path']) + 1:]
+                commits = [blobs[parent['id']][side].decode().strip() for side in ('old', 'new')]
+                old, new = (submodule_blob(parent['path'], commit, inner) if commit else b'' for commit in commits)
+                fingerprint = digest(old + b'\0' + new)
+            elif file and not (file['binary'] or file['limited'] or file['submodule']):
+                old, new, fingerprint = blobs[file['id']]['old'], blobs[file['id']]['new'], file['fingerprint']
+            elif file:
+                raise ValueError(f'{field}.file {ref["file"]} has no text diff to quote')
+            else:
+                raise ValueError(f'{field}.file {ref["file"]} is not changed on this branch')
+            rows = excerpt_rows(old.decode(errors='replace'), new.decode(errors='replace'), ref['side'], ref['start'], ref['end'])
+            if rows is None:
+                raise ValueError(f'{field} lines {ref["start"]}-{ref["end"]} run past the end of {ref["file"]} ({ref["side"]} side)')
+            if not any(row['type'] != 'context' for row in rows):
+                raise ValueError(f'{field} lines {ref["start"]}-{ref["end"]} ({ref["side"]} side) of {ref["file"]} contain no changed line')
+            ref['rows'], ref['fingerprint'] = rows, fingerprint
+    return summary
 
 
 def read_module_graph(data):
@@ -2112,6 +2302,9 @@ class Review:
             raise ValueError('A different user interaction is pending')
         after = self.snapshot('iteration-' + iteration)
         self.require_agent_review(pending, after)
+        if change_summary is not None and (change_summary.get('interface') or change_summary.get('snippets')):
+            captured = self.capture(self.base, after)
+            resolve_summary_code(change_summary, captured[3], captured[4], self.submodule_blob)
         item = {**(existing or pending), 'number': existing['number'] if existing else len(self.session['iterations']) + 1,
                 'after': after, 'summary': summary.strip(), 'finishedAt': datetime.now(timezone.utc).isoformat()}
         item.setdefault('agent', self.origin_agent())
@@ -2187,9 +2380,41 @@ class Review:
             self.module_graphs = {key: result}
         return self.module_graphs[key]
 
+    def submodule_blob(self, path, commit, inner):
+        result = subprocess.run([git_executable(), '-C', str(self.repo / path), 'show', f'{commit}:{inner}'], capture_output=True, timeout=30)
+        return result.stdout if result.returncode == 0 else b''
+
+    def summary_quotes_current(self, summary):
+        """Marks quotes whose file changed after the summary was written, so the live Summary never passes them off as current."""
+        fingerprints = {file['path']: file['fingerprint'] for file in self.files}
+        submodules = [file for file in self.files if file['submodule']]
+        for key in ('interface', 'snippets'):
+            for ref in summary.get(key, []):
+                if 'fingerprint' not in ref:
+                    continue
+                parent = next((f for f in submodules if ref['file'].startswith(f['path'] + '/')), None)
+                if parent and not self.repo.exists():
+                    continue  # A removed worktree has no submodule checkout to compare against; its quotes stay as written.
+                if parent:
+                    old, new = (self.blobs[parent['id']][side].decode().strip() for side in ('old', 'new'))
+                    inner = ref['file'][len(parent['path']) + 1:]
+                    current = digest((self.submodule_blob(parent['path'], old, inner) if old else b'') + b'\0' + (self.submodule_blob(parent['path'], new, inner) if new else b''))
+                else:
+                    current = fingerprints.get(ref['file'])
+                ref['stale'] = current != ref['fingerprint']
+        return summary
+
     def summary(self, iteration=None):
         with self.lock:
-            return {'summary': self.change_summary(iteration), 'moduleGraph': self.module_graph(iteration)}
+            files = self.view(iteration)[0]
+            tests = [{'path': f['path'], 'kind': f['kind'], 'added': f['added'], 'deleted': f['deleted'], 'names': added_tests(f['rows'])}
+                     for f in files if f['kind'] in ('test', 'snapshot')]
+            summary = self.change_summary(iteration)
+            if summary and iteration in (None, 'full', 'branch-start', 'target', 'thread'):
+                summary = self.summary_quotes_current(json.loads(json.dumps(summary)))
+            demos = [{'id': d['id'], 'title': d['title'], 'src': self.demo_source(d['id']),
+                      'available': (self.demo_directory() / d['file']).is_file()} for d in self.saved_demos()]
+            return {'summary': summary, 'moduleGraph': self.module_graph(iteration), 'tests': tests, 'demos': demos}
 
     def agent_review_paths(self):
         directory = self.store / 'agent-reviews'

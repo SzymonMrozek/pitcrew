@@ -617,6 +617,115 @@ class ReviewTests(unittest.TestCase):
             self.review.finish_iteration('first', 'Done', 'fix(test): change', 'Change. Tests pass.', {**valid, 'headline': 'Seamless retries'})
         self.assertEqual(self.review.session['pendingIteration']['id'], 'first', 'A rejected summary leaves the interaction pending')
 
+    def test_ledger_summaries_validate_rules_flows_code_refs_and_device_checks(self):
+        ledger = {'headline': 'Reorder retries once', 'scope': {'asked': [{'text': 'Retry a failed reorder', 'files': ['Interactor.swift']}],
+                                                                  'extra': [{'text': 'Retry count shown in the error'}], 'removed': []},
+                  'rules': [{'when': 'The first call fails', 'then': 'Retry once', 'decidedBy': 'request', 'tests': ['retriesOnce']},
+                            {'when': 'The retry fails', 'then': 'Show the error', 'decidedBy': 'agent'}],
+                  'flows': [{'title': 'Reorder flow', 'mermaid': 'sequenceDiagram\n  View->>Interactor: reorder()'}],
+                  'interface': [{'file': 'Interactor.swift', 'start': 1, 'end': 3}],
+                  'snippets': [{'file': 'Interactor.swift', 'start': 2, 'end': 2, 'why': 'The only retry'}],
+                  'device': [{'text': 'Error appears after the retry', 'demo': 'Reorder fails', 'at': 4.5}],
+                  'rest': ['Analytics event `reorder_retry`'], 'since': 'Retries once instead of twice'}
+        result = m.validate_change_summary(ledger)
+        self.assertNotIn('changes', result, 'A ledger summary needs no change cards')
+        self.assertEqual(result['scope'], {'asked': [{'text': 'Retry a failed reorder', 'files': ['Interactor.swift']}],
+                                           'extra': [{'text': 'Retry count shown in the error', 'files': []}]})
+        self.assertEqual(result['rules'][1], {'when': 'The retry fails', 'then': 'Show the error', 'decidedBy': 'agent', 'tests': []})
+        self.assertEqual(result['interface'], [{'file': 'Interactor.swift', 'start': 1, 'end': 3, 'side': 'new'}])
+        self.assertEqual(result['device'], [{'text': 'Error appears after the retry', 'demo': 'Reorder fails', 'at': 4.5}])
+        invalid = [
+            ({**ledger, 'scope': {'extra': [{'text': 'x'}]}}, 'scope.asked must list'),
+            ({**ledger, 'scope': {'asked': [{'text': 'x'}], 'surprise': []}}, 'unknown field surprise'),
+            ({**ledger, 'rules': [{'when': 'a', 'then': 'b', 'decidedBy': 'me'}]}, 'decidedBy must be one of'),
+            ({**ledger, 'rules': [{'when': 'a', 'then': 'b', 'decidedBy': 'agent'}] * 9}, 'rules must list at most 8'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': 'pie\n  "a": 1'}]}, 'must start with one of'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': 'flowchart TD\n  a-->b\n  click a "https://example.com"'}]}, 'click handlers'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': '%%{init: {"securityLevel": "loose"}}%%\nflowchart TD\n  a-->b'}]}, 'init directives'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': 'sequenceDiagram\n  A->>B: guard; retry'}]}, 'line break'),
+            ({**ledger, 'interface': [{'file': 'Interactor.swift', 'start': 5, 'end': 4}]}, 'start line and an end line'),
+            ({**ledger, 'interface': [{'file': 'Interactor.swift', 'start': 1, 'end': 41}]}, 'spans 41 lines'),
+            ({**ledger, 'snippets': [{'file': 'Interactor.swift', 'start': 1, 'end': 2}]}, 'why must be one line'),
+            ({**ledger, 'device': [{'text': 'x', 'at': -1}]}, 'seconds into the demo'),
+            ({**ledger, 'device': [{'text': 'x', 'at': float('inf')}]}, 'seconds into the demo'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': 'flowchart TD\n  a-->b\n  classDef x fill:red'}]}, 'styling'),
+            ({**ledger, 'flows': [{'title': 'x', 'mermaid': 'flowchart TD\n  a:::x-->b'}]}, 'styling'),
+            ({**ledger, 'rules': [{'when': 'a', 'then': 'b', 'decidedBy': 'agent'}] * 9}, 'name the rest in rest'),
+            ({'headline': 'No changes or ledger'}, 'changes must list 1 to 12'),
+        ]
+        for data, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                m.validate_change_summary(data)
+
+    def test_finish_iteration_quotes_code_refs_from_the_branch_diff(self):
+        self.write('Interactor.swift', 'struct Interactor {\n    let retries = 0\n    func reorder() {}\n}\n')
+        self.review.refresh()
+        self.review.begin_iteration('first', 'Retry reorders')
+        self.write('Interactor.swift', 'struct Interactor {\n    let retries = 1\n    func reorder() {}\n    func retry() {}\n}\n')
+        summary = {'headline': 'Reorder retries once', 'scope': {'asked': [{'text': 'Retry a failed reorder'}]},
+                   'interface': [{'file': 'Interactor.swift', 'start': 2, 'end': 4}]}
+        self.review.finish_iteration('first', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.', summary)
+        rows = self.review.summary()['summary']['interface'][0]['rows']
+        self.assertEqual([(row['type'], row['text']) for row in rows if row['type'] != 'context'][-1], ('add', '    func retry() {}'))
+        self.assertIn(('add', '    let retries = 1', None, 2), [(r['type'], r['text'], r['old'], r['new']) for r in rows])
+        self.review.begin_iteration('second', 'Point at nothing')
+        for ref, message in (({'file': 'Missing.swift', 'start': 1, 'end': 1}, 'is not changed on this branch'),
+                             ({'file': 'Interactor.swift', 'start': 5, 'end': 5, 'side': 'old'}, 'run past the end'),
+                             ({'file': 'Interactor.swift', 'start': 2, 'end': 9}, 'run past the end')):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.review.finish_iteration('second', 'Done', 'fix(test): retry', 'Retry reorders. Tests pass.', {**summary, 'interface': [ref]})
+        unchanged = {'path': 'Same.swift', 'id': 'same', 'fingerprint': 'f', 'binary': False, 'limited': False, 'submodule': False}
+        with self.assertRaisesRegex(ValueError, 'contain no changed line'):
+            m.resolve_summary_code({'interface': [{'file': 'Same.swift', 'start': 1, 'end': 1, 'side': 'new'}]}, [unchanged],
+                                   {'same': {'old': b'a\nb\n', 'new': b'a\nc\n'}})
+        self.review.refresh()
+        self.assertFalse(self.review.summary()['summary']['interface'][0]['stale'])
+        self.write('Interactor.swift', 'struct Interactor {\n    let retries = 2\n    func reorder() {}\n    func retry() {}\n}\n')
+        self.review.refresh()
+        self.assertTrue(self.review.summary()['summary']['interface'][0]['stale'], 'An edited quoted file marks the live quote outdated')
+        self.assertNotIn('stale', self.review.summary('first')['summary']['interface'][0], 'The interaction keeps its quote as written')
+
+    def test_quotes_keep_line_numbers_after_deleted_lines_that_look_like_headers(self):
+        old = 'title\n---\n+++ plus\nbody\nend\n'
+        new = 'title\nbody\nend changed\n'
+        rows = m.excerpt_rows(old, new, 'new', 2, 3)
+        self.assertEqual([(r['type'], r['text'], r['old'], r['new']) for r in rows],
+                         [('delete', '---', 2, None), ('delete', '+++ plus', 3, None), ('context', 'body', 4, 2),
+                          ('delete', 'end', 5, None), ('add', 'end changed', None, 3)])
+        self.assertIsNone(m.excerpt_rows(old, new, 'new', 3, 4))
+        self.assertEqual([r['old'] for r in m.excerpt_rows(old, new, 'old', 2, 3)], [2, 3])
+
+    def test_quotes_read_files_inside_a_pinned_submodule(self):
+        dependency = self.root / 'Tools/Dependency'
+        dependency.mkdir(parents=True)
+        for args in (('init', '-b', 'main'), ('config', 'user.name', 'Test'), ('config', 'user.email', 'test@example.com')):
+            self.git('-C', str(dependency), *args)
+        self.write('Tools/Dependency/Sources/Tool.swift', 'func tool() {}\n')
+        self.git('-C', str(dependency), 'add', '.')
+        self.git('-C', str(dependency), 'commit', '-m', 'feat(test): first release')
+        first = self.git('-C', str(dependency), 'rev-parse', 'HEAD')
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{first},Tools/Dependency')
+        self.git('commit', '-m', 'chore(test): pin first release')
+        self.git('update-ref', 'refs/heads/main', 'HEAD')
+        self.write('Tools/Dependency/Sources/Tool.swift', 'func tool() {}\nfunc retry() {}\n')
+        self.git('-C', str(dependency), 'commit', '-am', 'feat(test): second release')
+        self.review.refresh()
+        self.review.begin_iteration('first', 'Bump the tool')
+        summary = {'headline': 'Bump the tool', 'scope': {'asked': [{'text': 'Retry in the tool'}]},
+                   'snippets': [{'file': 'Tools/Dependency/Sources/Tool.swift', 'start': 2, 'end': 2, 'why': 'The new call'}]}
+        self.review.finish_iteration('first', 'Done', 'fix(test): bump', 'Bump the tool. Tests pass.', summary)
+        quote = self.review.summary()['summary']['snippets'][0]
+        self.assertEqual([(r['type'], r['text']) for r in quote['rows']], [('add', 'func retry() {}')])
+        self.assertFalse(quote['stale'])
+
+    def test_summary_lists_test_changes_with_the_tests_they_add(self):
+        self.write('Tests/OrderTests.swift', 'import Testing\n@Test("reorders once")\nfunc a() {}\n@Test\nfunc retriesAfterFailure() async {}\n'
+                   '@Test(arguments: [\n    1,\n    2,\n])\nfunc formats(value: Int) {}\nfunc helper() {}\n')
+        self.review.refresh()
+        tests = self.review.summary()['tests']
+        self.assertEqual([(t['path'], t['kind'], t['names']) for t in tests],
+                         [('Tests/OrderTests.swift', 'test', ['reorders once', 'retriesAfterFailure', 'formats'])])
+
     def write_graph_tool(self):
         # Each manifest line "A -> B" declares a dependency; the module is the manifest's directory.
         self.write('graph.py', 'import json, sys\nfrom pathlib import Path\nnodes, edges = {}, []\n'

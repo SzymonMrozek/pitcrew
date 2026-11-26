@@ -112,20 +112,40 @@ review --finish-iteration <id> --summary "<result of this interaction>" \
   --summary-file /absolute/path/to/summary.json
 ```
 
-The summary file is the review's **Summary** tab: a JSON change summary of the
-whole branch, in the format the local-review README describes. The reviewer
-reads it before any code, so write it for a glance:
+The summary file is the review's **Summary** tab: a JSON summary of the whole
+branch, in the format the local-review README describes. The reviewer reads it
+before any code and checks it for what agents most often get wrong: work nobody
+asked for, a misread rule, a quiet removal, an awkward interface or async
+shape. Put each of those where it can't be missed, and keep everything trivial
+out of sight.
 
-- The headline says what the branch does for its user, in one line.
-- One change per card: what changed and, if it isn't obvious, why. Name the
-  types, functions and modules in `backticks`. No adjectives, no "improved",
-  no restating the request, no validation details.
-- `focus` lists what a reviewer must check: risky assumptions, behavior you
-  chose without being asked, untested paths. Leave it out when nothing qualifies.
-- Add `design` only when the structure matters, for example new types or
-  changed collaborations: the significant types and how they call each other,
-  marked added, changed or removed, plus the unchanged ones they connect to.
-  Skip it for a change that stays inside one type.
+- `headline`: what the branch does for its user, in one line. From the second
+  interaction on, `since` says what changed since the person last looked.
+- `scope`: `asked` lists each thing the person asked for and what was done;
+  `extra` everything you added without being asked (behavior, confirmations,
+  custom controls, migrations, edge-case handling, logic outside the requested
+  layer); `removed` every existing behavior, control, call or setting you
+  removed or changed; `deferred` what was asked but not done. When in doubt,
+  list it. Each list takes six items; fold the least important into one.
+- `rules`: up to eight rows, most consequential first, for the triggers,
+  conditions, defaults, limits and initial selections the change introduces or
+  changes: `when`, `then`, and `decidedBy`. Use
+  `agent` for every rule you chose yourself. Name the tests that cover it.
+- `focus`: only open questions the reviewer must answer.
+- `flows`: a Mermaid `sequenceDiagram` or `flowchart` when the order of calls,
+  async work or navigation matters. Mark unstructured tasks, callbacks and the
+  order of side effects with a `Note`. For a bug fix, draw the reproduction
+  path and mark the step that went wrong.
+- `interface`: up to four line ranges of changed public signatures, such as
+  protocols, entry points, initializers and public enums, the ones callers
+  depend on first. Files inside a submodule work too. The tool quotes them.
+- `snippets`: up to three ranges that decide whether the change is right,
+  such as ordering, error paths, hard-coded values or concurrency, each with
+  a `why`.
+- `device`: motion, keyboard and layout behavior to check in the running app,
+  each with the demo title and the second it shows.
+- `rest`: assets, copy, analytics, debug menus, generated code and test
+  helpers, one short line each.
 
 Include both printed URLs as **Full review** and **This iteration** links in
 your reply. When the full diff includes imported queued changes or work from
